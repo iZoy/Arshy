@@ -26,6 +26,9 @@ pub enum ArshyError {
     #[error("sqlite error: {0}")]
     Sqlite(String),
 
+    #[error("exec error: {0}")]
+    Exec(String),
+
     #[error("ipc error: {0}")]
     Ipc(String),
 

@@ -79,6 +79,16 @@ impl super::Store {
         )?;
         Ok(())
     }
+
+    /// Update task PID (called after process spawn).
+    pub fn update_task_pid(&self, task_id: &str, pid: u32) -> Result<()> {
+        let conn = self.lock();
+        conn.execute(
+            "UPDATE tasks SET pid=?1 WHERE task_id=?2",
+            rusqlite::params![pid, task_id],
+        )?;
+        Ok(())
+    }
 }
 
 fn map_task(row: &rusqlite::Row<'_>) -> std::result::Result<Task, rusqlite::Error> {
