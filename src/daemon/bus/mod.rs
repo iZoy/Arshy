@@ -1,5 +1,7 @@
 //! EventBus — tokio broadcast channel for daemon → proxy notifications.
 
+pub mod router;
+
 use tokio::sync::broadcast;
 
 /// A bus event carrying task updates, diagnostics, or lifecycle signals.

@@ -91,3 +91,13 @@ pub struct McpNotification {
     pub method: String,
     pub params: serde_json::Value,
 }
+
+/// Log levels for MCP `notifications/message`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LogLevel {
+    Debug,
+    Info,
+    Warning,
+    Error,
+}

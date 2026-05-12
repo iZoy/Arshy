@@ -1,12 +1,12 @@
-//! Parser engine — TOML (Tier 1) + Rhai (Tier 2) + Raw fallback.
+//! Parser engine — TOML (Tier 1) + Stateful (Tier 2) + Raw fallback.
 //!
-//! Coverage target: 70% TOML, 25% Rhai, 5% Raw.
+//! Coverage target: 70% TOML regex, 25% stateful, 5% raw.
 
 #[allow(unused_imports)]
 mod detect;
 mod loader;
 mod registry;
-mod rhai;
+pub mod rhai;
 mod toml;
 
 #[allow(unused_imports)]
@@ -38,27 +38,75 @@ impl Engine {
         self.registry.detect(command)
     }
 
-    /// Parse a single output line into a structured event.
-    ///
-    /// If a parser is matched for `tool`, uses it. Otherwise falls back to raw.
+    /// Create a parser session for a task. The session holds state for stateful parsers.
+    pub fn create_session(&self, tool: Option<&ParsedTool>) -> ParserSession {
+        let stateful = tool.and_then(|t| {
+            if t.parser_type == ParserType::Rhai {
+                Some(rhai::StatefulParser::new(&t.tool_name))
+            } else {
+                None
+            }
+        });
+        ParserSession { stateful }
+    }
+
+    /// Parse a single output line into a structured event (stateless, for non-session use).
     pub fn parse_line(&self, line: &str, seq: u64, tool: Option<&ParsedTool>) -> TaskEvent {
         if let Some(t) = tool {
             match t.parser_type {
                 ParserType::Toml => {
                     let parser = TomlParser::new(&t.parser_name);
-                    if let Some(event) = parser.parse_line(line) {
+                    if let Some(mut event) = parser.parse_line(line) {
+                        event.seq = seq;
                         return event;
                     }
                 }
                 ParserType::Rhai => {
-                    // Rhai parsers are stateful; for now fall back to raw.
-                    // Will be wired in D4 (Rhai engine integration).
+                    // Stateful parsing needs a session — fall back to raw here
                 }
-                ParserType::Raw => {} // fall through to raw
+                ParserType::Raw => {}
             }
         }
-        // Raw fallback: every line is a log event
         toml::raw_event(line, seq)
+    }
+}
+
+/// A per-task parser session that holds state for stateful (Rhai-type) parsers.
+///
+/// Created via `Engine::create_session()`. For TOML parsers, delegates to
+/// stateless parsing. For stateful parsers, maintains cross-line state.
+pub struct ParserSession {
+    stateful: Option<rhai::StatefulParser>,
+}
+
+impl ParserSession {
+    /// Parse one line of output. Returns events (may be empty for stateful parsers
+    /// that accumulate state across lines).
+    pub fn parse_line(&self, line: &str, seq: u64, tool: Option<&ParsedTool>) -> Vec<TaskEvent> {
+        if let Some(ref stateful) = self.stateful {
+            return stateful.feed_line(line, seq);
+        }
+
+        // TOML / raw fallback
+        if let Some(t) = tool {
+            if t.parser_type == ParserType::Toml {
+                let parser = TomlParser::new(&t.parser_name);
+                if let Some(mut event) = parser.parse_line(line) {
+                    event.seq = seq;
+                    return vec![event];
+                }
+            }
+        }
+
+        vec![toml::raw_event(line, seq)]
+    }
+
+    /// Called on command completion — emit final events from stateful parsers.
+    pub fn on_complete(&self, exit_code: i32, seq: u64) -> Vec<TaskEvent> {
+        if let Some(ref stateful) = self.stateful {
+            return stateful.on_complete(exit_code, seq);
+        }
+        vec![]
     }
 }
 

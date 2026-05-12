@@ -36,11 +36,17 @@ async fn main() -> Result<()> {
 
     let event_bus = bus::EventBus::new();
 
+    let exec_config = exec::ExecutorConfig {
+        max_task_duration_ms: cfg.daemon.max_task_duration_ms,
+        max_output_bytes: cfg.daemon.max_output_bytes,
+        kill_graceful_ms: cfg.daemon.kill_graceful_ms,
+        kill_force_ms: cfg.daemon.kill_force_ms,
+    };
     let executor = Arc::new(exec::Executor::new(
         store.clone(),
         parser_engine,
         event_bus.clone(),
-    ));
+    ).with_config(exec_config));
 
     let socket_path = cfg.daemon.expanded_socket_path();
     if let Some(parent) = socket_path.parent() {

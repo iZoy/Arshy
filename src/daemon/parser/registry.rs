@@ -81,31 +81,61 @@ impl ParserRegistry {
 
 fn builtin_parsers() -> Vec<ParserEntry> {
     vec![
+        // TypeScript
         ParserEntry {
             name: "tsc".into(), tool_name: "tsc".into(),
             detect_patterns: vec!["tsc".into()],
             parser_type: ParserType::Toml, source: ParserSource::Builtin, priority: 50,
         },
+        // Bundlers
         ParserEntry {
             name: "vite".into(), tool_name: "vite".into(),
             detect_patterns: vec!["vite".into()],
             parser_type: ParserType::Toml, source: ParserSource::Builtin, priority: 50,
         },
+        // Test runners
         ParserEntry {
             name: "jest".into(), tool_name: "jest".into(),
-            detect_patterns: vec!["jest".into()],
+            detect_patterns: vec!["jest".into(), "vitest".into()],
             parser_type: ParserType::Toml, source: ParserSource::Builtin, priority: 50,
         },
+        // Rust
         ParserEntry {
             name: "cargo".into(), tool_name: "cargo".into(),
-            detect_patterns: vec!["cargo".into()],
+            detect_patterns: vec!["cargo".into(), "rustc".into()],
             parser_type: ParserType::Toml, source: ParserSource::Builtin, priority: 50,
         },
+        // Node package managers (stateful)
         ParserEntry {
             name: "npm".into(), tool_name: "npm".into(),
             detect_patterns: vec!["npm".into()],
             parser_type: ParserType::Rhai, source: ParserSource::Builtin, priority: 50,
         },
+        // Linters
+        ParserEntry {
+            name: "eslint".into(), tool_name: "eslint".into(),
+            detect_patterns: vec!["eslint".into()],
+            parser_type: ParserType::Toml, source: ParserSource::Builtin, priority: 50,
+        },
+        // Go
+        ParserEntry {
+            name: "go".into(), tool_name: "go".into(),
+            detect_patterns: vec!["go".into()],
+            parser_type: ParserType::Toml, source: ParserSource::Builtin, priority: 50,
+        },
+        // Python
+        ParserEntry {
+            name: "python".into(), tool_name: "python".into(),
+            detect_patterns: vec!["python".into(), "python3".into(), "pytest".into()],
+            parser_type: ParserType::Toml, source: ParserSource::Builtin, priority: 50,
+        },
+        // C/C++ compilers
+        ParserEntry {
+            name: "cc".into(), tool_name: "cc".into(),
+            detect_patterns: vec!["gcc".into(), "g++".into(), "clang".into(), "clang++".into()],
+            parser_type: ParserType::Toml, source: ParserSource::Builtin, priority: 50,
+        },
+        // Raw fallback
         ParserEntry {
             name: "raw".into(), tool_name: "*".into(),
             detect_patterns: vec![],

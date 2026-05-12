@@ -7,13 +7,13 @@ mod task;
 
 pub use task::*;
 
-use arshy_lib::ipc::{Task, TaskEvent, TaskStatus};
+use arshy_lib::ipc::{Task, TaskStatus};
 use arshy_lib::Result;
 use std::sync::Arc;
 
 use super::bus::{BusEvent, BusEventKind, EventBus};
 use super::ipc_handler::RunResult;
-use super::parser::{Engine, ParsedTool};
+use super::parser::{Engine, ParsedTool, ParserSession};
 use super::store::Store;
 
 /// Core executor that owns the store, parser, and event bus.
@@ -93,7 +93,7 @@ impl Executor {
         let executor_config = self.config.clone();
         let cmd = command.to_string();
         let task_id_bg = task_id.clone();
-        let tool_name = tool.map(|t| t.tool_name);
+        let detected_tool = tool;
 
         tokio::spawn(async move {
             if let Err(e) = run_background(
@@ -101,7 +101,7 @@ impl Executor {
                 &cmd,
                 cwd_string.as_deref(),
                 timeout_ms,
-                &tool_name,
+                &detected_tool,
                 store,
                 parser,
                 event_bus,
@@ -153,7 +153,7 @@ async fn run_background(
     command: &str,
     cwd: Option<&str>,
     timeout_ms: Option<u64>,
-    tool_name: &Option<String>,
+    detected_tool: &Option<ParsedTool>,
     store: Arc<Store>,
     parser: Arc<Engine>,
     event_bus: EventBus,
@@ -162,12 +162,8 @@ async fn run_background(
     let start = std::time::Instant::now();
     let cwd_path = cwd.map(std::path::PathBuf::from);
 
-    // Detect parser for this command
-    let detected = tool_name.as_ref().and_then(|name| {
-        // Reconstruct a ParsedTool from the tool name
-        // For now, just pass the tool name for parse_line lookup
-        Some(name.clone())
-    });
+    // Create a parser session for this task (holds state for stateful parsers)
+    let session = parser.create_session(detected_tool.as_ref());
 
     // Spawn the process
     let mut handle = pty::spawn_command(command, cwd_path.as_deref()).await?;
@@ -204,40 +200,36 @@ async fn run_background(
                     break;
                 }
 
-                seq += 1;
+                // Parse the line using the session (handles both TOML and stateful parsers)
+                let events = session.parse_line(&line, seq, detected_tool.as_ref());
 
-                // Parse the line
-                let parsed_tool = detected.as_ref().map(|name| ParsedTool {
-                    tool_name: name.clone(),
-                    parser_name: name.clone(),
-                    parser_type: super::parser::ParserType::Toml, // simplified
-                    version: None,
-                });
+                for mut event in events {
+                    seq += 1;
+                    event.seq = seq;
 
-                let mut event = parser.parse_line(&line, seq, parsed_tool.as_ref());
+                    // Track source (stdout/stderr) — stderr lines get elevated severity
+                    if source == "stderr" && event.severity.as_deref() == Some("info") {
+                        event.severity = Some("warning".into());
+                    }
 
-                // Track source (stdout/stderr) — stderr lines get elevated severity
-                if source == "stderr" && event.severity.as_deref() == Some("info") {
-                    event.severity = Some("warning".into());
+                    if event.severity.as_deref() == Some("error") {
+                        error_count += 1;
+                    }
+
+                    // Store event in DB
+                    if let Err(e) = store.insert_event(task_id, seq, &event) {
+                        tracing::error!("task {} failed to store event: {}", task_id, e);
+                    }
+
+                    // Publish diagnostic event on bus
+                    event_bus.publish(BusEvent {
+                        connection_id: 0,
+                        kind: BusEventKind::Diagnostic {
+                            task_id: task_id.to_string(),
+                            event,
+                        },
+                    });
                 }
-
-                if event.severity.as_deref() == Some("error") {
-                    error_count += 1;
-                }
-
-                // Store event in DB
-                if let Err(e) = store.insert_event(task_id, seq, &event) {
-                    tracing::error!("task {} failed to store event: {}", task_id, e);
-                }
-
-                // Publish diagnostic event on bus
-                event_bus.publish(BusEvent {
-                    connection_id: 0,
-                    kind: BusEventKind::Diagnostic {
-                        task_id: task_id.to_string(),
-                        event,
-                    },
-                });
             }
 
             // Wait for process exit
@@ -268,6 +260,23 @@ async fn run_background(
     };
 
     let exit_code_val = exit_code.unwrap_or(-1);
+
+    // Emit completion events from stateful parsers
+    let completion_events = session.on_complete(exit_code_val, seq);
+    for mut event in completion_events {
+        seq += 1;
+        event.seq = seq;
+        if let Err(e) = store.insert_event(task_id, seq, &event) {
+            tracing::error!("task {} failed to store completion event: {}", task_id, e);
+        }
+        event_bus.publish(BusEvent {
+            connection_id: 0,
+            kind: BusEventKind::Diagnostic {
+                task_id: task_id.to_string(),
+                event,
+            },
+        });
+    }
 
     // Update task in DB
     if let Err(e) = store.update_task(task_id, &final_status, Some(exit_code_val), Some(duration_ms)) {
