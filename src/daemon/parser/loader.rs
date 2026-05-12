@@ -53,7 +53,7 @@ impl ParserWatcher {
                             if let Ok(meta) = std::fs::metadata(&path) {
                                 if let Ok(mtime) = meta.modified() {
                                     let prev = mtimes.get(&path).copied();
-                                    if prev.map_or(true, |p| mtime > p) {
+                                    if prev.is_none_or(|p| mtime > p) {
                                         mtimes.insert(path, mtime);
                                         changed = true;
                                     }

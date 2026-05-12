@@ -49,11 +49,7 @@ impl TomlParser {
                     .map(|m| m.as_str().trim().to_string())
                     .unwrap_or_else(|| line.to_string());
 
-                let location = if let Some(f) = file {
-                    Some(EventLocation { file: f, line: line_no.unwrap_or(0), column: col })
-                } else {
-                    None
-                };
+                let location = file.map(|f| EventLocation { file: f, line: line_no.unwrap_or(0), column: col });
 
                 return Some(TaskEvent {
                     seq: 0, // caller sets seq

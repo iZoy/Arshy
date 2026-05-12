@@ -101,6 +101,7 @@ async fn list_tasks(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn query_events(
     config_path: Option<PathBuf>,
     log_level: Option<String>,

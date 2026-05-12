@@ -8,7 +8,7 @@ mod schema;
 pub use schema::*;
 
 use crate::Result;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// CLI-settable overrides applied on top of all other config sources.
 #[derive(Debug, Default, Clone)]
@@ -98,7 +98,7 @@ fn home_join(suffix: &str) -> String {
 
 /// Expand `${XDG_DATA_HOME}`, `${XDG_CONFIG_HOME}`, `${XDG_CACHE_HOME}`, `${HOME}`
 /// in a path string.
-pub fn expand_path(path: &PathBuf) -> PathBuf {
+pub fn expand_path(path: &Path) -> PathBuf {
     let s = path.to_string_lossy();
     let expanded = s
         .replace("${XDG_DATA_HOME}", &xdg_data_home())

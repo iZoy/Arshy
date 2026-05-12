@@ -27,7 +27,7 @@ fn default_clients() -> Vec<String> { vec!["claude-code".into(), "cursor".into()
 
 // ── Top-level ────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
     pub daemon: DaemonConfig,
@@ -36,19 +36,6 @@ pub struct Config {
     pub notifications: NotificationsConfig,
     pub mcp: McpConfig,
     pub telemetry: TelemetryConfig,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            daemon: DaemonConfig::default(),
-            store: StoreConfig::default(),
-            parser: ParserConfig::default(),
-            notifications: NotificationsConfig::default(),
-            mcp: McpConfig::default(),
-            telemetry: TelemetryConfig::default(),
-        }
-    }
 }
 
 // ── Partial config (all optional — for file merge) ───────────────────────────
@@ -264,14 +251,8 @@ impl Default for McpConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TelemetryConfig {
     #[serde(default)]
     pub enabled: bool,
-}
-
-impl Default for TelemetryConfig {
-    fn default() -> Self {
-        Self { enabled: false }
-    }
 }

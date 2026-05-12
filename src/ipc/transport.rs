@@ -127,7 +127,7 @@ impl DaemonConnection {
     /// Drain all pending notifications (non-blocking).
     pub fn drain_notifications(&mut self) -> Vec<Notification> {
         let mut notifs = Vec::new();
-        while let Some(n) = self.notif_rx.try_recv().ok() {
+        while let Ok(n) = self.notif_rx.try_recv() {
             notifs.push(n);
         }
         notifs

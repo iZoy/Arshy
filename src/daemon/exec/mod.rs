@@ -95,19 +95,20 @@ impl Executor {
         let task_id_bg = task_id.clone();
         let detected_tool = tool;
 
+        let task = BackgroundTask {
+            task_id: task_id_bg,
+            command: cmd,
+            cwd: cwd_string.map(std::path::PathBuf::from),
+            timeout_ms,
+            detected_tool,
+            store,
+            parser,
+            event_bus,
+            config: executor_config,
+        };
         tokio::spawn(async move {
-            if let Err(e) = run_background(
-                &task_id_bg,
-                &cmd,
-                cwd_string.as_deref(),
-                timeout_ms,
-                &detected_tool,
-                store,
-                parser,
-                event_bus,
-                executor_config,
-            ).await {
-                tracing::error!("task {} execution error: {}", task_id_bg, e);
+            if let Err(e) = run_background(task).await {
+                tracing::error!("background task failed: {}", e);
             }
         });
 
@@ -147,48 +148,50 @@ impl Executor {
     }
 }
 
-/// Background task that runs the command, parses output, stores events.
-async fn run_background(
-    task_id: &str,
-    command: &str,
-    cwd: Option<&str>,
+/// Grouped parameters for a background task execution.
+struct BackgroundTask {
+    task_id: String,
+    command: String,
+    cwd: Option<std::path::PathBuf>,
     timeout_ms: Option<u64>,
-    detected_tool: &Option<ParsedTool>,
+    detected_tool: Option<ParsedTool>,
     store: Arc<Store>,
     parser: Arc<Engine>,
     event_bus: EventBus,
     config: ExecutorConfig,
-) -> Result<()> {
+}
+
+/// Background task that runs the command, parses output, stores events.
+async fn run_background(t: BackgroundTask) -> Result<()> {
     let start = std::time::Instant::now();
-    let cwd_path = cwd.map(std::path::PathBuf::from);
 
     // Create a parser session for this task (holds state for stateful parsers)
-    let session = parser.create_session(detected_tool.as_ref());
+    let session = t.parser.create_session(t.detected_tool.as_ref());
 
     // Spawn the process
-    let mut handle = pty::spawn_command(command, cwd_path.as_deref()).await?;
+    let mut handle = pty::spawn_command(&t.command, t.cwd.as_deref()).await?;
     let pid = handle.pid;
 
     // Update task with PID
-    let _ = store.update_task_pid(task_id, pid);
+    let _ = t.store.update_task_pid(&t.task_id, pid);
 
     // Publish task/update event
-    event_bus.publish(BusEvent {
-        connection_id: 0, // broadcast to all
+    t.event_bus.publish(BusEvent {
+        connection_id: 0,
         kind: BusEventKind::TaskUpdate {
-            task_id: task_id.to_string(),
+            task_id: t.task_id.clone(),
             status: "running".into(),
             elapsed_ms: 0,
         },
     });
 
-    let timeout = tokio::time::Duration::from_millis(
-        timeout_ms.unwrap_or(config.max_task_duration_ms),
+    let timeout_dur = tokio::time::Duration::from_millis(
+        t.timeout_ms.unwrap_or(t.config.max_task_duration_ms),
     );
     let mut seq: u64 = 0;
     let mut total_bytes: u64 = 0;
     let mut error_count: u64 = 0;
-    let max_bytes = config.max_output_bytes;
+    let max_bytes = t.config.max_output_bytes;
 
     // Read output lines with timeout
     let exit_code = tokio::select! {
@@ -196,12 +199,12 @@ async fn run_background(
             while let Some((source, line)) = handle.output_rx.recv().await {
                 total_bytes += line.len() as u64;
                 if total_bytes > max_bytes {
-                    tracing::warn!("task {} output exceeded {} bytes, truncating", task_id, max_bytes);
+                    tracing::warn!("task {} output exceeded {} bytes, truncating", t.task_id, max_bytes);
                     break;
                 }
 
                 // Parse the line using the session (handles both TOML and stateful parsers)
-                let events = session.parse_line(&line, seq, detected_tool.as_ref());
+                let events = session.parse_line(&line, seq, t.detected_tool.as_ref());
 
                 for mut event in events {
                     seq += 1;
@@ -217,15 +220,15 @@ async fn run_background(
                     }
 
                     // Store event in DB
-                    if let Err(e) = store.insert_event(task_id, seq, &event) {
-                        tracing::error!("task {} failed to store event: {}", task_id, e);
+                    if let Err(e) = t.store.insert_event(&t.task_id, seq, &event) {
+                        tracing::error!("task {} failed to store event: {}", t.task_id, e);
                     }
 
                     // Publish diagnostic event on bus
-                    event_bus.publish(BusEvent {
+                    t.event_bus.publish(BusEvent {
                         connection_id: 0,
                         kind: BusEventKind::Diagnostic {
-                            task_id: task_id.to_string(),
+                            task_id: t.task_id.clone(),
                             event,
                         },
                     });
@@ -238,16 +241,16 @@ async fn run_background(
             match result {
                 Ok(code) => code,
                 Err(e) => {
-                    tracing::error!("task {} wait error: {}", task_id, e);
+                    tracing::error!("task {} wait error: {}", t.task_id, e);
                     Some(-1)
                 }
             }
         }
-        _ = tokio::time::sleep(timeout) => {
-            tracing::warn!("task {} timed out after {}ms", task_id, timeout.as_millis());
+        _ = tokio::time::sleep(timeout_dur) => {
+            tracing::warn!("task {} timed out after {}ms", t.task_id, timeout_dur.as_millis());
             // Kill the process
             let _ = handle.force_kill();
-            let _ = store.update_task(task_id, &TaskStatus::Timeout, Some(-2), None);
+            let _ = t.store.update_task(&t.task_id, &TaskStatus::Timeout, Some(-2), None);
             None
         }
     };
@@ -266,28 +269,28 @@ async fn run_background(
     for mut event in completion_events {
         seq += 1;
         event.seq = seq;
-        if let Err(e) = store.insert_event(task_id, seq, &event) {
-            tracing::error!("task {} failed to store completion event: {}", task_id, e);
+        if let Err(e) = t.store.insert_event(&t.task_id, seq, &event) {
+            tracing::error!("task {} failed to store completion event: {}", t.task_id, e);
         }
-        event_bus.publish(BusEvent {
+        t.event_bus.publish(BusEvent {
             connection_id: 0,
             kind: BusEventKind::Diagnostic {
-                task_id: task_id.to_string(),
+                task_id: t.task_id.clone(),
                 event,
             },
         });
     }
 
     // Update task in DB
-    if let Err(e) = store.update_task(task_id, &final_status, Some(exit_code_val), Some(duration_ms)) {
-        tracing::error!("task {} failed to update final status: {}", task_id, e);
+    if let Err(e) = t.store.update_task(&t.task_id, &final_status, Some(exit_code_val), Some(duration_ms)) {
+        tracing::error!("task {} failed to update final status: {}", t.task_id, e);
     }
 
     // Publish completion event
-    event_bus.publish(BusEvent {
+    t.event_bus.publish(BusEvent {
         connection_id: 0,
         kind: BusEventKind::TaskComplete {
-            task_id: task_id.to_string(),
+            task_id: t.task_id.clone(),
             exit_code: exit_code_val,
             duration_ms,
         },
@@ -295,7 +298,7 @@ async fn run_background(
 
     tracing::info!(
         "task {} completed: status={:?}, exit_code={}, duration={}ms, events={}, errors={}",
-        task_id, final_status, exit_code_val, duration_ms, seq, error_count
+        t.task_id, final_status, exit_code_val, duration_ms, seq, error_count
     );
 
     Ok(())

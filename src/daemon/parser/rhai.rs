@@ -124,8 +124,8 @@ impl StatefulParser {
         // npm-install: summarize install result
         if self.name == "npm" {
             let state = self.state.lock().unwrap();
-            let has_adds = state.values.get("packages_added").is_some();
-            let has_error = state.values.get("has_error").map_or(false, |v| v == "true");
+            let has_adds = state.values.contains_key("packages_added");
+            let has_error = state.values.get("has_error").is_some_and(|v| v == "true");
 
             if has_adds || has_error {
                 let severity = if has_error || exit_code != 0 { "error" } else { "info" };

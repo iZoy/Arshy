@@ -74,11 +74,9 @@ impl super::Store {
         })?;
 
         let mut events = Vec::new();
-        for row in rows {
-            if let Ok(payload) = row {
-                if let Ok(event) = serde_json::from_str::<TaskEvent>(&payload) {
-                    events.push(event);
-                }
+        for payload in rows.flatten() {
+            if let Ok(event) = serde_json::from_str::<TaskEvent>(&payload) {
+                events.push(event);
             }
         }
 
