@@ -168,8 +168,8 @@ async fn handle_tool_call(
 // ── Daemon notification → MCP notification mapping ──────────────────────────
 
 /// Forward a daemon IPC notification as an MCP `notifications/message`.
-async fn write_mcp_notification(
-    stdout: &mut BufWriter<tokio::io::Stdout>,
+async fn write_mcp_notification<W: tokio::io::AsyncWriteExt + Unpin>(
+    stdout: &mut BufWriter<W>,
     notif: &Notification,
 ) -> Result<()> {
     let (level, logger, data) = match notif.method.as_str() {
@@ -299,6 +299,213 @@ fn mcp_tool_to_ipc_method(tool_name: &str) -> &str {
         "arshy_kill" => ipc::METHOD_KILL,
         "arshy_tail" => ipc::METHOD_TAIL,
         _ => ipc::METHOD_RUN,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_mcp_tool_to_ipc_method() {
+        assert_eq!(mcp_tool_to_ipc_method("arshy_run"), ipc::METHOD_RUN);
+        assert_eq!(mcp_tool_to_ipc_method("arshy_query"), ipc::METHOD_QUERY);
+        assert_eq!(mcp_tool_to_ipc_method("arshy_list"), ipc::METHOD_LIST);
+        assert_eq!(mcp_tool_to_ipc_method("arshy_kill"), ipc::METHOD_KILL);
+        assert_eq!(mcp_tool_to_ipc_method("arshy_tail"), ipc::METHOD_TAIL);
+        // Unknown tools default to run
+        assert_eq!(mcp_tool_to_ipc_method("unknown"), ipc::METHOD_RUN);
+        assert_eq!(mcp_tool_to_ipc_method(""), ipc::METHOD_RUN);
+    }
+
+    #[test]
+    fn test_is_connection_error() {
+        // Connection closed
+        assert!(is_connection_error(&arshy_lib::ArshyError::Ipc("connection closed".into())));
+        // Timed out
+        assert!(is_connection_error(&arshy_lib::ArshyError::Ipc("request timed out".into())));
+        // Channel dropped
+        assert!(is_connection_error(&arshy_lib::ArshyError::Ipc("response channel dropped".into())));
+        // Broken pipe
+        assert!(is_connection_error(&arshy_lib::ArshyError::Ipc("broken pipe".into())));
+        // Connection refused
+        assert!(is_connection_error(&arshy_lib::ArshyError::Ipc("Connection refused".into())));
+        // No such file
+        assert!(is_connection_error(&arshy_lib::ArshyError::Ipc("No such file or directory".into())));
+
+        // Non-connection errors
+        assert!(!is_connection_error(&arshy_lib::ArshyError::Ipc("parse error".into())));
+        assert!(!is_connection_error(&arshy_lib::ArshyError::Ipc("invalid params".into())));
+    }
+
+    #[tokio::test]
+    async fn test_write_mcp_notification_task_update() {
+        use tokio::io::AsyncWriteExt;
+        let mut buf = tokio::io::BufWriter::new(Vec::new());
+
+        let notif = Notification {
+            jsonrpc: "2.0".into(),
+            method: "task/update".into(),
+            params: serde_json::json!({"task_id": "abc-123", "status": "running"}),
+        };
+
+        write_mcp_notification(&mut buf, &notif).await.unwrap();
+        buf.flush().await.unwrap();
+
+        let output = String::from_utf8(buf.into_inner()).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(output.trim()).unwrap();
+
+        assert_eq!(parsed["method"], "notifications/message");
+        assert_eq!(parsed["params"]["level"], "info");
+        assert_eq!(parsed["params"]["logger"], "arshy");
+        assert_eq!(parsed["params"]["data"]["event"], "task_update");
+        assert_eq!(parsed["params"]["data"]["task_id"], "abc-123");
+        assert_eq!(parsed["params"]["data"]["status"], "running");
+    }
+
+    #[tokio::test]
+    async fn test_write_mcp_notification_task_complete_success() {
+        use tokio::io::AsyncWriteExt;
+        let mut buf = tokio::io::BufWriter::new(Vec::new());
+
+        let notif = Notification {
+            jsonrpc: "2.0".into(),
+            method: "task/complete".into(),
+            params: serde_json::json!({"task_id": "abc-123", "exit_code": 0}),
+        };
+
+        write_mcp_notification(&mut buf, &notif).await.unwrap();
+        buf.flush().await.unwrap();
+
+        let output = String::from_utf8(buf.into_inner()).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(output.trim()).unwrap();
+
+        assert_eq!(parsed["params"]["level"], "info");
+        assert_eq!(parsed["params"]["data"]["event"], "task_complete");
+        assert_eq!(parsed["params"]["data"]["exit_code"], 0);
+    }
+
+    #[tokio::test]
+    async fn test_write_mcp_notification_task_complete_failure() {
+        use tokio::io::AsyncWriteExt;
+        let mut buf = tokio::io::BufWriter::new(Vec::new());
+
+        let notif = Notification {
+            jsonrpc: "2.0".into(),
+            method: "task/complete".into(),
+            params: serde_json::json!({"task_id": "abc-123", "exit_code": 1}),
+        };
+
+        write_mcp_notification(&mut buf, &notif).await.unwrap();
+        buf.flush().await.unwrap();
+
+        let output = String::from_utf8(buf.into_inner()).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(output.trim()).unwrap();
+
+        assert_eq!(parsed["params"]["level"], "error");
+        assert_eq!(parsed["params"]["data"]["exit_code"], 1);
+    }
+
+    #[tokio::test]
+    async fn test_write_mcp_notification_diagnostic() {
+        use tokio::io::AsyncWriteExt;
+        let mut buf = tokio::io::BufWriter::new(Vec::new());
+
+        let notif = Notification {
+            jsonrpc: "2.0".into(),
+            method: "diagnostic".into(),
+            params: serde_json::json!({
+                "task_id": "abc-123",
+                "event": {
+                    "type": "compile_error",
+                    "severity": "error",
+                    "message": "expected semicolon",
+                    "location": {"file": "main.rs", "line": 42}
+                }
+            }),
+        };
+
+        write_mcp_notification(&mut buf, &notif).await.unwrap();
+        buf.flush().await.unwrap();
+
+        let output = String::from_utf8(buf.into_inner()).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(output.trim()).unwrap();
+
+        assert_eq!(parsed["params"]["level"], "error");
+        assert_eq!(parsed["params"]["logger"], "arshy.parser");
+        assert_eq!(parsed["params"]["data"]["event"], "diagnostic");
+        assert_eq!(parsed["params"]["data"]["type"], "compile_error");
+        assert_eq!(parsed["params"]["data"]["message"], "expected semicolon");
+        assert_eq!(parsed["params"]["data"]["location"]["file"], "main.rs");
+    }
+
+    #[tokio::test]
+    async fn test_write_mcp_notification_diagnostic_warning() {
+        use tokio::io::AsyncWriteExt;
+        let mut buf = tokio::io::BufWriter::new(Vec::new());
+
+        let notif = Notification {
+            jsonrpc: "2.0".into(),
+            method: "diagnostic".into(),
+            params: serde_json::json!({
+                "task_id": "abc-123",
+                "event": {
+                    "type": "lint",
+                    "severity": "warning",
+                    "message": "unused variable"
+                }
+            }),
+        };
+
+        write_mcp_notification(&mut buf, &notif).await.unwrap();
+        buf.flush().await.unwrap();
+
+        let output = String::from_utf8(buf.into_inner()).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(output.trim()).unwrap();
+
+        assert_eq!(parsed["params"]["level"], "warning");
+    }
+
+    #[tokio::test]
+    async fn test_write_mcp_notification_daemon_shutdown() {
+        use tokio::io::AsyncWriteExt;
+        let mut buf = tokio::io::BufWriter::new(Vec::new());
+
+        let notif = Notification {
+            jsonrpc: "2.0".into(),
+            method: "daemon/shutdown".into(),
+            params: serde_json::json!({"reason": "graceful"}),
+        };
+
+        write_mcp_notification(&mut buf, &notif).await.unwrap();
+        buf.flush().await.unwrap();
+
+        let output = String::from_utf8(buf.into_inner()).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(output.trim()).unwrap();
+
+        assert_eq!(parsed["params"]["level"], "warning");
+        assert_eq!(parsed["params"]["logger"], "arshy.daemon");
+        assert_eq!(parsed["params"]["data"]["event"], "shutdown");
+        assert_eq!(parsed["params"]["data"]["reason"], "graceful");
+    }
+
+    #[tokio::test]
+    async fn test_write_mcp_notification_unknown_ignored() {
+        use tokio::io::AsyncWriteExt;
+        let mut buf = tokio::io::BufWriter::new(Vec::new());
+
+        let notif = Notification {
+            jsonrpc: "2.0".into(),
+            method: "unknown/method".into(),
+            params: serde_json::json!({}),
+        };
+
+        write_mcp_notification(&mut buf, &notif).await.unwrap();
+        buf.flush().await.unwrap();
+
+        let output = buf.into_inner();
+        // Unknown notifications produce no output
+        assert!(output.is_empty());
     }
 }
 

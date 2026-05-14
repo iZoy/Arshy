@@ -214,3 +214,262 @@ impl DaemonConnection {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ipc::Request;
+
+    /// Helper: create a connected pair of UnixStreams.
+    fn pair() -> (UnixStream, UnixStream) {
+        UnixStream::pair().expect("UnixStream::pair")
+    }
+
+    /// Helper: write a JSON line to a stream half.
+    async fn write_line(stream: &mut tokio::net::unix::OwnedWriteHalf, val: &serde_json::Value) {
+        let mut bytes = serde_json::to_vec(val).unwrap();
+        bytes.push(b'\n');
+        stream.write_all(&bytes).await.unwrap();
+        stream.flush().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_send_request_basic() {
+        let (client, server) = pair();
+
+        let handle = tokio::spawn(async move {
+            let (mut sr, mut sw) = server.into_split();
+            let mut reader = BufReader::new(&mut sr);
+            let mut line = String::new();
+            reader.read_line(&mut line).await.unwrap();
+
+            let req: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
+            assert_eq!(req["method"], "test/method");
+
+            let resp = serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": req["id"],
+                "result": {"value": 42}
+            });
+            write_line(&mut sw, &resp).await;
+        });
+
+        let mut client_stream = client;
+        let request = Request {
+            jsonrpc: "2.0".into(),
+            id: 1,
+            method: "test/method".into(),
+            params: serde_json::json!({}),
+        };
+
+        let response = send_request(&mut client_stream, &request).await.unwrap();
+        assert_eq!(response.id, 1);
+        assert_eq!(response.result["value"], 42);
+        handle.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_send_request_empty_response() {
+        let (client, server) = pair();
+        drop(server);
+
+        let mut client_stream = client;
+        let request = Request {
+            jsonrpc: "2.0".into(),
+            id: 1,
+            method: "test".into(),
+            params: serde_json::json!({}),
+        };
+
+        let result = send_request(&mut client_stream, &request).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_daemon_connection_request_response() {
+        let (client, server) = pair();
+        let mut conn = DaemonConnection::new(client);
+
+        let handle = tokio::spawn(async move {
+            let (mut sr, mut sw) = server.into_split();
+            let mut reader = BufReader::new(&mut sr);
+            let mut line = String::new();
+            reader.read_line(&mut line).await.unwrap();
+
+            let req: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
+            assert_eq!(req["method"], "task/run");
+
+            let resp = serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": req["id"],
+                "result": {"task_id": "abc-123", "status": "running"}
+            });
+            write_line(&mut sw, &resp).await;
+        });
+
+        let response = conn.send_request("task/run", serde_json::json!({"command": "echo hi"})).await.unwrap();
+        assert_eq!(response.result["task_id"], "abc-123");
+        assert_eq!(response.result["status"], "running");
+        handle.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_daemon_connection_timeout() {
+        let (client, server) = pair();
+        let mut conn = DaemonConnection::new(client);
+
+        // Server reads but never responds; drops after test
+        let handle = tokio::spawn(async move {
+            let (mut sr, _sw) = server.into_split();
+            let mut reader = BufReader::new(&mut sr);
+            let mut line = String::new();
+            let _ = reader.read_line(&mut line).await;
+        });
+
+        let result = conn.send_request_with_timeout(
+            "task/run",
+            serde_json::json!({}),
+            std::time::Duration::from_millis(100),
+        ).await;
+
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("timed out"), "expected timeout error, got: {}", err);
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn test_daemon_connection_notification() {
+        let (client, server) = pair();
+        let mut conn = DaemonConnection::new(client);
+
+        let handle = tokio::spawn(async move {
+            let (_sr, mut sw) = server.into_split();
+            let notif = serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "task/update",
+                "params": {"task_id": "abc", "status": "running"}
+            });
+            write_line(&mut sw, &notif).await;
+        });
+
+        let notif = conn.recv_notification_timeout(std::time::Duration::from_secs(2)).await;
+        assert!(notif.is_some());
+        let notif = notif.unwrap();
+        assert_eq!(notif.method, "task/update");
+        assert_eq!(notif.params["task_id"], "abc");
+        handle.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_daemon_connection_drain_notifications() {
+        let (client, server) = pair();
+        let mut conn = DaemonConnection::new(client);
+
+        let handle = tokio::spawn(async move {
+            let (_sr, mut sw) = server.into_split();
+            for i in 0..3 {
+                let notif = serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "method": "diagnostic",
+                    "params": {"seq": i}
+                });
+                write_line(&mut sw, &notif).await;
+            }
+        });
+
+        // Wait for all notifications to arrive
+        handle.await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let notifs = conn.drain_notifications();
+        assert_eq!(notifs.len(), 3);
+        assert_eq!(notifs[0].params["seq"], 0);
+        assert_eq!(notifs[1].params["seq"], 1);
+        assert_eq!(notifs[2].params["seq"], 2);
+    }
+
+    #[tokio::test]
+    async fn test_daemon_connection_routes_response_and_notification() {
+        let (client, server) = pair();
+        let mut conn = DaemonConnection::new(client);
+
+        let handle = tokio::spawn(async move {
+            let (mut sr, mut sw) = server.into_split();
+            let mut reader = BufReader::new(&mut sr);
+            let mut line = String::new();
+            reader.read_line(&mut line).await.unwrap();
+
+            let req: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
+
+            // Send response
+            let resp = serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": req["id"],
+                "result": {"ok": true}
+            });
+            write_line(&mut sw, &resp).await;
+
+            // Then send notification
+            let notif = serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "task/complete",
+                "params": {"task_id": "abc", "exit_code": 0}
+            });
+            write_line(&mut sw, &notif).await;
+        });
+
+        // Send request — should get response
+        let resp = conn.send_request("test", serde_json::json!({})).await.unwrap();
+        assert_eq!(resp.result["ok"], true);
+
+        // Then drain notifications — should get the notification
+        handle.await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let notifs = conn.drain_notifications();
+        assert_eq!(notifs.len(), 1);
+        assert_eq!(notifs[0].method, "task/complete");
+    }
+
+    #[tokio::test]
+    async fn test_daemon_connection_try_recv_empty() {
+        let (client, server) = pair();
+        let mut conn = DaemonConnection::new(client);
+        drop(server);
+
+        let notif = conn.try_recv_notification();
+        assert!(notif.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_daemon_connection_closed_write() {
+        let (client, server) = pair();
+        let mut conn = DaemonConnection::new(client);
+        drop(server);
+
+        let result = conn.send_request_with_timeout(
+            "test",
+            serde_json::json!({}),
+            std::time::Duration::from_millis(500),
+        ).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_write_json_line() {
+        let (client, server) = pair();
+        let mut writer = BufWriter::new(client);
+
+        let value = serde_json::json!({"key": "value"});
+        write_json_line(&mut writer, &value).await.unwrap();
+
+        // Read from the other end of the pair
+        let (mut sr, _sw) = server.into_split();
+        let mut reader = BufReader::new(&mut sr);
+        let mut line = String::new();
+        reader.read_line(&mut line).await.unwrap();
+
+        let parsed: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
+        assert_eq!(parsed["key"], "value");
+    }
+}

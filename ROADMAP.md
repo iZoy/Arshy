@@ -90,16 +90,24 @@
 | G3 | 错误路径 — 未知方法、缺参数、畸形 JSON、幂等 kill | ✅ |
 | G4 | 并发 — 串行 5 task、双连接并行、client 断开、分页 | ✅ |
 
+## Stage H: Transport + Proxy 测试 ✅
+
+| Step | 内容 | 状态 |
+|------|------|------|
+| H1 | DaemonConnection 测试 — request/response、timeout、notification、drain | ✅ 10 tests |
+| H2 | Proxy helper 测试 — mcp_tool_to_ipc_method、is_connection_error | ✅ 2 tests |
+| H3 | MCP 通知映射 — task/update、task/complete、diagnostic、shutdown、unknown | ✅ 7 tests |
+
 ---
 
 ## 测试统计
 
 | 指标 | 值 |
 |------|------|
-| 总测试数 | **134** |
-| Library tests | 19 |
-| Daemon tests | 99 |
-| 集成测试 | 16 |
+| 总测试数 | **153** |
+| Library tests (含 transport 10) | 29 |
+| Daemon tests (含 ipc_handler 16) | 115 |
+| Proxy tests | 9 |
 | Clippy warnings | **0** |
 | Compiler warnings | **0** |
 
