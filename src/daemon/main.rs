@@ -5,9 +5,10 @@ mod context;
 mod exec;
 mod ipc_handler;
 mod parser;
+mod security;
 mod store;
 
-use arshy_lib::config::Config;
+use arshy_lib::config::{Config, expand_path};
 use arshy_lib::Result;
 use std::sync::Arc;
 use tokio::net::UnixListener;
@@ -54,11 +55,21 @@ async fn main() -> Result<()> {
         kill_graceful_ms: cfg.daemon.kill_graceful_ms,
         kill_force_ms: cfg.daemon.kill_force_ms,
     };
-    let executor = Arc::new(exec::Executor::new(
+    let mut executor = exec::Executor::new(
         store.clone(),
         parser_engine,
         event_bus.clone(),
-    ).with_config(exec_config));
+    ).with_config(exec_config).with_security(&cfg.security);
+
+    // Audit log (if configured)
+    if let Some(ref audit_path) = cfg.security.audit_log {
+        let expanded = expand_path(std::path::Path::new(audit_path));
+        let audit = Arc::new(security::AuditLog::new(&expanded)?);
+        tracing::info!("audit log: {}", expanded.display());
+        executor = executor.with_audit_log(audit);
+    }
+
+    let executor = Arc::new(executor);
 
     let socket_path = cfg.daemon.expanded_socket_path();
     if let Some(parent) = socket_path.parent() {

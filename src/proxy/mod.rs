@@ -302,6 +302,37 @@ fn mcp_tool_to_ipc_method(tool_name: &str) -> &str {
     }
 }
 
+async fn write_json_response(
+    stdout: &mut BufWriter<tokio::io::Stdout>,
+    id: u64,
+    result: &serde_json::Value,
+) -> Result<()> {
+    let response = serde_json::json!({ "jsonrpc": "2.0", "id": id, "result": result });
+    let mut json = serde_json::to_vec(&response)?;
+    json.push(b'\n');
+    stdout.write_all(&json).await?;
+    stdout.flush().await?;
+    Ok(())
+}
+
+async fn write_json_error(
+    stdout: &mut BufWriter<tokio::io::Stdout>,
+    id: u64,
+    code: i64,
+    message: &str,
+) -> Result<()> {
+    let response = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "error": { "code": code, "message": message }
+    });
+    let mut json = serde_json::to_vec(&response)?;
+    json.push(b'\n');
+    stdout.write_all(&json).await?;
+    stdout.flush().await?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -507,35 +538,4 @@ mod tests {
         // Unknown notifications produce no output
         assert!(output.is_empty());
     }
-}
-
-async fn write_json_response(
-    stdout: &mut BufWriter<tokio::io::Stdout>,
-    id: u64,
-    result: &serde_json::Value,
-) -> Result<()> {
-    let response = serde_json::json!({ "jsonrpc": "2.0", "id": id, "result": result });
-    let mut json = serde_json::to_vec(&response)?;
-    json.push(b'\n');
-    stdout.write_all(&json).await?;
-    stdout.flush().await?;
-    Ok(())
-}
-
-async fn write_json_error(
-    stdout: &mut BufWriter<tokio::io::Stdout>,
-    id: u64,
-    code: i64,
-    message: &str,
-) -> Result<()> {
-    let response = serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": id,
-        "error": { "code": code, "message": message }
-    });
-    let mut json = serde_json::to_vec(&response)?;
-    json.push(b'\n');
-    stdout.write_all(&json).await?;
-    stdout.flush().await?;
-    Ok(())
 }

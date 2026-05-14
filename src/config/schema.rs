@@ -24,6 +24,18 @@ fn d_100() -> u64 { 100 }
 fn d_50e() -> usize { 50 }
 fn default_dirs() -> Vec<PathBuf> { vec![PathBuf::from("${HOME}/.arshy/parsers")] }
 fn default_clients() -> Vec<String> { vec!["claude-code".into(), "cursor".into(), "windsurf".into()] }
+fn default_blocked_patterns() -> Vec<String> {
+    vec![
+        r"rm\s+-rf\s+/".into(),        // root deletion
+        r"rm\s+-rf\s+~/".into(),        // home deletion
+        r"curl.*\|\s*sh".into(),        // remote code execution via curl
+        r"wget.*\|\s*sh".into(),        // remote code execution via wget
+        r"dd\s+if=".into(),             // disk overwrite
+        r"mkfs".into(),                 // filesystem format
+        r":\(\)\{\s*:\|:&\s*\};:".into(), // fork bomb
+    ]
+}
+fn default_access_level() -> String { "full".into() }
 
 // ── Top-level ────────────────────────────────────────────────────────────────
 
@@ -36,6 +48,7 @@ pub struct Config {
     pub notifications: NotificationsConfig,
     pub mcp: McpConfig,
     pub telemetry: TelemetryConfig,
+    pub security: SecurityConfig,
 }
 
 // ── Partial config (all optional — for file merge) ───────────────────────────
@@ -49,6 +62,7 @@ pub struct PartialConfig {
     pub notifications: Option<PartialNotificationsConfig>,
     pub mcp: Option<PartialMcpConfig>,
     pub telemetry: Option<PartialTelemetryConfig>,
+    pub security: Option<PartialSecurityConfig>,
 }
 
 macro_rules! partial_section {
@@ -104,6 +118,14 @@ partial_section!(PartialMcpConfig {
 
 partial_section!(PartialTelemetryConfig {
     enabled: bool,
+});
+
+partial_section!(PartialSecurityConfig {
+    blocked_patterns: Vec<String>,
+    allowed_commands: Vec<String>,
+    sandbox_paths: Vec<String>,
+    access_level: String,
+    audit_log: String,
 });
 
 // ── Full config sections ─────────────────────────────────────────────────────
@@ -255,4 +277,30 @@ impl Default for McpConfig {
 pub struct TelemetryConfig {
     #[serde(default)]
     pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SecurityConfig {
+    #[serde(default = "default_blocked_patterns")]
+    pub blocked_patterns: Vec<String>,
+    #[serde(default)]
+    pub allowed_commands: Option<Vec<String>>,
+    #[serde(default)]
+    pub sandbox_paths: Vec<String>,
+    #[serde(default = "default_access_level")]
+    pub access_level: String,
+    #[serde(default)]
+    pub audit_log: Option<String>,
+}
+
+impl Default for SecurityConfig {
+    fn default() -> Self {
+        Self {
+            blocked_patterns: default_blocked_patterns(),
+            allowed_commands: None,
+            sandbox_paths: Vec::new(),
+            access_level: default_access_level(),
+            audit_log: None,
+        }
+    }
 }

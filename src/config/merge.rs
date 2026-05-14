@@ -44,6 +44,13 @@ pub fn merge_partial(mut cfg: Config, partial: PartialConfig) -> Config {
     if let Some(t) = partial.telemetry {
         if let Some(v) = t.enabled { cfg.telemetry.enabled = v; }
     }
+    if let Some(s) = partial.security {
+        if let Some(v) = s.blocked_patterns { cfg.security.blocked_patterns = v; }
+        if let Some(v) = s.allowed_commands { cfg.security.allowed_commands = Some(v); }
+        if let Some(v) = s.sandbox_paths { cfg.security.sandbox_paths = v; }
+        if let Some(v) = s.access_level { cfg.security.access_level = v; }
+        if let Some(v) = s.audit_log { cfg.security.audit_log = Some(v); }
+    }
     cfg
 }
 
@@ -88,6 +95,10 @@ pub fn apply_env(cfg: &mut Config) {
     }
     if let Ok(v) = std::env::var("ARSHY_NOTIFICATIONS_MIN_SEVERITY") {
         cfg.notifications.min_severity = v;
+    }
+    // Security
+    if let Ok(v) = std::env::var("ARSHY_SECURITY_ACCESS_LEVEL") {
+        cfg.security.access_level = v;
     }
 }
 

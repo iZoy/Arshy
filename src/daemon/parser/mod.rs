@@ -205,14 +205,14 @@ mod harness_tests {
                 break;
             }
             let event = &all_events[i];
-            let type_ok = exp.get("type").map_or(true, |v| v.as_str() == Some(&event.event_type));
-            let sev_ok = exp.get("severity").map_or(true, |v| v.as_str() == event.severity.as_deref());
-            let code_ok = exp.get("code").map_or(true, |v| v.as_str() == event.code.as_deref());
-            let file_ok = exp.get("file").map_or(true, |v| {
-                event.location.as_ref().map_or(false, |loc| v.as_str() == Some(&loc.file))
+            let type_ok = exp.get("type").is_none_or(|v| v.as_str() == Some(&event.event_type));
+            let sev_ok = exp.get("severity").is_none_or(|v| v.as_str() == event.severity.as_deref());
+            let code_ok = exp.get("code").is_none_or(|v| v.as_str() == event.code.as_deref());
+            let file_ok = exp.get("file").is_none_or(|v| {
+                event.location.as_ref().is_some_and(|loc| v.as_str() == Some(&loc.file))
             });
-            let line_ok = exp.get("line").map_or(true, |v| {
-                event.location.as_ref().map_or(false, |loc| v.as_u64() == Some(loc.line))
+            let line_ok = exp.get("line").is_none_or(|v| {
+                event.location.as_ref().is_some_and(|loc| v.as_u64() == Some(loc.line))
             });
 
             if type_ok && sev_ok && code_ok && file_ok && line_ok {
@@ -231,7 +231,7 @@ mod harness_tests {
         let txt_files: Vec<_> = std::fs::read_dir(&base)
             .unwrap()
             .filter_map(|e| e.ok())
-            .filter(|e| e.path().extension().map_or(false, |ext| ext == "txt"))
+            .filter(|e| e.path().extension().is_some_and(|ext| ext == "txt"))
             .collect();
 
         assert!(!txt_files.is_empty(), "no fixtures in {}", base.display());
