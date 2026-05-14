@@ -1,0 +1,25 @@
+[meta]
+name = "jest"
+description = "Jest / Vitest test runner"
+detect = ["jest", "vitest"]
+priority = 50
+
+[[pattern]]
+name = "test-fail"
+regex = '^FAIL (.+)$'
+event_type = "test_result"
+severity = "error"
+fields = { file = 1 }
+
+[[pattern]]
+name = "test-pass"
+regex = '^PASS (.+)$'
+event_type = "test_result"
+severity = "info"
+fields = { file = 1 }
+
+[[pattern]]
+name = "test-summary"
+regex = '^Tests:\s+(?:(\d+) failed,\s*)?(?:(\d+) passed,\s*)?(\d+) total'
+event_type = "summary"
+severity = "info"

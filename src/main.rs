@@ -88,9 +88,14 @@ pub enum CliCommand {
 
 #[derive(clap::Subcommand, Debug)]
 pub enum ConfigAction {
+    /// Get a config value by key (e.g. "daemon.log_level")
     Get { key: String },
+    /// Set a config value (e.g. set daemon.log_level debug)
     Set { key: String, value: String },
+    /// List all config values
     List,
+    /// Show the config file path
+    Path,
 }
 
 fn main() -> arshy_lib::Result<()> {

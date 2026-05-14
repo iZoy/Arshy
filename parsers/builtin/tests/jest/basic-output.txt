@@ -1,0 +1,4 @@
+PASS src/components/Button.test.tsx
+FAIL src/components/Modal.test.tsx
+FAIL src/utils/format.test.ts
+Tests:       2 failed, 1 passed, 3 total

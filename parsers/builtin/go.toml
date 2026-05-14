@@ -1,0 +1,33 @@
+[meta]
+name = "go"
+description = "Go compiler and test runner"
+detect = ["go"]
+priority = 50
+
+[[pattern]]
+name = "go-compile-error"
+regex = '^(.+?):(\d+):(\d+): (.+)$'
+event_type = "diagnostic"
+severity = "error"
+fields = { file = 1, line = 2, column = 3, message = 4 }
+
+[[pattern]]
+name = "go-test-fail"
+regex = '^--- FAIL: (\S+)'
+event_type = "test_result"
+severity = "error"
+fields = { message = 1 }
+
+[[pattern]]
+name = "go-test-pass"
+regex = '^ok\s+(\S+)\s+'
+event_type = "test_result"
+severity = "info"
+fields = { message = 1 }
+
+[[pattern]]
+name = "go-test-package-fail"
+regex = '^FAIL\s+(\S+)\s+'
+event_type = "test_result"
+severity = "error"
+fields = { message = 1 }

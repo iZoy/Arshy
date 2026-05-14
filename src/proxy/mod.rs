@@ -59,12 +59,33 @@ async fn proxy_main(config_path: Option<PathBuf>) -> Result<()> {
             "initialize" => handle_initialize(&mut stdout, id).await?,
             "tools/list" => handle_tools_list(&mut stdout, id).await?,
             "tools/call" => {
-                // During tool call, daemon may send notifications while we wait
-                // for the response. DaemonConnection handles this internally —
-                // notifications queue in the channel, response comes via oneshot.
-                handle_tool_call(&mut daemon, &mut stdout, &request, id).await?;
-                // Forward any notifications that arrived during the call
-                drain_and_forward_notifications(&mut daemon, &mut stdout).await?;
+                // Try the tool call; on connection error, attempt reconnect
+                match handle_tool_call(&mut daemon, &mut stdout, &request, id).await {
+                    Ok(()) => {
+                        drain_and_forward_notifications(&mut daemon, &mut stdout).await?;
+                    }
+                    Err(e) if is_connection_error(&e) && cfg.daemon.auto_start => {
+                        tracing::warn!("daemon connection lost, attempting reconnect...");
+                        match reconnect(&cfg, &socket_path).await {
+                            Ok(new_conn) => {
+                                daemon = new_conn;
+                                tracing::info!("reconnected to daemon");
+                                // Retry the tool call on the new connection
+                                handle_tool_call(&mut daemon, &mut stdout, &request, id).await?;
+                                drain_and_forward_notifications(&mut daemon, &mut stdout).await?;
+                            }
+                            Err(re) => {
+                                tracing::error!("reconnect failed: {}", re);
+                                write_json_error(&mut stdout, id, -32603,
+                                    &format!("daemon connection lost: {}", e)).await?;
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        write_json_error(&mut stdout, id, -32603,
+                            &format!("daemon error: {}", e)).await?;
+                    }
+                }
             }
             "notifications/initialized" | "notifications/cancelled" => {
                 // No response for client notifications
@@ -248,6 +269,26 @@ fn start_daemon() -> Result<()> {
         .spawn()
         .map_err(|e| arshy_lib::ArshyError::DaemonUnreachable(format!("spawn arshyd: {}", e)))?;
     Ok(())
+}
+
+/// Check if an error indicates a broken daemon connection.
+fn is_connection_error(e: &arshy_lib::ArshyError) -> bool {
+    let msg = format!("{}", e);
+    msg.contains("connection closed")
+        || msg.contains("timed out")
+        || msg.contains("response channel dropped")
+        || msg.contains("broken pipe")
+        || msg.contains("Connection refused")
+        || msg.contains("No such file")
+}
+
+/// Attempt to reconnect to the daemon.
+async fn reconnect(
+    cfg: &Config,
+    socket_path: &std::path::Path,
+) -> Result<DaemonConnection> {
+    let stream = connect_or_start(cfg, socket_path).await?;
+    Ok(DaemonConnection::new(stream))
 }
 
 fn mcp_tool_to_ipc_method(tool_name: &str) -> &str {

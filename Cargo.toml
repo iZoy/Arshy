@@ -33,9 +33,7 @@ regex = "1"
 rusqlite = { version = "0.31", features = ["bundled"] }
 libc = "0.2"
 
-# Optional: enable when rhai/notify are available
-# rhai = { version = "1", features = ["sync"], optional = true }
-# notify = { version = "6", optional = true }
+# notify = "7"  # TODO: enable when network available for crate download
 
 [dev-dependencies]
 tempfile = "3"

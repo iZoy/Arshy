@@ -1,0 +1,19 @@
+[meta]
+name = "make"
+description = "GNU Make build tool"
+detect = ["make"]
+priority = 50
+
+[[pattern]]
+name = "make-error"
+regex = '^(.+?):(\d+): \*\*\* (.+)$'
+event_type = "diagnostic"
+severity = "error"
+fields = { file = 1, line = 2, message = 3 }
+
+[[pattern]]
+name = "make-warning"
+regex = '^(.+?):(\d+):(\d+): warning: (.+)$'
+event_type = "diagnostic"
+severity = "warning"
+fields = { file = 1, line = 2, column = 3, message = 4 }

@@ -1,0 +1,18 @@
+[meta]
+name = "vite"
+description = "Vite build tool"
+detect = ["vite"]
+priority = 50
+
+[[pattern]]
+name = "vite-error"
+regex = '^error: (.+)$'
+event_type = "diagnostic"
+severity = "error"
+fields = { message = 1 }
+
+[[pattern]]
+name = "vite-build-failed"
+regex = '^Build failed'
+event_type = "summary"
+severity = "error"

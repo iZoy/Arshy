@@ -1,0 +1,6 @@
+[
+  {"type": "diagnostic", "severity": "error", "code": "TS2322", "file": "src/app.ts", "line": 10, "column": 5},
+  {"type": "diagnostic", "severity": "warning", "code": "TS6133", "file": "src/app.ts", "line": 15, "column": 3},
+  {"type": "diagnostic", "severity": "error", "code": "TS2339", "file": "src/utils.ts", "line": 22, "column": 10},
+  {"type": "summary", "severity": "error"}
+]

@@ -5,10 +5,21 @@ impl super::Store {
     /// Returns (tasks_deleted, events_deleted).
     pub fn prune_keep(&self, keep: usize) -> Result<(usize, usize)> {
         let conn = self.lock();
-        // Find the task_id cutoff: the oldest of the keep most recent
+
+        // Edge case: keep=0 means "delete everything"
+        if keep == 0 {
+            let de: i64 = conn.query_row("SELECT COUNT(*) FROM events", [], |r| r.get(0))?;
+            let dt: i64 = conn.query_row("SELECT COUNT(*) FROM tasks", [], |r| r.get(0))?;
+            conn.execute("DELETE FROM events", [])?;
+            conn.execute("DELETE FROM tasks", [])?;
+            return Ok((dt as usize, de as usize));
+        }
+
+        // Find the started_at cutoff: the oldest timestamp to keep
+        // OFFSET is 0-indexed, so OFFSET (keep-1) selects the keep-th most recent
         let cutoff: Option<String> = conn.query_row(
-            "SELECT task_id FROM tasks ORDER BY started_at DESC LIMIT 1 OFFSET ?1",
-            rusqlite::params![keep as i64],
+            "SELECT started_at FROM tasks ORDER BY started_at DESC LIMIT 1 OFFSET ?1",
+            rusqlite::params![keep as i64 - 1],
             |r| r.get(0),
         ).ok();
 
@@ -17,19 +28,22 @@ impl super::Store {
         }
         let cutoff = cutoff.unwrap();
 
-        let de: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM events WHERE task_id < ?1",
+        let dt: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM tasks WHERE started_at < ?1",
             rusqlite::params![cutoff],
             |r| r.get(0),
         )?;
-        let dt: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM tasks WHERE task_id < ?1",
+        let de: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM events WHERE task_id IN (SELECT task_id FROM tasks WHERE started_at < ?1)",
             rusqlite::params![cutoff],
             |r| r.get(0),
         )?;
 
-        conn.execute("DELETE FROM events WHERE task_id < ?1", rusqlite::params![cutoff])?;
-        conn.execute("DELETE FROM tasks WHERE task_id < ?1", rusqlite::params![cutoff])?;
+        conn.execute(
+            "DELETE FROM events WHERE task_id IN (SELECT task_id FROM tasks WHERE started_at < ?1)",
+            rusqlite::params![cutoff],
+        )?;
+        conn.execute("DELETE FROM tasks WHERE started_at < ?1", rusqlite::params![cutoff])?;
 
         Ok((dt as usize, de as usize))
     }

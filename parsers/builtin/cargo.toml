@@ -1,0 +1,26 @@
+[meta]
+name = "cargo"
+description = "Cargo build tool / rustc compiler"
+detect = ["cargo", "rustc"]
+priority = 50
+
+[[pattern]]
+name = "cargo-error"
+regex = '^error\[([E]\d+)\]: (.+)$'
+event_type = "diagnostic"
+severity = "error"
+fields = { code = 1, message = 2 }
+
+[[pattern]]
+name = "cargo-location"
+regex = '^\s*--> (.+?):(\d+):(\d+)$'
+event_type = "location"
+severity = "info"
+fields = { file = 1, line = 2, column = 3 }
+
+[[pattern]]
+name = "cargo-warning"
+regex = '^warning: (.+)$'
+event_type = "diagnostic"
+severity = "warning"
+fields = { message = 1 }

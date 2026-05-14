@@ -1,0 +1,19 @@
+[meta]
+name = "swc"
+description = "SWC compiler"
+detect = ["swc"]
+priority = 50
+
+[[pattern]]
+name = "swc-error"
+regex = '^\s*error\[swc\]: (.+)$'
+event_type = "diagnostic"
+severity = "error"
+fields = { message = 1 }
+
+[[pattern]]
+name = "swc-location"
+regex = '^\s*--> (.+?):(\d+):(\d+)$'
+event_type = "location"
+severity = "info"
+fields = { file = 1, line = 2, column = 3 }

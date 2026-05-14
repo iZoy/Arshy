@@ -94,7 +94,19 @@ impl DaemonConnection {
     }
 
     /// Send a JSON-RPC request and wait for the response.
+    ///
+    /// Times out after 60 seconds if no response arrives.
     pub async fn send_request(&mut self, method: &str, params: serde_json::Value) -> Result<Response> {
+        self.send_request_with_timeout(method, params, std::time::Duration::from_secs(60)).await
+    }
+
+    /// Send a JSON-RPC request with a custom timeout.
+    pub async fn send_request_with_timeout(
+        &mut self,
+        method: &str,
+        params: serde_json::Value,
+        timeout: std::time::Duration,
+    ) -> Result<Response> {
         let id = self.next_id;
         self.next_id += 1;
 
@@ -111,7 +123,17 @@ impl DaemonConnection {
         self.write_tx.send(request).await
             .map_err(|_| crate::ArshyError::Ipc("daemon connection closed".into()))?;
 
-        rx.await.map_err(|_| crate::ArshyError::Ipc("response channel dropped".into()))
+        match tokio::time::timeout(timeout, rx).await {
+            Ok(Ok(resp)) => Ok(resp),
+            Ok(Err(_)) => Err(crate::ArshyError::Ipc("response channel dropped".into())),
+            Err(_) => {
+                // Clean up the pending entry on timeout
+                self.pending.lock().await.remove(&id);
+                Err(crate::ArshyError::Ipc(format!(
+                    "request '{}' timed out after {}s", method, timeout.as_secs()
+                )))
+            }
+        }
     }
 
     /// Try to receive a notification without blocking.

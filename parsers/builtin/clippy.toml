@@ -1,0 +1,26 @@
+[meta]
+name = "clippy"
+description = "Clippy Rust linter"
+detect = ["clippy"]
+priority = 55
+
+[[pattern]]
+name = "clippy-warning"
+regex = '^warning\[.*?\]: (.+)$'
+event_type = "diagnostic"
+severity = "warning"
+fields = { message = 1 }
+
+[[pattern]]
+name = "clippy-location"
+regex = '^\s*--> (.+?):(\d+):(\d+)$'
+event_type = "location"
+severity = "info"
+fields = { file = 1, line = 2, column = 3 }
+
+[[pattern]]
+name = "clippy-error"
+regex = '^error\[.*?\]: (.+)$'
+event_type = "diagnostic"
+severity = "error"
+fields = { message = 1 }

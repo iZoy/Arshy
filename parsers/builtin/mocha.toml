@@ -1,0 +1,31 @@
+[meta]
+name = "mocha"
+description = "Mocha test runner"
+detect = ["mocha"]
+priority = 50
+
+[[pattern]]
+name = "mocha-pass"
+regex = '^\s+(\d+) passing'
+event_type = "summary"
+severity = "info"
+
+[[pattern]]
+name = "mocha-fail"
+regex = '^\s+(\d+) failing'
+event_type = "summary"
+severity = "error"
+
+[[pattern]]
+name = "mocha-test-fail"
+regex = '^\s+\d+\)\s+(.+)$'
+event_type = "test_result"
+severity = "error"
+fields = { message = 1 }
+
+[[pattern]]
+name = "mocha-assertion"
+regex = '^\s+(AssertionError|Error): (.+)$'
+event_type = "diagnostic"
+severity = "error"
+fields = { message = 2 }

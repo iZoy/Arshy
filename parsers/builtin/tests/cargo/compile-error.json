@@ -1,0 +1,8 @@
+[
+  {"type": "diagnostic", "severity": "error", "code": "E0308"},
+  {"type": "location", "severity": "info", "file": "src/main.rs", "line": 10, "column": 5},
+  {"type": "diagnostic", "severity": "warning"},
+  {"type": "location", "severity": "info", "file": "src/lib.rs", "line": 22, "column": 9},
+  {"type": "diagnostic", "severity": "error", "code": "E0425"},
+  {"type": "location", "severity": "info", "file": "src/handler.rs", "line": 45, "column": 12}
+]

@@ -21,47 +21,62 @@
 //! ```
 
 use arshy_lib::ipc::{EventLocation, TaskEvent};
-use arshy_lib::Result;
 use regex::Regex;
 
 /// A stateful parser for cross-line pattern matching.
 ///
 /// Uses regex patterns with state tracking for tools whose output
 /// spans multiple lines (e.g., npm install, webpack).
+///
+/// Each task gets its own `StatefulParser` instance (via `Engine::create_session`)
+/// so that per-task state is isolated.
 pub struct StatefulParser {
     pub name: String,
     patterns: Vec<StatefulPattern>,
     state: std::sync::Mutex<ParserState>,
 }
 
-struct StatefulPattern {
-    regex: Regex,
-    event_type: String,
-    severity: String,
-    message_group: Option<usize>,
-    file_group: Option<usize>,
-    line_group: Option<usize>,
+/// A regex pattern with state-machine transitions.
+///
+/// Used for tools whose output spans multiple lines and requires
+/// tracking state across lines (e.g., npm error blocks, webpack chunks).
+#[derive(Debug, Clone)]
+pub struct StatefulPattern {
+    pub regex: Regex,
+    pub event_type: String,
+    pub severity: String,
+    pub message_group: Option<usize>,
+    pub file_group: Option<usize>,
+    pub line_group: Option<usize>,
     /// If set, this pattern only matches when state key has this value.
-    state_condition: Option<(String, String)>,
+    pub state_condition: Option<(String, String)>,
     /// If set, transitions to this state after matching.
-    state_transition: Option<(String, String)>,
+    pub state_transition: Option<(String, String)>,
 }
 
 #[derive(Default)]
 struct ParserState {
     values: std::collections::HashMap<String, String>,
+    #[allow(dead_code)] // future: block-level parsing
     in_block: bool,
+    #[allow(dead_code)]
     block_lines: Vec<String>,
 }
 
 impl StatefulParser {
-    pub fn new(name: &str) -> Self {
-        let patterns = builtin_stateful_patterns(name);
+    /// Create with pre-loaded patterns (from TOML definitions via registry).
+    pub fn with_patterns(name: &str, patterns: Vec<StatefulPattern>) -> Self {
         Self {
             name: name.to_string(),
             patterns,
             state: std::sync::Mutex::new(ParserState::default()),
         }
+    }
+
+    /// Legacy constructor using builtin patterns. Prefer `with_patterns`.
+    #[allow(dead_code)]
+    pub fn new(name: &str) -> Self {
+        Self::with_patterns(name, builtin_stateful_patterns(name))
     }
 
     /// Feed one line to the stateful parser. Returns any events generated.
@@ -150,6 +165,7 @@ impl StatefulParser {
     }
 
     /// Reset parser state (for reuse).
+    #[allow(dead_code)]
     pub fn reset(&self) {
         *self.state.lock().unwrap() = ParserState::default();
     }

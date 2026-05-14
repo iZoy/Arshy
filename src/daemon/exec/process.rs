@@ -74,6 +74,7 @@ async fn wait_for_exit(handle: &mut ProcessHandle, timeout_ms: u64) -> Result<bo
 
 /// Terminate an entire process tree.
 /// Sends the signal to the process group (negative PID) and the process directly.
+#[allow(dead_code)] // future: process tree cleanup
 pub fn kill_process_tree(pid: u32, signal: libc::c_int) {
     // Kill the entire process group by using negative PID.
     // libc::kill takes pid_t which is i32 on most platforms.

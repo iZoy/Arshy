@@ -1,0 +1,19 @@
+[meta]
+name = "cc"
+description = "C/C++ compilers (gcc, g++, clang)"
+detect = ["gcc", "g++", "clang", "clang++", "cc"]
+priority = 50
+
+[[pattern]]
+name = "cc-error"
+regex = '^(.+?):(\d+):(\d+): error: (.+)$'
+event_type = "diagnostic"
+severity = "error"
+fields = { file = 1, line = 2, column = 3, message = 4 }
+
+[[pattern]]
+name = "cc-warning"
+regex = '^(.+?):(\d+):(\d+): warning: (.+)$'
+event_type = "diagnostic"
+severity = "warning"
+fields = { file = 1, line = 2, column = 3, message = 4 }

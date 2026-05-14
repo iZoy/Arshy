@@ -1,0 +1,41 @@
+[meta]
+name = "cargo-test"
+description = "Cargo test runner"
+detect = ["cargo"]
+priority = 45
+
+[[pattern]]
+name = "test-fail"
+regex = '^test .+ \.\.\. FAILED$'
+event_type = "test_result"
+severity = "error"
+
+[[pattern]]
+name = "test-pass"
+regex = '^test .+ \.\.\. ok$'
+event_type = "test_result"
+severity = "info"
+
+[[pattern]]
+name = "test-ignored"
+regex = '^test .+ \.\.\. ignored$'
+event_type = "test_result"
+severity = "info"
+
+[[pattern]]
+name = "test-summary"
+regex = '^test result: (FAILED|ok)\. (\d+) passed.*'
+event_type = "summary"
+severity = "error"
+
+[[pattern]]
+name = "run-result"
+regex = '^error: test .+'
+event_type = "diagnostic"
+severity = "error"
+
+[[pattern]]
+name = "failure-header"
+regex = '^\s*---- .+ stdout ----$'
+event_type = "diagnostic"
+severity = "info"

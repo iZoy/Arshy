@@ -1,0 +1,6 @@
+[
+  {"type": "test_result", "severity": "info", "file": "src/components/Button.test.tsx"},
+  {"type": "test_result", "severity": "error", "file": "src/components/Modal.test.tsx"},
+  {"type": "test_result", "severity": "error", "file": "src/utils/format.test.ts"},
+  {"type": "summary", "severity": "info"}
+]

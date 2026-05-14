@@ -33,7 +33,7 @@ pub async fn dispatch(cli: Cli) -> Result<()> {
         Some(CliCommand::Prune { keep, older_than }) => {
             prune(config_path, log_level, keep, older_than).await
         }
-        Some(CliCommand::Config { action }) => config(action),
+        Some(CliCommand::Config { action }) => config(action, config_path),
         Some(CliCommand::Status) => daemon_status(config_path, log_level).await,
         None => {
             println!("Arshy — AI Agent native shell execution layer");
@@ -257,40 +257,191 @@ async fn prune(
     Ok(())
 }
 
-fn config(action: ConfigAction) -> Result<()> {
+fn config(action: ConfigAction, config_path: Option<PathBuf>) -> Result<()> {
+    let overrides = arshy_lib::config::CliOverrides {
+        config_path: config_path.clone(),
+        ..Default::default()
+    };
     match action {
-        ConfigAction::Get { key } => {
-            let cfg = Config::load(arshy_lib::config::CliOverrides::default())?;
-            let value = match key.as_str() {
-                "daemon.log_level" => serde_json::json!(cfg.daemon.log_level),
-                "daemon.auto_start" => serde_json::json!(cfg.daemon.auto_start),
-                "daemon.max_concurrent_tasks" => serde_json::json!(cfg.daemon.max_concurrent_tasks),
-                "store.wal_mode" => serde_json::json!(cfg.store.wal_mode),
-                "parser.hot_reload" => serde_json::json!(cfg.parser.hot_reload),
-                "notifications.enabled" => serde_json::json!(cfg.notifications.enabled),
-                _ => serde_json::json!(format!("unknown key: {}", key)),
-            };
-            println!("{}", serde_json::to_string_pretty(&value)?);
+        ConfigAction::Get { key } => config_get(&key, &overrides),
+        ConfigAction::Set { key, value } => config_set(&key, &value, &overrides, config_path.as_deref()),
+        ConfigAction::List => {
+            let cfg = Config::load(overrides)?;
+            println!("{}", toml::to_string_pretty(&cfg)?);
+            Ok(())
         }
-        ConfigAction::Set { key, value } => {
-            let cfg = Config::load(arshy_lib::config::CliOverrides::default())?;
-            match key.as_str() {
-                "daemon.log_level" => {
-                    let mut c = cfg;
-                    c.daemon.log_level = value;
-                    c.write_to_default_path()?;
-                    println!("Set daemon.log_level = {}", c.daemon.log_level);
-                }
-                _ => println!("Setting '{}' is not yet supported in this version", key),
+        ConfigAction::Path => {
+            match config_path {
+                Some(p) => println!("{}", p.display()),
+                None => match arshy_lib::config::default_config_path() {
+                    Some(p) => println!("{}", p.display()),
+                    None => println!("(no default config path)"),
+                },
+            }
+            Ok(())
+        }
+    }
+}
+
+/// Get a config value by dot-separated key path.
+fn config_get(key: &str, overrides: &arshy_lib::config::CliOverrides) -> Result<()> {
+    let cfg = Config::load(overrides.clone())?;
+    let value = serde_json::to_value(&cfg)?;
+    match navigate_json(&value, key) {
+        Some(v) => {
+            // Print raw value (without JSON quotes for strings)
+            if let Some(s) = v.as_str() {
+                println!("{}", s);
+            } else {
+                println!("{}", serde_json::to_string_pretty(v)?);
             }
         }
-        ConfigAction::List => {
-            let cfg = Config::load(arshy_lib::config::CliOverrides::default())?;
-            let serialized = toml::to_string_pretty(&cfg)?;
-            println!("{}", serialized);
+        None => {
+            eprintln!("unknown key: {}", key);
+            eprintln!("valid keys: {}", VALID_KEYS.join(", "));
+            std::process::exit(1);
         }
     }
     Ok(())
+}
+
+/// Set a config value by dot-separated key path, then write to file.
+fn config_set(key: &str, value: &str, overrides: &arshy_lib::config::CliOverrides, write_path: Option<&std::path::Path>) -> Result<()> {
+    let mut cfg = Config::load(overrides.clone())?;
+
+    let set_ok = set_config_field(&mut cfg, key, value);
+
+    if !set_ok {
+        eprintln!("unknown or read-only key: {}", key);
+        eprintln!("settable keys: {}", SETTABLE_KEYS.join(", "));
+        std::process::exit(1);
+    }
+
+    // Write to the specified path, or default
+    if let Some(path) = write_path {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(path, toml::to_string_pretty(&cfg)?)?;
+    } else {
+        cfg.write_to_default_path()?;
+    }
+    println!("Set {} = {}", key, value);
+    Ok(())
+}
+
+/// Navigate a JSON value by dot-separated path.
+fn navigate_json<'a>(value: &'a serde_json::Value, path: &str) -> Option<&'a serde_json::Value> {
+    let mut current = value;
+    for segment in path.split('.') {
+        current = current.get(segment)?;
+    }
+    Some(current)
+}
+
+/// All valid config keys (for error messages).
+const VALID_KEYS: &[&str] = &[
+    "daemon.socket_path", "daemon.log_level", "daemon.log_format",
+    "daemon.auto_start", "daemon.max_task_duration_ms", "daemon.max_output_bytes",
+    "daemon.kill_graceful_ms", "daemon.kill_force_ms", "daemon.max_concurrent_tasks",
+    "store.db_path", "store.wal_mode", "store.integrity_check",
+    "store.auto_prune", "store.prune_keep", "store.prune_older_than_days",
+    "parser.dirs", "parser.hot_reload", "parser.fallback_to_raw",
+    "parser.default_priority", "parser.coverage_warning_threshold",
+    "parser.version_cache_ttl_hours",
+    "notifications.enabled", "notifications.batch_interval_ms",
+    "notifications.max_batch_events", "notifications.min_severity",
+    "mcp.client_detection_order",
+    "telemetry.enabled",
+];
+
+/// Keys that can be set via `config set`.
+const SETTABLE_KEYS: &[&str] = VALID_KEYS;
+
+/// Set a config field by key path. Returns true if the key was recognized.
+fn set_config_field(cfg: &mut Config, key: &str, value: &str) -> bool {
+    match key {
+        // ── daemon ──────────────────────────────────────────────────────────
+        "daemon.socket_path" => { cfg.daemon.socket_path = PathBuf::from(value); }
+        "daemon.log_level" => { cfg.daemon.log_level = value.to_string(); }
+        "daemon.log_format" => { cfg.daemon.log_format = value.to_string(); }
+        "daemon.auto_start" => { cfg.daemon.auto_start = parse_bool(value); }
+        "daemon.max_task_duration_ms" => {
+            if let Ok(v) = value.parse() { cfg.daemon.max_task_duration_ms = v; }
+            else { return false; }
+        }
+        "daemon.max_output_bytes" => {
+            if let Ok(v) = value.parse() { cfg.daemon.max_output_bytes = v; }
+            else { return false; }
+        }
+        "daemon.kill_graceful_ms" => {
+            if let Ok(v) = value.parse() { cfg.daemon.kill_graceful_ms = v; }
+            else { return false; }
+        }
+        "daemon.kill_force_ms" => {
+            if let Ok(v) = value.parse() { cfg.daemon.kill_force_ms = v; }
+            else { return false; }
+        }
+        "daemon.max_concurrent_tasks" => {
+            if let Ok(v) = value.parse() { cfg.daemon.max_concurrent_tasks = v; }
+            else { return false; }
+        }
+        // ── store ───────────────────────────────────────────────────────────
+        "store.db_path" => { cfg.store.db_path = PathBuf::from(value); }
+        "store.wal_mode" => { cfg.store.wal_mode = parse_bool(value); }
+        "store.integrity_check" => { cfg.store.integrity_check = parse_bool(value); }
+        "store.auto_prune" => { cfg.store.auto_prune = parse_bool(value); }
+        "store.prune_keep" => {
+            if let Ok(v) = value.parse() { cfg.store.prune_keep = v; }
+            else { return false; }
+        }
+        "store.prune_older_than_days" => {
+            if let Ok(v) = value.parse() { cfg.store.prune_older_than_days = v; }
+            else { return false; }
+        }
+        // ── parser ──────────────────────────────────────────────────────────
+        "parser.dirs" => {
+            cfg.parser.dirs = value.split(':').map(PathBuf::from).collect();
+        }
+        "parser.hot_reload" => { cfg.parser.hot_reload = parse_bool(value); }
+        "parser.fallback_to_raw" => { cfg.parser.fallback_to_raw = parse_bool(value); }
+        "parser.default_priority" => {
+            if let Ok(v) = value.parse() { cfg.parser.default_priority = v; }
+            else { return false; }
+        }
+        "parser.coverage_warning_threshold" => {
+            if let Ok(v) = value.parse() { cfg.parser.coverage_warning_threshold = v; }
+            else { return false; }
+        }
+        "parser.version_cache_ttl_hours" => {
+            if let Ok(v) = value.parse() { cfg.parser.version_cache_ttl_hours = v; }
+            else { return false; }
+        }
+        // ── notifications ───────────────────────────────────────────────────
+        "notifications.enabled" => { cfg.notifications.enabled = parse_bool(value); }
+        "notifications.batch_interval_ms" => {
+            if let Ok(v) = value.parse() { cfg.notifications.batch_interval_ms = v; }
+            else { return false; }
+        }
+        "notifications.max_batch_events" => {
+            if let Ok(v) = value.parse() { cfg.notifications.max_batch_events = v; }
+            else { return false; }
+        }
+        "notifications.min_severity" => { cfg.notifications.min_severity = value.to_string(); }
+        // ── mcp ─────────────────────────────────────────────────────────────
+        "mcp.client_detection_order" => {
+            cfg.mcp.client_detection_order = value.split(',').map(String::from).collect();
+        }
+        // ── telemetry ───────────────────────────────────────────────────────
+        "telemetry.enabled" => { cfg.telemetry.enabled = parse_bool(value); }
+        // ── unknown ─────────────────────────────────────────────────────────
+        _ => return false,
+    }
+    true
+}
+
+fn parse_bool(s: &str) -> bool {
+    s.eq_ignore_ascii_case("true") || s == "1"
 }
 
 async fn daemon_status(config_path: Option<PathBuf>, log_level: Option<String>) -> Result<()> {

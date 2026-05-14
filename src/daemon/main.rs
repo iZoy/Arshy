@@ -1,8 +1,4 @@
 //! Arshy daemon — background process managing shell execution.
-//! Skeleton phase — dead_code and unused_imports expected until full wiring.
-
-#![allow(dead_code)]
-#![allow(unused_imports)]
 
 mod bus;
 mod context;
@@ -31,6 +27,22 @@ async fn main() -> Result<()> {
     }
     let store = Arc::new(store::Store::open(&db_dir, cfg.store.wal_mode)?);
     store.initialize_schema()?;
+
+    // SQLite integrity check (configurable)
+    if cfg.store.integrity_check {
+        match store.integrity_check() {
+            Ok(result) => {
+                if result == "ok" {
+                    tracing::debug!("SQLite integrity check passed");
+                } else {
+                    tracing::warn!("SQLite integrity check: {}", result);
+                }
+            }
+            Err(e) => {
+                tracing::error!("SQLite integrity check failed: {}", e);
+            }
+        }
+    }
 
     let parser_engine = Arc::new(parser::Engine::new(&cfg.parser)?);
 

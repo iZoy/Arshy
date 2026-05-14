@@ -1,0 +1,40 @@
+[meta]
+name = "npm"
+description = "npm package manager"
+detect = ["npm"]
+parser_type = "stateful"
+priority = 50
+
+[[pattern]]
+name = "npm-packages-added"
+regex = '^added (\d+) packages?'
+event_type = "summary"
+severity = "info"
+state_transition = "packages_added=done"
+
+[[pattern]]
+name = "npm-error"
+regex = '^npm ERR! (.+)'
+event_type = "diagnostic"
+severity = "error"
+fields = { message = 1 }
+state_transition = "has_error=true"
+
+[[pattern]]
+name = "npm-warn"
+regex = '^npm WARN (.+)'
+event_type = "diagnostic"
+severity = "warning"
+fields = { message = 1 }
+
+[[pattern]]
+name = "npm-up-to-date"
+regex = '^up to date,? audited (\d+) packages?'
+event_type = "summary"
+severity = "info"
+
+[[pattern]]
+name = "npm-audited"
+regex = '^audited (\d+) packages?'
+event_type = "summary"
+severity = "info"

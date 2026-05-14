@@ -1,0 +1,12 @@
+[meta]
+name = "prettier"
+description = "Prettier code formatter"
+detect = ["prettier"]
+priority = 50
+
+[[pattern]]
+name = "prettier-check-fail"
+regex = '^\[warn\] (.+)$'
+event_type = "diagnostic"
+severity = "warning"
+fields = { message = 1 }

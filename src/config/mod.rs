@@ -136,16 +136,92 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_default_config_compiles() {
+    fn default_config_compiles() {
         let cfg = Config::default();
         assert_eq!(cfg.daemon.log_level, "info");
         assert!(cfg.store.wal_mode);
     }
 
     #[test]
-    fn test_expand_path_with_home() {
+    fn default_config_all_sections() {
+        let cfg = Config::default();
+        // Daemon
+        assert!(cfg.daemon.auto_start);
+        assert_eq!(cfg.daemon.max_concurrent_tasks, 4);
+        assert_eq!(cfg.daemon.max_output_bytes, 10_485_760);
+        // Store
+        assert!(cfg.store.integrity_check);
+        assert_eq!(cfg.store.prune_keep, 1000);
+        assert_eq!(cfg.store.prune_older_than_days, 30);
+        // Parser
+        assert!(cfg.parser.hot_reload);
+        assert!(cfg.parser.fallback_to_raw);
+        assert_eq!(cfg.parser.default_priority, 50);
+        // Notifications
+        assert!(cfg.notifications.enabled);
+        assert_eq!(cfg.notifications.batch_interval_ms, 100);
+        // MCP
+        assert!(!cfg.mcp.client_detection_order.is_empty());
+    }
+
+    #[test]
+    fn expand_path_with_home() {
         let home = dirs::home_dir().unwrap();
         let result = expand_path(&PathBuf::from("${HOME}/.arshy/parsers"));
         assert!(result.starts_with(&home));
+    }
+
+    #[test]
+    fn expand_path_with_xdg_data_home() {
+        let xdg = xdg_data_home();
+        let result = expand_path(&PathBuf::from("${XDG_DATA_HOME}/arshy/arshy.db"));
+        assert!(result.to_string_lossy().starts_with(&xdg));
+        assert!(result.to_string_lossy().ends_with("arshy/arshy.db"));
+    }
+
+    #[test]
+    fn expand_path_no_placeholder() {
+        let result = expand_path(&PathBuf::from("/tmp/plain/path.db"));
+        assert_eq!(result, PathBuf::from("/tmp/plain/path.db"));
+    }
+
+    #[test]
+    fn expand_path_multiple_placeholders() {
+        let home = dirs::home_dir().unwrap();
+        let result = expand_path(&PathBuf::from("${HOME}/${HOME}"));
+        let expected = format!("{}/{}", home.display(), home.display());
+        assert_eq!(result, PathBuf::from(expected));
+    }
+
+    #[test]
+    fn xdg_defaults_are_nonempty() {
+        // These should always return non-empty paths
+        assert!(!xdg_config_home().is_empty());
+        assert!(!xdg_data_home().is_empty());
+        assert!(!xdg_cache_home().is_empty());
+    }
+
+    #[test]
+    fn default_config_path_exists() {
+        let path = default_config_path().unwrap();
+        assert!(path.to_string_lossy().contains("arshy"));
+        assert!(path.to_string_lossy().ends_with("config.toml"));
+    }
+
+    #[test]
+    fn expanded_socket_path_is_absolute() {
+        let cfg = Config::default();
+        let expanded = cfg.daemon.expanded_socket_path();
+        // After expansion, no ${} placeholders should remain
+        let s = expanded.to_string_lossy();
+        assert!(!s.contains("${"), "path still has placeholder: {}", s);
+    }
+
+    #[test]
+    fn expanded_db_path_is_absolute() {
+        let cfg = Config::default();
+        let expanded = cfg.store.expanded_db_path();
+        let s = expanded.to_string_lossy();
+        assert!(!s.contains("${"), "path still has placeholder: {}", s);
     }
 }

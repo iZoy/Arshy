@@ -43,6 +43,7 @@ impl super::Store {
     }
 
     /// Get a single task by ID.
+    #[allow(dead_code)] // used by tests and exec layer
     pub fn get_task(&self, task_id: &str) -> Result<Option<Task>> {
         let conn = self.lock();
         let mut stmt = conn.prepare(
