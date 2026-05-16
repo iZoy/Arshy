@@ -38,6 +38,14 @@ async fn main() -> Result<()> {
     }
     lifecycle::cleanup_stale_socket(&socket_path);
 
+    // Clean up any stale spawn-lock left by a crashed proxy.
+    // Without this, the proxy's atomic create_new would fail forever.
+    let spawn_lock_path = std::path::PathBuf::from("/tmp/arshyd.spawn-lock");
+    if spawn_lock_path.exists() {
+        let _ = std::fs::remove_file(&spawn_lock_path);
+        tracing::info!("cleaned up stale spawn-lock");
+    }
+
     // ── Database ───────────────────────────────────────────────────────────
     let db_dir = cfg.store.expanded_db_path();
     if let Some(parent) = db_dir.parent() {
@@ -140,9 +148,43 @@ async fn main() -> Result<()> {
         }
     }
 
-    // ── Cleanup ────────────────────────────────────────────────────────────
+    // ── Graceful shutdown: stop accepting, drain running tasks ──────────────
+    tracing::info!("shutting down, draining running tasks...");
+
+    // Notify all connections that daemon is shutting down
+    let sd_event = bus::BusEvent {
+        connection_id: 0,
+        kind: bus::BusEventKind::DaemonShutdown {
+            reason: "shutdown".into(),
+            grace_period_ms: 30_000,
+        },
+    };
+    event_bus.publish(sd_event);
+
+    // Remove socket to reject new connections while tasks drain
     let _ = tokio::fs::remove_file(&socket_path).await;
+
+    // Wait for running tasks to finish (with a grace period)
+    let drain_deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        let running = store.list_tasks(Some("running"), 10_000)
+            .map(|t| t.len())
+            .unwrap_or(0);
+        if running == 0 {
+            tracing::info!("all tasks completed, clean shutdown");
+            break;
+        }
+        if tokio::time::Instant::now() > drain_deadline {
+            tracing::warn!("{} tasks still running after grace period, forcing shutdown", running);
+            break;
+        }
+        tracing::debug!("waiting for {} running tasks to complete...", running);
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
+
+    // ── Cleanup ────────────────────────────────────────────────────────────
     lifecycle::remove_pid();
+    let _ = tokio::fs::remove_file(&socket_path).await;
     tracing::info!("arshyd stopped");
     Ok(())
 }

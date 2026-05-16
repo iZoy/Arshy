@@ -2,6 +2,7 @@
 //! streams output lines through channels for async consumption.
 
 use arshy_lib::Result;
+use std::collections::HashMap;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Child;
 use tokio::sync::mpsc;
@@ -67,6 +68,7 @@ impl ProcessHandle {
 pub async fn spawn_command(
     command: &str,
     cwd: Option<&std::path::Path>,
+    env: Option<&HashMap<String, String>>,
 ) -> Result<ProcessHandle> {
     use std::process::Stdio;
 
@@ -79,6 +81,12 @@ pub async fn spawn_command(
 
     if let Some(dir) = cwd {
         cmd.current_dir(dir);
+    }
+
+    if let Some(env_vars) = env {
+        for (k, v) in env_vars {
+            cmd.env(k, v);
+        }
     }
 
     // Ensure child processes die when the parent dies
@@ -138,7 +146,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_spawn_echo() {
-        let mut handle = spawn_command("echo hello world", None).await.unwrap();
+        let mut handle = spawn_command("echo hello world", None, None).await.unwrap();
         assert!(handle.pid > 0);
 
         let mut lines = Vec::new();
@@ -154,7 +162,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_spawn_stderr() {
-        let mut handle = spawn_command("echo error >&2", None).await.unwrap();
+        let mut handle = spawn_command("echo error >&2", None, None).await.unwrap();
         let mut stderr_lines = Vec::new();
 
         while let Some((source, line)) = handle.output_rx.recv().await {
@@ -167,7 +175,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_spawn_exit_code() {
-        let mut handle = spawn_command("exit 42", None).await.unwrap();
+        let mut handle = spawn_command("exit 42", None, None).await.unwrap();
         // Drain output (none expected)
         while handle.output_rx.recv().await.is_some() {}
         let exit = handle.wait().await.unwrap();
@@ -177,7 +185,7 @@ mod tests {
     #[tokio::test]
     async fn test_spawn_with_cwd() {
         let tmp = tempfile::tempdir().unwrap();
-        let mut handle = spawn_command("pwd", Some(tmp.path())).await.unwrap();
+        let mut handle = spawn_command("pwd", Some(tmp.path()), None).await.unwrap();
         let mut lines = Vec::new();
         while let Some((_, line)) = handle.output_rx.recv().await {
             lines.push(line);
@@ -192,7 +200,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_spawn_multiline() {
-        let mut handle = spawn_command("printf 'line1\nline2\nline3\n'", None).await.unwrap();
+        let mut handle = spawn_command("printf 'line1\nline2\nline3\n'", None, None).await.unwrap();
         let mut lines = Vec::new();
         while let Some((_, line)) = handle.output_rx.recv().await {
             lines.push(line);
@@ -202,7 +210,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_force_kill() {
-        let mut handle = spawn_command("sleep 60", None).await.unwrap();
+        let mut handle = spawn_command("sleep 60", None, None).await.unwrap();
         handle.force_kill().unwrap();
         let exit = handle.wait().await.unwrap();
         // Killed by SIGKILL: exit code is None on Unix (signal kill)

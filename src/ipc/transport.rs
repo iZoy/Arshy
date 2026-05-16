@@ -202,9 +202,14 @@ impl DaemonConnection {
                     }
                 }
             } else if has_method {
-                // Notification — deliver to notification channel
+                // Notification — deliver to notification channel.
+                // Blocking send provides backpressure: if the proxy can't consume
+                // notifications fast enough, the daemon slows down rather than
+                // silently dropping events.
                 if let Ok(notif) = serde_json::from_value::<Notification>(val) {
-                    let _ = notif_tx.send(notif).await;
+                    if notif_tx.send(notif).await.is_err() {
+                        break; // proxy disconnected, stop reader
+                    }
                 }
             }
         }

@@ -35,7 +35,9 @@ pub fn is_short_command(command: &str) -> bool {
         return false;
     }
     // Pipes, redirects, chaining, backgrounding → non-short
-    if cmd.contains('|') || cmd.contains(">>") || cmd.contains("&&")
+    // Note: '|' is intentionally allowed — simple pipes (≤5 words, ≤80 chars)
+    // take the fast short path; multi-pipe chains are caught by word-count limit.
+    if cmd.contains(">>") || cmd.contains("&&")
         || cmd.contains("||") || cmd.contains('&')
     {
         return false;
@@ -152,6 +154,7 @@ impl Executor {
         timeout_ms: Option<u64>,
         mode: &str,
         parse_hint: Option<&str>,
+        env: Option<&HashMap<String, String>>,
     ) -> Result<RunResult> {
         // ── Security checks (always run) ──────────────────────────────────
         if let Err(e) = self.filter.check(command) {
@@ -183,7 +186,7 @@ impl Executor {
 
         // ── Auto + short (no hint) → zero-overhead fast path ──────────────
         if is_auto && is_short && !has_hint {
-            return self.run_short(command, cwd, timeout_ms).await;
+            return self.run_short(command, cwd, timeout_ms, env).await;
         }
 
         // ── Full structured path ──────────────────────────────────────────
@@ -244,6 +247,7 @@ impl Executor {
             audit_log: self.audit_log.clone(),
             done_tx,
             kill_rx,
+            env: env.cloned(),
         };
         let task_id_cleanup = task_id.clone();
         tokio::spawn(async move {
@@ -307,12 +311,13 @@ impl Executor {
         command: &str,
         cwd: Option<&str>,
         timeout_ms: Option<u64>,
+        env: Option<&HashMap<String, String>>,
     ) -> Result<RunResult> {
         let task_id = uuid::Uuid::new_v4().to_string();
         let start = std::time::Instant::now();
 
         let cwd_path = cwd.map(std::path::PathBuf::from);
-        let mut handle = pty::spawn_command(command, cwd_path.as_deref()).await?;
+        let mut handle = pty::spawn_command(command, cwd_path.as_deref(), env).await?;
         let pid = handle.pid;
 
         let timeout_dur = tokio::time::Duration::from_millis(
@@ -435,6 +440,7 @@ struct BackgroundTask {
     audit_log: Option<Arc<AuditLog>>,
     done_tx: Option<oneshot::Sender<CompletionInfo>>,
     kill_rx: tokio::sync::mpsc::Receiver<()>,
+    env: Option<HashMap<String, String>>,
 }
 
 /// Background task that runs the command, parses output, stores events.
@@ -456,7 +462,7 @@ async fn run_background(mut t: BackgroundTask) -> Result<()> {
     let session = t.parser.create_session(t.detected_tool.as_ref());
 
     // Spawn the process
-    let mut handle = pty::spawn_command(&t.command, t.cwd.as_deref()).await?;
+    let mut handle = pty::spawn_command(&t.command, t.cwd.as_deref(), t.env.as_ref()).await?;
     let pid = handle.pid;
 
     // Update task with PID
@@ -740,7 +746,7 @@ mod tests {
         let (store, parser, bus, _tmp) = setup();
         let executor = Executor::new(store.clone(), parser, bus);
 
-        let result = executor.run("echo hello", None, None, "async", None).await.unwrap();
+        let result = executor.run("echo hello", None, None, "async", None, None).await.unwrap();
         assert!(!result.task_id.is_empty());
         assert_eq!(result.status, TaskStatus::Running);
 
@@ -774,7 +780,7 @@ mod tests {
         let (store, parser, bus, _tmp) = setup();
         let executor = Executor::new(store.clone(), parser, bus);
 
-        let result = executor.run("exit 1", None, None, "async", None).await.unwrap();
+        let result = executor.run("exit 1", None, None, "async", None, None).await.unwrap();
 
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
@@ -788,7 +794,7 @@ mod tests {
         let (store, parser, bus, _tmp) = setup();
         let executor = Executor::new(store.clone(), parser, bus);
 
-        let result = executor.run("printf 'a\nb\nc\n'", None, None, "async", None).await.unwrap();
+        let result = executor.run("printf 'a\nb\nc\n'", None, None, "async", None, None).await.unwrap();
 
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
@@ -805,7 +811,7 @@ mod tests {
                 ..Default::default()
             });
 
-        let result = executor.run("sleep 60", None, Some(500), "async", None).await.unwrap();
+        let result = executor.run("sleep 60", None, Some(500), "async", None, None).await.unwrap();
 
         tokio::time::sleep(std::time::Duration::from_secs(3)).await;
 
@@ -823,7 +829,7 @@ mod tests {
         let (store, parser, bus, _tmp) = setup();
         let executor = Executor::new(store.clone(), parser, bus);
 
-        let result = executor.run("echo sync_test", None, None, "sync", None).await.unwrap();
+        let result = executor.run("echo sync_test", None, None, "sync", None, None).await.unwrap();
         // Sync mode should wait for completion and return full result
         assert_eq!(result.status, TaskStatus::Completed);
         assert_eq!(result.exit_code, Some(0));
@@ -836,7 +842,7 @@ mod tests {
         let (store, parser, bus, _tmp) = setup();
         let executor = Executor::new(store.clone(), parser, bus);
 
-        let result = executor.run("exit 42", None, None, "sync", None).await.unwrap();
+        let result = executor.run("exit 42", None, None, "sync", None, None).await.unwrap();
         assert_eq!(result.status, TaskStatus::Failed);
         assert_eq!(result.exit_code, Some(42));
     }
@@ -846,7 +852,7 @@ mod tests {
         let (store, parser, bus, _tmp) = setup();
         let executor = Executor::new(store.clone(), parser, bus);
 
-        let result = executor.run("sleep 60", None, None, "async", None).await.unwrap();
+        let result = executor.run("sleep 60", None, None, "async", None, None).await.unwrap();
         assert_eq!(result.status, TaskStatus::Running);
 
         // Wait a bit for the process to start
@@ -891,8 +897,11 @@ mod tests {
 
     #[test]
     fn short_command_has_pipe() {
-        assert!(!is_short_command("ls -la | grep foo"));
-        assert!(!is_short_command("cat file.txt | head -5"));
+        // Simple pipes are now allowed as short commands
+        assert!(is_short_command("ls -la | grep foo"));
+        assert!(is_short_command("cat file.txt | head -5"));
+        // Multi-pipe chains with many words → non-short
+        assert!(!is_short_command("cat file | sort | uniq | head -n 20"));
     }
 
     #[test]
@@ -957,7 +966,7 @@ mod tests {
         let (store, parser, bus, _tmp) = setup();
         let executor = Executor::new(store.clone(), parser, bus);
 
-        let result = executor.run("echo fast-path", None, None, "auto", None).await.unwrap();
+        let result = executor.run("echo fast-path", None, None, "auto", None, None).await.unwrap();
         assert!(result.short_command, "short_command should be true");
         assert_eq!(result.status, TaskStatus::Completed);
         assert_eq!(result.exit_code, Some(0));
@@ -981,6 +990,7 @@ mod tests {
             None,
             "auto",
             None,
+        None,
         ).await.unwrap();
         assert!(!result.short_command, "long command should not be short_command");
         assert_eq!(result.status, TaskStatus::Running);
@@ -993,20 +1003,18 @@ mod tests {
         assert_eq!(task.status, TaskStatus::Completed);
     }
 
-    /// Auto mode with a piped command takes the async path.
+    /// Auto mode with a simple piped command: now takes the short path
+    /// since pipes are allowed in short commands (≤5 words, ≤80 chars).
     #[tokio::test]
-    async fn auto_piped_takes_async_path() {
+    async fn auto_piped_short_path() {
         let (store, parser, bus, _tmp) = setup();
         let executor = Executor::new(store.clone(), parser, bus);
 
-        let result = executor.run("echo hello | cat", None, None, "auto", None).await.unwrap();
-        assert!(!result.short_command, "piped command should not be short");
-        assert_eq!(result.status, TaskStatus::Running);
-
-        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-
-        let task = store.get_task(&result.task_id).unwrap().unwrap();
-        assert_eq!(task.status, TaskStatus::Completed);
+        let result = executor.run("echo hello | cat", None, None, "auto", None, None).await.unwrap();
+        assert!(result.short_command, "simple piped cmd should use short path");
+        assert_eq!(result.status, TaskStatus::Completed);
+        assert!(result.raw_output.is_some(), "short path populates raw_output");
+        assert_eq!(result.raw_output.as_ref().unwrap().trim(), "hello");
     }
 
     /// Explicit sync mode with a short command still uses the full structured path.
@@ -1015,7 +1023,7 @@ mod tests {
         let (store, parser, bus, _tmp) = setup();
         let executor = Executor::new(store.clone(), parser, bus);
 
-        let result = executor.run("echo sync-short", None, None, "sync", None).await.unwrap();
+        let result = executor.run("echo sync-short", None, None, "sync", None, None).await.unwrap();
         // Sync mode: should complete and return structure, not short path
         assert!(!result.short_command, "explicit sync should use full structured path");
         assert_eq!(result.status, TaskStatus::Completed);
@@ -1030,7 +1038,7 @@ mod tests {
         let (store, parser, bus, _tmp) = setup();
         let executor = Executor::new(store.clone(), parser, bus);
 
-        let result = executor.run("nonexistent_xyz", None, None, "auto", None).await.unwrap();
+        let result = executor.run("nonexistent_xyz", None, None, "auto", None, None).await.unwrap();
         assert!(result.short_command);
         assert_eq!(result.status, TaskStatus::Failed);
         assert!(result.exit_code.unwrap() != 0);
@@ -1046,7 +1054,7 @@ mod tests {
         let executor = Executor::new(store.clone(), parser, bus);
 
         // Short command with parse_hint="json" → should NOT take short path
-        let result = executor.run("echo hello", None, None, "auto", Some("json")).await.unwrap();
+        let result = executor.run("echo hello", None, None, "auto", Some("json"), None).await.unwrap();
         assert!(!result.short_command, "parse_hint should force structured path");
         assert_eq!(result.status, TaskStatus::Running);
 
@@ -1069,6 +1077,7 @@ mod tests {
             None,
             "auto",
             Some("json"),
+        None,
         ).await.unwrap();
         assert!(!result.short_command);
 
@@ -1098,7 +1107,7 @@ mod tests {
         let executor = Executor::new(store.clone(), parser, bus);
 
         // Short command with parse_hint="raw" → structured path
-        let result = executor.run("echo hello", None, None, "auto", Some("raw")).await.unwrap();
+        let result = executor.run("echo hello", None, None, "auto", Some("raw"), None).await.unwrap();
         assert!(!result.short_command, "any parse_hint should force structured path");
         assert_eq!(result.status, TaskStatus::Running);
 
@@ -1114,7 +1123,7 @@ mod tests {
         let (store, parser, bus, _tmp) = setup();
         let executor = Executor::new(store.clone(), parser, bus);
 
-        let result = executor.run("echo fast", None, None, "auto", None).await.unwrap();
+        let result = executor.run("echo fast", None, None, "auto", None, None).await.unwrap();
         assert!(result.short_command, "no hint should keep short path for short commands");
         assert!(result.raw_output.is_some());
     }
@@ -1150,6 +1159,7 @@ mod tests {
             None,
             "async",
             None,
+        None,
         ).await.unwrap();
 
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
@@ -1185,6 +1195,7 @@ mod tests {
             None,
             "auto",
             Some("json"),
+        None,
         ).await.unwrap();
 
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
@@ -1217,6 +1228,7 @@ mod tests {
             None,
             "async",
             None,
+        None,
         ).await.unwrap();
 
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
@@ -1251,6 +1263,7 @@ mod tests {
             None,
             "async",
             None,
+        None,
         ).await.unwrap();
 
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
@@ -1285,6 +1298,7 @@ mod tests {
             None,
             "auto",
             Some("raw"),
+        None,
         ).await.unwrap();
 
         assert!(!result.short_command);
@@ -1309,6 +1323,7 @@ mod tests {
             None,
             "async",
             None,
+        None,
         ).await.unwrap();
 
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;

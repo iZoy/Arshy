@@ -7,8 +7,9 @@
 
 use arshy_lib::ipc::{
     self, ErrorResponse, JsonRpcError, Notification, QueryParams, Request, Response,
-    RunTaskParams, METHOD_KILL, METHOD_LIST, METHOD_PRUNE, METHOD_QUERY, METHOD_RUN,
-    METHOD_SHUTDOWN, METHOD_STATS, METHOD_STATUS, METHOD_STDIN, METHOD_TAIL,
+    RunTaskParams, METHOD_CD, METHOD_HEALTH, METHOD_KILL, METHOD_LIST, METHOD_PRUNE,
+    METHOD_QUERY, METHOD_RUN, METHOD_SHUTDOWN, METHOD_STATS, METHOD_STATUS, METHOD_STDIN,
+    METHOD_TAIL,
 };
 use arshy_lib::Result;
 use serde::Serialize;
@@ -63,7 +64,7 @@ pub async fn handle(
     let mut reader = BufReader::new(reader_half);
     let mut writer = BufWriter::new(writer_half);
 
-    let (tx, rx) = mpsc::channel::<Outbound>(256);
+    let (tx, rx) = mpsc::channel::<Outbound>(1024);
 
     let writer_handle = tokio::spawn(async move {
         if let Err(e) = drain_outbound(&mut writer, rx).await {
@@ -84,6 +85,7 @@ pub async fn handle(
     });
 
     let mut line = String::new();
+    let mut default_cwd: Option<String> = None;
     loop {
         line.clear();
         let n = reader.read_line(&mut line).await?;
@@ -115,7 +117,27 @@ pub async fn handle(
             }
         };
 
-        let response = dispatch(&request, &executor, &store, &shutdown_tx).await;
+        // Intercept METHOD_RUN to inject default_cwd, handle METHOD_CD locally
+        let response = if request.method.as_str() == METHOD_RUN {
+            let mut req = request.clone();
+            if req.params.get("cwd").is_none() {
+                if let Some(ref cwd) = default_cwd {
+                    req.params["cwd"] = serde_json::json!(cwd);
+                }
+            }
+            dispatch(&req, &executor, &store, &shutdown_tx).await
+        } else if request.method.as_str() == METHOD_CD {
+            let dir = request.params.get("command")
+                .and_then(|v| v.as_str())
+                .unwrap_or(".");
+            let abs = std::fs::canonicalize(std::path::Path::new(dir))
+                .map_err(|e| arshy_lib::ArshyError::Ipc(format!("cd: {}: {}", dir, e)))?;
+            let cwd_str = abs.to_string_lossy().to_string();
+            default_cwd = Some(cwd_str.clone());
+            Ok(serde_json::json!({"cwd": cwd_str}))
+        } else {
+            dispatch(&request, &executor, &store, &shutdown_tx).await
+        };
         let outbound = match response {
             Ok(result) => Outbound::Response(Response {
                 jsonrpc: "2.0".into(),
@@ -175,7 +197,7 @@ async fn dispatch(
         METHOD_RUN => {
             let params: RunTaskParams = serde_json::from_value(request.params.clone())?;
             let result = executor
-                .run(&params.command, params.cwd.as_deref(), params.timeout_ms, &params.mode, params.parse_hint.as_deref())
+                .run(&params.command, params.cwd.as_deref(), params.timeout_ms, &params.mode, params.parse_hint.as_deref(), params.env.as_ref())
                 .await?;
             Ok(serde_json::to_value(&result)?)
         }
@@ -221,6 +243,23 @@ async fn dispatch(
                 "tasks_running": running,
                 "tasks_total": all.len(),
                 "db_size_bytes": db_size,
+            }))
+        }
+        METHOD_HEALTH => {
+            // Deep health check — verifies store and executor are functional.
+            let store_ok = store.list_tasks(Some("running"), 1).is_ok();
+            let running_count = store.list_tasks(Some("running"), 10_000)
+                .map(|t| t.len())
+                .unwrap_or(0);
+            let total_tasks = store.list_tasks(None, 1)
+                .map(|t| t.len())
+                .unwrap_or(0);
+            Ok(serde_json::json!({
+                "status": if store_ok { "ok" } else { "degraded" },
+                "store_ok": store_ok,
+                "tasks_running": running_count,
+                "tasks_total": total_tasks,
+                "uptime_secs": daemon_uptime_secs(),
             }))
         }
         METHOD_PRUNE => {

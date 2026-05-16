@@ -77,6 +77,7 @@ async fn run_command(
         timeout_ms,
         mode: mode.unwrap_or_else(|| "sync".into()),
         parse_hint: None,
+        env: None,
     };
     let request = Request {
         jsonrpc: "2.0".into(),
@@ -737,6 +738,9 @@ Type=simple
 ExecStart={}
 Restart=on-failure
 RestartSec=5
+StartLimitInterval=120
+StartLimitBurst=5
+Environment=RUST_BACKTRACE=1
 
 [Install]
 WantedBy=default.target

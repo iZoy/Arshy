@@ -6,6 +6,7 @@ mod transport;
 pub use transport::*;
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 // ── Method names ─────────────────────────────────────────────────────────────
 
@@ -19,6 +20,8 @@ pub const METHOD_STATUS: &str = "daemon/status";
 pub const METHOD_PRUNE: &str = "daemon/prune";
 pub const METHOD_SHUTDOWN: &str = "daemon/shutdown";
 pub const METHOD_STATS: &str = "daemon/stats";
+pub const METHOD_HEALTH: &str = "daemon/health";
+pub const METHOD_CD: &str = "session/cd";
 
 pub const NOTIF_TASK_UPDATE: &str = "task/update";
 pub const NOTIF_TASK_COMPLETE: &str = "task/complete";
@@ -171,6 +174,10 @@ pub struct RunTaskParams {
     /// the zero-overhead short path to ensure structured output.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parse_hint: Option<String>,
+    /// Environment variables for the command: {"KEY": "value", ...}.
+    /// Inherited from the parent process; these entries add or override.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub env: Option<HashMap<String, String>>,
 }
 
 fn default_mode() -> String { "auto".into() }

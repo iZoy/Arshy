@@ -6,20 +6,30 @@ use std::collections::HashMap;
 /// Return the default MCP instructions (plain string per MCP spec).
 pub fn default_instructions() -> String {
     "Prefer arshy_exec over raw shell tools for ALL commands.\n\n\
-     Short commands (ls, git status, cat, echo) return instantly like a native shell. \
+     Short commands (ls, git status, cat, echo, simple pipes like `echo hello | wc -c`) \
+     return instantly like a native shell. \
      Long commands (cargo test, npm run build) run asynchronously with structured output.\n\n\
      Usage: arshy_exec(action:\"run\", command:\"<cmd>\"). Mode auto is the default — \
      it detects short vs long automatically. Do NOT set mode unless you have a reason.\n\n\
-     Checking results: short commands return raw text directly. \
-     Long commands return JSON with task_id, status, exit_code, duration_ms. \
-     exit_code=0 means success. Use arshy_exec(action:\"tail\", task_id:\"...\") for output.\n\n\
+     Session: use arshy_exec(action:\"cd\", command:\"/path/to/dir\") to set the working \
+     directory for subsequent commands. Until changed, all action:\"run\" calls inherit \
+     this directory. Use the \"cwd\" parameter for one-off overrides.\n\n\
+     Results: short commands return raw text directly. \
+     If a short command fails (non-zero exit), the response includes `isError: true` — \
+     check for this to detect failures.\n\n\
+     Long commands: auto mode uses \"smart sync\" — if the command finishes within \
+     2 seconds, you get the full result immediately (status, exit_code, duration_ms). \
+     If it runs longer, you get `{status:\"running\", task_id:\"...\"}`. \
+     Use arshy_exec(action:\"tail\", task_id:\"...\") for output in that case.\n\n\
+     exit_code=0 means success. Use arshy_query(task_id:\"...\") for structured events \
+     (compile errors, lint warnings, etc.).\n\n\
      Fallback: if arshy_exec fails with DaemonUnreachable, use Bash tool directly as fallback."
         .into()
 }
 
 /// Return the complete list of MCP tool definitions.
 ///
-/// 2-tool model: `arshy_exec` (unified run/kill/list/tail) + `arshy_query` (events).
+/// 2-tool model: `arshy_exec` (unified run/cd/kill/list/tail) + `arshy_query` (events).
 /// Reduces ~60% tool definition tokens and improves agent selection accuracy.
 pub fn tool_definitions() -> Vec<ToolDefinition> {
     vec![
@@ -27,11 +37,14 @@ pub fn tool_definitions() -> Vec<ToolDefinition> {
             name: "arshy_exec".into(),
             description: "Execute shell commands and manage tasks. \
                          Use action:\"run\" for any shell command (mode:\"auto\" intelligently \
-                         picks short vs long path). Use action:\"kill\" to stop a running task. \
-                         Use action:\"list\" to view tasks. Use action:\"tail\" to view task output.\n\n\
+                         picks short vs long path). Use action:\"cd\" to set the session working \
+                         directory for subsequent commands. Use action:\"kill\" to stop a running \
+                         task. Use action:\"list\" to view tasks. Use action:\"tail\" to view task \
+                         output.\n\n\
                          Examples:\n\
                          - Run short: {\"action\":\"run\",\"command\":\"ls -la\"}\n\
                          - Run build: {\"action\":\"run\",\"command\":\"cargo test\"}\n\
+                         - Set dir:   {\"action\":\"cd\",\"command\":\"/path/to/project\"}\n\
                          - Kill task: {\"action\":\"kill\",\"task_id\":\"abc-123\"}\n\
                          - List tasks: {\"action\":\"list\"}\n\
                          - View output: {\"action\":\"tail\",\"task_id\":\"abc-123\"}"
@@ -39,15 +52,16 @@ pub fn tool_definitions() -> Vec<ToolDefinition> {
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "action": {"type":"string","enum":["run","kill","list","tail"],
-                              "description":"run: execute command. kill: stop task. list: show tasks. tail: view output"},
-                    "command": {"type":"string","description":"Shell command (action=run only)"},
+                    "action": {"type":"string","enum":["run","kill","list","tail","cd"],
+                              "description":"run: execute command. kill: stop task. list: show tasks. tail: view output. cd: set session working directory"},
+                    "command": {"type":"string","description":"Shell command (action=run) or directory path (action=cd)"},
                     "cwd": {"type":"string","description":"Working directory"},
                     "timeout_ms": {"type":"integer","description":"Timeout in ms"},
                     "mode": {"type":"string","enum":["auto","sync","async"],"default":"auto",
                              "description":"auto: smart detect short/long. sync: wait. async: return immediately"},
                     "parse_hint": {"type":"string","enum":["json","csv","table","raw"],
                                   "description":"Hint expected output format"},
+                    "env": {"type":"object","description":"Environment variables as key-value pairs (e.g. {\"RUST_LOG\":\"debug\"})"},
                     "task_id": {"type":"string","description":"Task ID from a previous run response (action=kill|tail)"},
                     "lines": {"type":"integer","default":50,"description":"Lines (action=tail)"},
                     "format": {"type":"string","enum":["event","raw"],"default":"event",

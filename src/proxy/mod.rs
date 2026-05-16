@@ -61,6 +61,21 @@ async fn proxy_main(config_path: Option<PathBuf>) -> Result<()> {
     let mut batch_deadline: Option<tokio::time::Instant> = None;
     let mut request_tasks: HashMap<u64, String> = HashMap::new();
 
+    // Periodic health check tracking — ensures checks happen even under
+    // continuous activity (the select! health branch only fires when idle).
+    let mut last_health_check = tokio::time::Instant::now();
+    let health_interval = Duration::from_secs(30);
+
+    // Shutdown signal — triggered by SIGTERM from parent process (Claude Code)
+    let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
+    tokio::spawn(async move {
+        if let Ok(mut sig) = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            let _ = sig.recv().await;
+            tracing::info!("received SIGTERM, initiating graceful shutdown");
+            let _ = shutdown_tx.send(true);
+        }
+    });
+
     loop {
         // Build the notification future for select!
         let notif_fut = if pending_notifs.len() >= max_batch {
@@ -154,6 +169,7 @@ async fn proxy_main(config_path: Option<PathBuf>) -> Result<()> {
                                             }
                                             Err(re) => {
                                                 tracing::error!("reconnect failed: {}", re);
+                                                record_daemon_crash();
                                                 write_structured_error(&mut stdout, id, arshy_lib::ArshyError::DaemonUnreachable(
                                                     format!("connection lost: {}", e))).await
                                             }
@@ -202,6 +218,11 @@ async fn proxy_main(config_path: Option<PathBuf>) -> Result<()> {
                             tracing::error!("proxy error processing '{}': {}", method, e);
                         }
 
+                        // Opportunistic health check — runs during active use too
+                        if last_health_check.elapsed() >= health_interval {
+                            perform_health_check(&mut daemon, &mut notif_rx, &cfg, &socket_path, &mut last_health_check).await;
+                        }
+
                         line.clear();
                     }
                     Err(e) => {
@@ -226,12 +247,69 @@ async fn proxy_main(config_path: Option<PathBuf>) -> Result<()> {
                     None => break, // daemon channel closed
                 }
             }
+
+            // ── Health check branch ─────────────────────────────────────
+            // Fires after 30s of inactivity to detect daemon crashes
+            _ = tokio::time::sleep(health_interval) => {
+                perform_health_check(&mut daemon, &mut notif_rx, &cfg, &socket_path, &mut last_health_check).await;
+                continue;
+            }
+
+            // ── Shutdown signal branch ──────────────────────────────────
+            // SIGTERM from parent process triggers graceful daemon shutdown
+            _ = shutdown_rx.changed() => {
+                tracing::info!("shutting down proxy, forwarding to daemon...");
+                // Best-effort: tell daemon to shut down
+                let _ = daemon.send_request_with_timeout(
+                    ipc::METHOD_SHUTDOWN,
+                    serde_json::json!({}),
+                    Duration::from_secs(2),
+                ).await;
+                break;
+            }
         }
     }
 
     // Flush any remaining batched notifications
     flush_batch(&mut stdout, &mut pending_notifs).await?;
     Ok(())
+}
+
+/// Check daemon health and reconnect if needed. Updates `last_check` on success.
+async fn perform_health_check(
+    daemon: &mut DaemonConnection,
+    notif_rx: &mut mpsc::Receiver<Notification>,
+    cfg: &Config,
+    socket_path: &std::path::Path,
+    last_check: &mut tokio::time::Instant,
+) {
+    match daemon.send_request_with_timeout(
+        ipc::METHOD_HEALTH,
+        serde_json::json!({}),
+        Duration::from_secs(3),
+    ).await {
+        Ok(_) => {
+            *last_check = tokio::time::Instant::now();
+        }
+        Err(e) if is_connection_error(&e) && cfg.daemon.auto_start => {
+            tracing::warn!("health check failed, reconnecting...");
+            match reconnect(cfg, socket_path).await {
+                Ok((new_conn, new_notif_rx)) => {
+                    *daemon = new_conn;
+                    *notif_rx = new_notif_rx;
+                    *last_check = tokio::time::Instant::now();
+                    tracing::info!("reconnected via health check");
+                }
+                Err(re) => {
+                    tracing::error!("health reconnect failed: {}", re);
+                    record_daemon_crash();
+                }
+            }
+        }
+        Err(e) => {
+            tracing::warn!("health check error (non-connection): {}", e);
+        }
+    }
 }
 
 /// Drain pending notifications from the channel (non-blocking) and forward
@@ -433,18 +511,24 @@ async fn handle_tool_call(
 
     // Short command → plain text (like a native shell)
     let is_short = result["short_command"].as_bool().unwrap_or(false);
+    let status = result["status"].as_str().unwrap_or("");
     let content = if is_short {
         let raw = result["raw_output"].as_str().unwrap_or("");
-        serde_json::json!([{"type": "text", "text": raw}])
+        // Provide meaningful message for timeouts
+        let text = if raw.is_empty() && status == "timeout" {
+            format!("[command timed out: {}]", result["exit_code"].as_i64().unwrap_or(-1))
+        } else {
+            raw.to_string()
+        };
+        serde_json::json!([{"type": "text", "text": text}])
     } else {
         // Long command → structured output
         let text = serde_json::to_string_pretty(result).unwrap_or_default();
         serde_json::json!([{"type": "text", "text": text}])
     };
 
-    // For long commands, flag failures with isError so agents can detect them immediately
-    let status = result["status"].as_str().unwrap_or("");
-    let is_error = !is_short && (status == "failed" || status == "timeout");
+    // Flag failures with isError so agents can detect them immediately
+    let is_error = status == "failed" || status == "timeout";
 
     let mut result_obj = serde_json::json!({ "content": content });
     if is_error {
@@ -612,29 +696,122 @@ async fn connect_or_start(cfg: &Config, socket_path: &std::path::Path) -> Result
     match ipc::connect(socket_path).await {
         Ok(s) => Ok(s),
         Err(_) if cfg.daemon.auto_start => {
+            // If the socket file exists but connection failed, the daemon process
+            // may be dead (stale socket). Clean it up before spawning.
+            if socket_path.exists() {
+                tracing::warn!("stale socket detected, removing {}", socket_path.display());
+                let _ = std::fs::remove_file(socket_path);
+            }
             start_daemon()?;
-            for _ in 0..25 {
-                tokio::time::sleep(Duration::from_millis(200)).await;
+            for _ in 0..40 {
+                tokio::time::sleep(Duration::from_millis(250)).await;
                 if let Ok(s) = ipc::connect(socket_path).await {
                     return Ok(s);
                 }
             }
+            // Daemon failed to start — record crash for circuit breaker
+            record_daemon_crash();
             Err(arshy_lib::ArshyError::DaemonUnreachable(
-                "daemon did not start within 5s".into(),
+                "daemon did not start within 10s".into(),
             ))
         }
         Err(e) => Err(e),
     }
 }
 
+/// Spawn the arshy daemon. Uses an atomic lock file to prevent duplicate spawns.
+///
+/// Circuit breaker: if the daemon has crashed more than 5 times in the last 2 minutes,
+/// auto-start is suppressed to prevent crash-looping.
 fn start_daemon() -> Result<()> {
-    std::process::Command::new("arshyd")
+    use std::fs::OpenOptions;
+    use std::io::Write;
+
+    // ── Circuit breaker check ───────────────────────────────────────────
+    if !check_circuit_breaker() {
+        return Err(arshy_lib::ArshyError::DaemonUnreachable(
+            "daemon crash-loop detected, auto-start suppressed".into()
+        ));
+    }
+
+    // Atomic lock — if another proxy already spawned (or is spawning) the daemon,
+    // this will fail and we'll just wait for the socket to appear.
+    let lock_path = std::path::PathBuf::from("/tmp/arshyd.spawn-lock");
+    let mut lock_file = match OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&lock_path)
+    {
+        Ok(f) => f,
+        Err(_) => {
+            tracing::debug!("spawn lock held by another process, skipping spawn");
+            return Ok(());
+        }
+    };
+    // Write our PID into the lock file for debugging
+    let _ = writeln!(lock_file, "{}", std::process::id());
+
+    // Resolve the arshyd binary path — prefer sibling of current exe, fall back to PATH
+    let path = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.join("arshyd")))
+        .filter(|p| p.exists())
+        .unwrap_or_else(|| std::path::PathBuf::from("arshyd"));
+
+    let child = std::process::Command::new(&path)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()
-        .map_err(|e| arshy_lib::ArshyError::DaemonUnreachable(format!("spawn arshyd: {}", e)))?;
+        .map_err(|e| arshy_lib::ArshyError::DaemonUnreachable(
+            format!("spawn {}: {}", path.display(), e)))?;
+
+    // Release the lock once the daemon has started (the lock file will be
+    // cleaned up by the daemon on its own startup, or we remove it here).
+    drop(lock_file);
+    let _ = std::fs::remove_file(&lock_path);
+
+    tracing::info!("spawned arshyd (pid {}) from {}", child.id(), path.display());
     Ok(())
+}
+
+// ── Circuit breaker: prevents daemon crash-looping ───────────────────────
+
+use std::sync::Mutex;
+use std::time::Instant;
+
+/// Shared crash timestamp log. If more than MAX_CRASHES occur within
+/// CRASH_WINDOW, auto-start is suppressed.
+static CRASH_LOG: Mutex<Option<Vec<Instant>>> = Mutex::new(None);
+const MAX_CRASHES: usize = 5;
+const CRASH_WINDOW_SECS: u64 = 120;
+
+fn prune_crash_log(log: &mut Vec<Instant>) {
+    let cutoff = Instant::now() - Duration::from_secs(CRASH_WINDOW_SECS);
+    log.retain(|t| *t > cutoff);
+}
+
+fn check_circuit_breaker() -> bool {
+    let mut guard = CRASH_LOG.lock().unwrap();
+    let log = guard.get_or_insert_with(Vec::new);
+    prune_crash_log(log);
+    if log.len() >= MAX_CRASHES {
+        tracing::error!(
+            "circuit breaker tripped: {} daemon crashes in {}s, refusing auto-start",
+            log.len(), CRASH_WINDOW_SECS
+        );
+        return false;
+    }
+    true
+}
+
+fn record_daemon_crash() {
+    let mut guard = CRASH_LOG.lock().unwrap();
+    let log = guard.get_or_insert_with(Vec::new);
+    prune_crash_log(log);
+    log.push(Instant::now());
+    tracing::warn!("daemon crash recorded ({}/{}) — {} in last {}s",
+        log.len(), MAX_CRASHES, log.len(), CRASH_WINDOW_SECS);
 }
 
 /// Check if an error indicates a broken daemon connection.
@@ -660,7 +837,7 @@ async fn reconnect(
 /// Map MCP tool name to IPC method.
 ///
 /// 2-tool model:
-/// - `arshy_exec` → action-based dispatch (run/kill/list/tail)
+/// - `arshy_exec` → action-based dispatch (run/kill/list/tail/cd)
 /// - `arshy_query` → structured event queries
 fn mcp_tool_to_ipc_method(tool_name: &str, args: &serde_json::Value) -> &'static str {
     match tool_name {
@@ -668,6 +845,7 @@ fn mcp_tool_to_ipc_method(tool_name: &str, args: &serde_json::Value) -> &'static
             Some("kill") => ipc::METHOD_KILL,
             Some("list") => ipc::METHOD_LIST,
             Some("tail") => ipc::METHOD_TAIL,
+            Some("cd") => ipc::METHOD_CD,
             _ => ipc::METHOD_RUN, // "run" is default for arshy_exec
         },
         "arshy_query" => ipc::METHOD_QUERY,
