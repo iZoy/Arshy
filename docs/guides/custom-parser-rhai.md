@@ -7,7 +7,7 @@
 在 `~/.arshy/parsers/` 下创建 `.rhai` 文件：
 
 ```rhai
-// ~/./.arshy/parsers/docker.rhai
+// ~/.arshy/parsers/docker.rhai
 
 fn on_line(line, ctx) {
     if line.contains("ERROR") {

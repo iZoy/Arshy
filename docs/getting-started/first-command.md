@@ -6,7 +6,7 @@
 arshy daemon start
 ```
 
-输出：`daemon started (pid xxxxx)`
+输出：`daemon started`
 
 ## 执行命令
 

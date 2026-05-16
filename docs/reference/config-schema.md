@@ -103,6 +103,15 @@ max_batch_events = 50
 min_severity = "info"
 
 [security]
+blocked_patterns = ["rm -rf /", "curl.*\\|.*sh", "dd if=", "mkfs", ":(){:|:&};:"]
+allowed_commands = null
+sandbox_paths = []
 access_level = "full"
 audit_log = null
+
+[mcp]
+client_detection_order = ["claude-code", "cursor", "windsurf"]
+
+[telemetry]
+enabled = false
 ```

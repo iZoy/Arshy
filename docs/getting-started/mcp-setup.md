@@ -8,7 +8,7 @@ arshy install
 
 自动写入 Claude Code MCP 配置。重启 Claude Code 生效。
 
-手动配置（`~/.claude/claude_config.json`）：
+手动配置（`~/.claude/settings.json`）：
 
 ```json
 {

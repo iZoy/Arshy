@@ -139,4 +139,61 @@ Arshy 实现 MCP (Model Context Protocol) 2024-11-05 规范，通过 stdio 传�
 
 ### notifications/cancelled
 
-Agent 取消操作时发送，arshy 对应终止任务。
+Agent 取消操作时发送，arshy 调用 `arshy_kill` 终止对应任务。
+
+```json
+{
+  "method": "notifications/cancelled",
+  "params": {
+    "requestId": 42,
+    "reason": "user cancelled"
+  }
+}
+```
+
+收到后，proxy 自动查找该 requestId 关联的 task_id 并发送 kill 请求。
+
+## Prompts
+
+### prompts/list
+
+返回可用的 prompt 模板：
+
+```json
+{
+  "prompts": [
+    {
+      "name": "analyze_build_failure",
+      "description": "Help me understand why this build failed and suggest fixes.",
+      "arguments": [
+        { "name": "command", "description": "The build command that failed", "required": true },
+        { "name": "output", "description": "The build output or error log", "required": false }
+      ]
+    },
+    {
+      "name": "diagnose_test_failure",
+      "description": "Help me understand why these tests failed and suggest next steps.",
+      "arguments": [
+        { "name": "task_id", "description": "The task ID of the failed test run", "required": true }
+      ]
+    },
+    {
+      "name": "review_task_output",
+      "description": "Review the structured output of a command and summarize findings.",
+      "arguments": [
+        { "name": "task_id", "description": "The task ID to review", "required": true }
+      ]
+    }
+  ]
+}
+```
+
+### prompts/get
+
+根据 prompt 名称和参数生成消息。Agent 可直接使用生成的 messages 发起对话。
+
+| Prompt | 用途 | 典型场景 |
+|--------|------|----------|
+| `analyze_build_failure` | 分析构建失败原因 | `cargo build` 失败后自动诊断 |
+| `diagnose_test_failure` | 诊断测试失败 | 测试 task 完成但 exit_code ≠ 0 |
+| `review_task_output` | 汇总任务输出 | 审查长命令的结构化事件 |

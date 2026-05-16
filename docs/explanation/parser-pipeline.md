@@ -2,7 +2,7 @@
 
 ## 概述
 
-Parser 管道是 Arshy 的核心：将命令的原始文本输出转化为结构化事件。设计目标覆盖率为 TOML 80%、Stateful 15%、Crash/Raw 5%。
+Parser 管道是 Arshy 的核心：将命令的原始文本输出转化为结构化事件。设计目标覆盖率为 TOML 75%、Stateful 15%、Crash 5%、Raw 5%。
 
 ## 四级匹配
 

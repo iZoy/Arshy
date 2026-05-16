@@ -32,9 +32,18 @@ Arshy 使用 JSON-RPC 2.0 错误码体系。
 | `AccessDenied` | `-32003` | 只读模式或路径受限 |
 | `Ipc("unknown method: ...")` | `-32601` | 未注册的 IPC 方法 |
 | `Ipc("missing ..." / "invalid ...")` | `-32602` | 参数缺失或类型错误 |
-| 其他 | `-32603` | 未分类内部错误 |
+| `TaskExecution` | `-32603` | 进程退出码非零 |
+| `Parser` | `-32603` | Parser 解析失败 |
+| `Sqlite` | `-32603` | 数据库错误 |
+| `Exec` | `-32603` | 进程 spawn/exec 失败 |
+| `Mcp` | `-32603` | MCP 协议错误 |
+| `Serialization` | `-32603` | JSON/TOML 序列化失败 |
+| `Config` | `-32603` | 配置文件错误 |
+| `Io` | `-32603` | 系统 I/O 错误 |
+| `DaemonUnreachable` | `-32603` | Daemon 无法连接 |
+| `Other` | `-32603` | 未分类内部错误 |
 
-## 重试语调
+## 重试语义
 
 可重试错误：
 
