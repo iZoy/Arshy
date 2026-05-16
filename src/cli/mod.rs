@@ -201,6 +201,47 @@ fn install() -> Result<()> {
         .join("settings.json");
     install_settings_permissions(&settings_path)?;
 
+    // Auto-start daemon so arshy is immediately usable
+    let cfg = Config::load(arshy_lib::config::CliOverrides::default()).unwrap_or_default();
+    let socket_path = cfg.daemon.expanded_socket_path();
+    if socket_path.exists() {
+        println!("  ✓ daemon is already running");
+    } else {
+        match std::process::Command::new("arshyd")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+        {
+            Ok(_) => {
+                // Wait up to 3s for the socket to appear
+                let mut started = false;
+                for _ in 0..15 {
+                    std::thread::sleep(std::time::Duration::from_millis(200));
+                    if socket_path.exists() {
+                        started = true;
+                        break;
+                    }
+                }
+                if started {
+                    println!("  ✓ daemon started");
+                } else {
+                    println!("  ⚠ daemon spawned but socket not ready — may need a moment");
+                }
+            }
+            Err(e) => {
+                println!("  ⚠ could not start daemon: {}", e);
+                println!("    Start manually with: arshy daemon start");
+            }
+        }
+    }
+
+    // Hint about launchd/systemd for auto-start on reboot
+    if cfg!(target_os = "macos") {
+        println!();
+        println!("Tip: run `arshy install-launchd` to auto-start daemon on login.");
+    }
+
     println!();
     println!("Done! Restart Claude Code to activate.");
     println!("  MCP server: {}", claude_json_path.display());

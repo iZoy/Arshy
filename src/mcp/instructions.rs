@@ -5,13 +5,15 @@ use std::collections::HashMap;
 
 /// Return the default MCP instructions (plain string per MCP spec).
 pub fn default_instructions() -> String {
-    "NEVER use raw shell tools. ALL commands go through arshy_exec action:\"run\". \
-     Short commands (ls, git status, echo) return instantly like a native shell. \
-     Long commands (builds, tests, installs) stream structured output.\n\n\
-     Use mode:\"auto\" (the default). Arshy automatically detects short vs long commands: \
-     short commands return raw text instantly with zero overhead; \
-     long commands run asynchronously with structured events and real-time notifications. \
-     Do NOT manually set mode to \"sync\" or \"async\" unless you have a specific reason."
+    "Prefer arshy_exec over raw shell tools for ALL commands.\n\n\
+     Short commands (ls, git status, cat, echo) return instantly like a native shell. \
+     Long commands (cargo test, npm run build) run asynchronously with structured output.\n\n\
+     Usage: arshy_exec(action:\"run\", command:\"<cmd>\"). Mode auto is the default — \
+     it detects short vs long automatically. Do NOT set mode unless you have a reason.\n\n\
+     Checking results: short commands return raw text directly. \
+     Long commands return JSON with task_id, status, exit_code, duration_ms. \
+     exit_code=0 means success. Use arshy_exec(action:\"tail\", task_id:\"...\") for output.\n\n\
+     Fallback: if arshy_exec fails with DaemonUnreachable, use Bash tool directly as fallback."
         .into()
 }
 
@@ -26,8 +28,13 @@ pub fn tool_definitions() -> Vec<ToolDefinition> {
             description: "Execute shell commands and manage tasks. \
                          Use action:\"run\" for any shell command (mode:\"auto\" intelligently \
                          picks short vs long path). Use action:\"kill\" to stop a running task. \
-                         Use action:\"list\" to view tasks. Use action:\"tail\" to view task output. \
-                         NEVER use raw shell tools — always use arshy_exec."
+                         Use action:\"list\" to view tasks. Use action:\"tail\" to view task output.\n\n\
+                         Examples:\n\
+                         - Run short: {\"action\":\"run\",\"command\":\"ls -la\"}\n\
+                         - Run build: {\"action\":\"run\",\"command\":\"cargo test\"}\n\
+                         - Kill task: {\"action\":\"kill\",\"task_id\":\"abc-123\"}\n\
+                         - List tasks: {\"action\":\"list\"}\n\
+                         - View output: {\"action\":\"tail\",\"task_id\":\"abc-123\"}"
                 .into(),
             input_schema: serde_json::json!({
                 "type": "object",
@@ -41,7 +48,7 @@ pub fn tool_definitions() -> Vec<ToolDefinition> {
                              "description":"auto: smart detect short/long. sync: wait. async: return immediately"},
                     "parse_hint": {"type":"string","enum":["json","csv","table","raw"],
                                   "description":"Hint expected output format"},
-                    "task_id": {"type":"string","description":"Task ID (action=kill|tail)"},
+                    "task_id": {"type":"string","description":"Task ID from a previous run response (action=kill|tail)"},
                     "lines": {"type":"integer","default":50,"description":"Lines (action=tail)"},
                     "format": {"type":"string","enum":["event","raw"],"default":"event",
                               "description":"Output format (action=tail)"},
@@ -55,17 +62,18 @@ pub fn tool_definitions() -> Vec<ToolDefinition> {
         ToolDefinition {
             name: "arshy_query".into(),
             description: "Query structured events from a completed or running task. \
-                         Filter by event type, severity, error code, or file path."
+                         Filter by event type, severity, error code, or file path. \
+                         Use the task_id from an arshy_exec run response."
                 .into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "task_id": {"type":"string"},
-                    "event_type": {"type":"string"},
-                    "severity": {"type":"string","enum":["error","warning","info"]},
-                    "code": {"type":"string"},
-                    "file": {"type":"string"},
-                    "limit": {"type":"integer","default":20}
+                    "task_id": {"type":"string","description":"Task ID from arshy_exec response"},
+                    "event_type": {"type":"string","description":"Filter by event type (e.g. compile_error, lint)"},
+                    "severity": {"type":"string","enum":["error","warning","info"],"description":"Filter by severity"},
+                    "code": {"type":"string","description":"Filter by error code"},
+                    "file": {"type":"string","description":"Filter by file path"},
+                    "limit": {"type":"integer","default":20,"description":"Max events to return"}
                 },
                 "required": ["task_id"]
             }),

@@ -111,6 +111,7 @@ async fn proxy_main(config_path: Option<PathBuf>) -> Result<()> {
 
                         let result = match method {
                             "initialize" => handle_initialize(&mut stdout, id, &request).await,
+                            "ping" => write_json_response(&mut stdout, id, &serde_json::json!({})).await,
                             "tools/list" => handle_tools_list(&mut stdout, id).await,
                             "prompts/list" => handle_prompts_list(&mut stdout, id).await,
                             "prompts/get" => handle_prompts_get(&mut stdout, &request, id).await,
@@ -185,8 +186,16 @@ async fn proxy_main(config_path: Option<PathBuf>) -> Result<()> {
                                     Ok(())
                                 }
                             }
-                            _ => write_structured_error(&mut stdout, id, arshy_lib::ArshyError::Ipc(
-                                format!("unknown method: {}", method))).await,
+                            _ => {
+                                // Only error on requests (have id), silently ignore notifications
+                                if request.get("id").is_some() {
+                                    write_structured_error(&mut stdout, id, arshy_lib::ArshyError::Ipc(
+                                        format!("unknown method: {}", method))).await
+                                } else {
+                                    tracing::debug!("ignoring unknown notification: {}", method);
+                                    Ok(())
+                                }
+                            }
                         };
 
                         if let Err(e) = result {
@@ -433,10 +442,19 @@ async fn handle_tool_call(
         serde_json::json!([{"type": "text", "text": text}])
     };
 
+    // For long commands, flag failures with isError so agents can detect them immediately
+    let status = result["status"].as_str().unwrap_or("");
+    let is_error = !is_short && (status == "failed" || status == "timeout");
+
+    let mut result_obj = serde_json::json!({ "content": content });
+    if is_error {
+        result_obj["isError"] = serde_json::json!(true);
+    }
+
     let mcp_response = serde_json::json!({
         "jsonrpc": "2.0",
         "id": id,
-        "result": { "content": content }
+        "result": result_obj
     });
 
     let mut json = serde_json::to_vec(&mcp_response)?;
@@ -1082,5 +1100,45 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(output.trim()).unwrap();
         assert_eq!(parsed["error"]["code"], ipc::error_code::INVALID_PARAMS);
         assert!(parsed["error"]["message"].as_str().unwrap().contains("Unknown prompt"));
+    }
+
+    // ── MCP ping ───────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_ping_returns_empty_result() {
+        use tokio::io::AsyncWriteExt;
+        let mut buf = tokio::io::BufWriter::new(Vec::new());
+        // ping is handled directly in the dispatch loop via write_json_response,
+        // so test write_json_response with empty result directly
+        write_json_response(&mut buf, 42, &serde_json::json!({})).await.unwrap();
+        buf.flush().await.unwrap();
+
+        let output = String::from_utf8(buf.into_inner()).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(output.trim()).unwrap();
+        assert_eq!(parsed["id"], 42);
+        assert_eq!(parsed["result"], serde_json::json!({}));
+        assert!(parsed["error"].is_null());
+    }
+
+    // ── Instructions ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_instructions_are_plain_string() {
+        let instructions = instructions::default_instructions();
+        // Must be a plain string, not a JSON object
+        assert!(serde_json::from_str::<serde_json::Value>(&instructions).is_err(),
+            "instructions should be plain text, not valid JSON");
+        assert!(instructions.contains("arshy_exec"));
+        assert!(instructions.contains("fallback"));
+    }
+
+    #[test]
+    fn test_tool_definitions_have_descriptions() {
+        let tools = instructions::tool_definitions();
+        assert_eq!(tools.len(), 2);
+        assert_eq!(tools[0].name, "arshy_exec");
+        assert!(tools[0].description.contains("Examples:"));
+        assert_eq!(tools[1].name, "arshy_query");
+        assert!(tools[1].description.contains("task_id"));
     }
 }
