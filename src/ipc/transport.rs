@@ -16,6 +16,7 @@ pub async fn connect(socket_path: &std::path::Path) -> Result<UnixStream> {
 
 /// Send a request and await a JSON-RPC response on a simple (non-persistent) stream.
 ///
+/// Skips notifications (which lack `id`) and returns the first response with a matching id.
 /// For bidirectional communication with notifications, use `DaemonConnection`.
 pub async fn send_request(stream: &mut UnixStream, request: &Request) -> Result<Response> {
     let (reader, writer) = stream.split();
@@ -28,13 +29,23 @@ pub async fn send_request(stream: &mut UnixStream, request: &Request) -> Result<
     writer.flush().await?;
 
     let mut line = String::new();
-    reader.read_line(&mut line).await?;
+    loop {
+        line.clear();
+        reader.read_line(&mut line).await?;
 
-    if line.trim().is_empty() {
-        return Err(crate::ArshyError::Ipc("empty response from daemon".into()));
+        if line.trim().is_empty() {
+            return Err(crate::ArshyError::Ipc("empty response from daemon".into()));
+        }
+
+        let val: serde_json::Value = serde_json::from_str(line.trim())?;
+
+        // Skip notifications (have "method", no "id") — read until we get a response
+        if val.get("method").is_some() {
+            continue;
+        }
+
+        return Ok(serde_json::from_value::<Response>(val)?);
     }
-
-    Ok(serde_json::from_str::<Response>(line.trim())?)
 }
 
 /// Write a single JSON Line to a writer.
