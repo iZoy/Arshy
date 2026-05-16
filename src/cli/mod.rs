@@ -188,12 +188,11 @@ const ARSHY_PERMISSIONS: &[&str] = &[
 fn install() -> Result<()> {
     println!("Registering arshy as MCP server + permissions...");
 
-    // Write MCP server to ~/.claude/mcp.json
-    let mcp_path = dirs::home_dir()
+    // Write MCP server to ~/.claude.json (Claude Code's actual config)
+    let claude_json_path = dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("~"))
-        .join(".claude")
-        .join("mcp.json");
-    install_mcp_json(&mcp_path)?;
+        .join(".claude.json");
+    install_mcp_in_claude_json(&claude_json_path)?;
 
     // Write permissions to ~/.claude/settings.json
     let settings_path = dirs::home_dir()
@@ -204,39 +203,49 @@ fn install() -> Result<()> {
 
     println!();
     println!("Done! Restart Claude Code to activate.");
-    println!("  MCP server: {}", mcp_path.display());
+    println!("  MCP server: {}", claude_json_path.display());
     println!("  Permissions: {}", settings_path.display());
     Ok(())
 }
 
-/// Write arshy entry to ~/.claude/mcp.json (separate from settings.json).
-fn install_mcp_json(path: &std::path::Path) -> Result<()> {
-    let mut mcp: serde_json::Value = if path.exists() {
+/// Write arshy MCP entry to ~/.claude.json under top-level mcpServers (user scope).
+fn install_mcp_in_claude_json(path: &std::path::Path) -> Result<()> {
+    let mut data: serde_json::Value = if path.exists() {
         let content = std::fs::read_to_string(path)?;
         serde_json::from_str(&content).unwrap_or(serde_json::json!({}))
     } else {
         serde_json::json!({})
     };
 
+    // Use full path so Claude Code can find the binary regardless of its PATH
+    let arshy_bin = std::env::current_exe()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| "arshy".into());
+
     let arshy_entry = serde_json::json!({
-        "command": "arshy",
-        "args": ["--from-mcp"]
+        "type": "stdio",
+        "command": arshy_bin,
+        "args": ["--from-mcp"],
+        "env": {}
     });
 
-    if let Some(obj) = mcp.as_object_mut() {
+    if let Some(obj) = data.as_object_mut() {
         let servers = obj
             .entry("mcpServers")
             .or_insert_with(|| serde_json::json!({}));
         if let Some(map) = servers.as_object_mut() {
+            let changed = map.get("arshy").is_none()
+                || map.get("arshy").and_then(|v| v.get("command")) != Some(&serde_json::json!(arshy_bin.clone()));
             map.insert("arshy".into(), arshy_entry);
+            if changed {
+                println!("  ✓ MCP server registered (user scope) in {}", path.display());
+            } else {
+                println!("  ✓ MCP server already configured in {}", path.display());
+            }
         }
     }
 
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    std::fs::write(path, serde_json::to_string_pretty(&mcp)?)?;
-    println!("  ✓ MCP server registered in {}", path.display());
+    std::fs::write(path, serde_json::to_string_pretty(&data)?)?;
     Ok(())
 }
 
@@ -291,21 +300,21 @@ fn uninstall() -> Result<()> {
     let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("~"));
     let claude_dir = home.join(".claude");
 
-    // Remove from ~/.claude/mcp.json
-    let mcp_path = claude_dir.join("mcp.json");
-    if mcp_path.exists() {
-        let content = std::fs::read_to_string(&mcp_path)?;
-        let mut mcp: serde_json::Value =
+    // Remove from ~/.claude.json (top-level mcpServers)
+    let claude_json_path = home.join(".claude.json");
+    if claude_json_path.exists() {
+        let content = std::fs::read_to_string(&claude_json_path)?;
+        let mut data: serde_json::Value =
             serde_json::from_str(&content).unwrap_or(serde_json::json!({}));
-        if let Some(obj) = mcp.as_object_mut() {
+        if let Some(obj) = data.as_object_mut() {
             if let Some(servers) = obj.get_mut("mcpServers") {
                 if let Some(map) = servers.as_object_mut() {
                     map.remove("arshy");
                 }
             }
         }
-        std::fs::write(&mcp_path, serde_json::to_string_pretty(&mcp)?)?;
-        println!("Removed arshy from {}", mcp_path.display());
+        std::fs::write(&claude_json_path, serde_json::to_string_pretty(&data)?)?;
+        println!("Removed arshy from {}", claude_json_path.display());
     }
 
     // Remove permissions from ~/.claude/settings.json
@@ -762,12 +771,12 @@ fn doctor(config_path: Option<PathBuf>, log_level: Option<String>) -> Result<()>
     }
 
     // ── 3. MCP server config ──────────────────────────────────────────────
-    println!("\n3. MCP server (mcp.json)");
+    println!("\n3. MCP server (~/.claude.json)");
     let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("~"));
     let claude_dir = home.join(".claude");
-    let mcp_path = claude_dir.join("mcp.json");
-    let mcp_ok = check_mcp_json(&mcp_path);
-    check!("arshy entry in mcp.json", mcp_ok,
+    let claude_json_path = home.join(".claude.json");
+    let mcp_ok = check_claude_json_mcp(&claude_json_path);
+    check!("arshy entry in ~/.claude.json", mcp_ok,
         "run: arshy install");
     if !mcp_ok {
         hint!("The MCP server must be registered for Claude Code to see arshy tools.");
@@ -819,7 +828,7 @@ fn which_arshy_path() -> Option<PathBuf> {
     None
 }
 
-fn check_mcp_json(path: &std::path::Path) -> bool {
+fn check_claude_json_mcp(path: &std::path::Path) -> bool {
     if !path.exists() {
         return false;
     }
@@ -827,11 +836,12 @@ fn check_mcp_json(path: &std::path::Path) -> bool {
         Ok(c) => c,
         Err(_) => return false,
     };
-    let mcp: serde_json::Value = match serde_json::from_str(&content) {
+    let data: serde_json::Value = match serde_json::from_str(&content) {
         Ok(v) => v,
         Err(_) => return false,
     };
-    mcp.get("mcpServers")
+    // Check top-level mcpServers (user scope)
+    data.get("mcpServers")
         .and_then(|s| s.get("arshy"))
         .is_some()
 }
