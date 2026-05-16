@@ -846,6 +846,7 @@ fn mcp_tool_to_ipc_method(tool_name: &str, args: &serde_json::Value) -> &'static
             Some("list") => ipc::METHOD_LIST,
             Some("tail") => ipc::METHOD_TAIL,
             Some("cd") => ipc::METHOD_CD,
+            Some("subscribe") => ipc::METHOD_SUBSCRIBE,
             _ => ipc::METHOD_RUN, // "run" is default for arshy_exec
         },
         "arshy_query" => ipc::METHOD_QUERY,

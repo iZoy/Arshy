@@ -22,6 +22,7 @@ pub const METHOD_SHUTDOWN: &str = "daemon/shutdown";
 pub const METHOD_STATS: &str = "daemon/stats";
 pub const METHOD_HEALTH: &str = "daemon/health";
 pub const METHOD_CD: &str = "session/cd";
+pub const METHOD_SUBSCRIBE: &str = "task/subscribe";
 
 pub const NOTIF_TASK_UPDATE: &str = "task/update";
 pub const NOTIF_TASK_COMPLETE: &str = "task/complete";

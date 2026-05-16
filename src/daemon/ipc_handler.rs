@@ -9,7 +9,7 @@ use arshy_lib::ipc::{
     self, ErrorResponse, JsonRpcError, Notification, QueryParams, Request, Response,
     RunTaskParams, METHOD_CD, METHOD_HEALTH, METHOD_KILL, METHOD_LIST, METHOD_PRUNE,
     METHOD_QUERY, METHOD_RUN, METHOD_SHUTDOWN, METHOD_STATS, METHOD_STATUS, METHOD_STDIN,
-    METHOD_TAIL,
+    METHOD_SUBSCRIBE, METHOD_TAIL,
 };
 use arshy_lib::Result;
 use serde::Serialize;
@@ -18,7 +18,7 @@ use tokio::io::{AsyncBufReadExt, BufReader, BufWriter};
 use tokio::net::UnixStream;
 use tokio::sync::{mpsc, watch};
 
-use super::bus::{BusEvent, EventBus};
+use super::bus::{BusEvent, BusEventKind, EventBus};
 use super::exec::Executor;
 use super::store::Store;
 
@@ -135,6 +135,63 @@ pub async fn handle(
             let cwd_str = abs.to_string_lossy().to_string();
             default_cwd = Some(cwd_str.clone());
             Ok(serde_json::json!({"cwd": cwd_str}))
+        } else if request.method.as_str() == METHOD_SUBSCRIBE {
+            let tid_val = request.params.get("task_id").and_then(|v| v.as_str());
+            match tid_val {
+                None => Err(arshy_lib::ArshyError::Ipc("missing task_id".into())),
+                Some(task_id_str) => {
+                    let task_id = task_id_str.to_string();
+
+                    // If task already complete, return immediately
+                    let immediate = store.get_task(&task_id)
+                        .ok()
+                        .flatten()
+                        .filter(|t| t.status.is_terminal());
+
+                    if let Some(task) = immediate {
+                        Ok(serde_json::json!({
+                            "task_id": task.task_id,
+                            "status": task.status,
+                            "exit_code": task.exit_code,
+                            "duration_ms": task.duration_ms,
+                        }))
+                    } else {
+                        // Subscribe to EventBus and wait for TaskComplete
+                        let mut bus_rx = event_bus.subscribe();
+                        let timeout = tokio::time::Duration::from_secs(600);
+                        loop {
+                            tokio::select! {
+                                event = bus_rx.recv() => {
+                                    match event {
+                                        Ok(BusEvent {
+                                            kind: BusEventKind::TaskComplete {
+                                                task_id: ref tid, exit_code, duration_ms
+                                            }, ..
+                                        }) if tid == &task_id => {
+                                            let status = if exit_code == 0 { "completed" } else { "failed" };
+                                            break Ok(serde_json::json!({
+                                                "task_id": tid,
+                                                "exit_code": exit_code,
+                                                "duration_ms": duration_ms,
+                                                "status": status,
+                                            }));
+                                        }
+                                        Ok(_) => continue,
+                                        Err(_) => break Err(arshy_lib::ArshyError::Ipc(
+                                            "event bus disconnected".into()
+                                        )),
+                                    }
+                                }
+                                _ = tokio::time::sleep(timeout) => {
+                                    break Err(arshy_lib::ArshyError::Ipc(format!(
+                                        "subscribe {} timed out after 600s", task_id
+                                    )));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         } else {
             dispatch(&request, &executor, &store, &shutdown_tx).await
         };
@@ -334,7 +391,7 @@ mod tests {
     use super::super::parser::Engine;
     use arshy_lib::ipc::{DaemonConnection, Notification, METHOD_KILL, METHOD_LIST,
         METHOD_PRUNE, METHOD_QUERY, METHOD_RUN, METHOD_SHUTDOWN, METHOD_STATS,
-        METHOD_STATUS, METHOD_TAIL};
+        METHOD_STATUS, METHOD_SUBSCRIBE, METHOD_TAIL};
     use std::sync::Arc;
     use tempfile::TempDir;
     use tokio::net::UnixStream;
@@ -970,5 +1027,57 @@ mod tests {
         let resp = conn.send_request(METHOD_STATS, serde_json::json!({})).await.unwrap();
         assert!(resp.result["total_tasks"].as_u64().unwrap() >= 1);
         assert!(resp.result["total_events"].as_u64().unwrap() >= 1);
+    }
+
+    // ── Subscribe tests ───────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn e2e_subscribe_completed_task() {
+        let (mut conn, _notif_rx, _store, _tmp) = spawn_daemon_pair().await;
+        // Run a sync task — completes immediately
+        let run_resp = conn.send_request(METHOD_RUN, serde_json::json!({
+            "command": "echo subscribe_immediate", "mode": "sync",
+        })).await.unwrap();
+        let task_id = run_resp.result["task_id"].as_str().unwrap().to_string();
+        assert_eq!(run_resp.result["status"], "completed");
+
+        // Subscribe to the completed task — should return immediately
+        let sub_resp = conn.send_request(METHOD_SUBSCRIBE, serde_json::json!({
+            "task_id": &task_id,
+        })).await.unwrap();
+        assert_eq!(sub_resp.result["task_id"], task_id);
+        assert_eq!(sub_resp.result["status"], "completed");
+        assert!(sub_resp.result["exit_code"].as_i64().unwrap() == 0);
+        assert!(sub_resp.result["duration_ms"].as_u64().is_some());
+    }
+
+    #[tokio::test]
+    async fn e2e_subscribe_running_task() {
+        let (mut conn, _notif_rx, _store, _tmp) = spawn_daemon_pair().await;
+        // Run an async task that takes ~500ms
+        let run_resp = conn.send_request(METHOD_RUN, serde_json::json!({
+            "command": "sleep 0.3 && echo done", "mode": "async",
+        })).await.unwrap();
+        let task_id = run_resp.result["task_id"].as_str().unwrap().to_string();
+        assert_eq!(run_resp.result["status"], "running");
+
+        // Subscribe — should block until the task completes
+        let sub_resp = conn.send_request(METHOD_SUBSCRIBE, serde_json::json!({
+            "task_id": &task_id,
+        })).await.unwrap();
+        assert_eq!(sub_resp.result["task_id"], task_id);
+        assert!(
+            sub_resp.result["status"] == "completed" || sub_resp.result["status"] == "failed",
+            "expected completed or failed, got {:?}", sub_resp.result["status"]
+        );
+        assert!(sub_resp.result["exit_code"].as_i64().unwrap() == 0);
+        assert!(sub_resp.result["duration_ms"].as_u64().is_some());
+    }
+
+    #[tokio::test]
+    async fn e2e_subscribe_missing_task_id() {
+        let (mut conn, _notif_rx, _store, _tmp) = spawn_daemon_pair().await;
+        let resp = conn.send_request(METHOD_SUBSCRIBE, serde_json::json!({})).await.unwrap();
+        assert!(resp.result.get("error").is_some());
     }
 }

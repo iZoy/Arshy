@@ -21,6 +21,11 @@ pub fn default_instructions() -> String {
      2 seconds, you get the full result immediately (status, exit_code, duration_ms). \
      If it runs longer, you get `{status:\"running\", task_id:\"...\"}`. \
      Use arshy_exec(action:\"tail\", task_id:\"...\") for output in that case.\n\n\
+     Delegate: for long commands, use subscribe to wait for completion without polling. \
+     After action:\"run\" returns {status:\"running\", task_id:\"...\"}, \
+     call action:\"subscribe\" with task_id to block until the task finishes. \
+     Returns {task_id, exit_code, duration_ms, status} when done. \
+     No polling needed — one subscribe replaces tail+query.\n\n\
      exit_code=0 means success. Use arshy_query(task_id:\"...\") for structured events \
      (compile errors, lint warnings, etc.).\n\n\
      Fallback: if arshy_exec fails with DaemonUnreachable, use Bash tool directly as fallback."
@@ -40,20 +45,21 @@ pub fn tool_definitions() -> Vec<ToolDefinition> {
                          picks short vs long path). Use action:\"cd\" to set the session working \
                          directory for subsequent commands. Use action:\"kill\" to stop a running \
                          task. Use action:\"list\" to view tasks. Use action:\"tail\" to view task \
-                         output.\n\n\
+                         output. Use action:\"subscribe\" to block until a task completes.\n\n\
                          Examples:\n\
                          - Run short: {\"action\":\"run\",\"command\":\"ls -la\"}\n\
                          - Run build: {\"action\":\"run\",\"command\":\"cargo test\"}\n\
                          - Set dir:   {\"action\":\"cd\",\"command\":\"/path/to/project\"}\n\
                          - Kill task: {\"action\":\"kill\",\"task_id\":\"abc-123\"}\n\
                          - List tasks: {\"action\":\"list\"}\n\
-                         - View output: {\"action\":\"tail\",\"task_id\":\"abc-123\"}"
+                         - View output: {\"action\":\"tail\",\"task_id\":\"abc-123\"}\n\
+                         - Wait for completion: {\"action\":\"subscribe\",\"task_id\":\"abc-123\"}"
                 .into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "action": {"type":"string","enum":["run","kill","list","tail","cd"],
-                              "description":"run: execute command. kill: stop task. list: show tasks. tail: view output. cd: set session working directory"},
+                    "action": {"type":"string","enum":["run","kill","list","tail","cd","subscribe"],
+                              "description":"run: execute command. kill: stop task. list: show tasks. tail: view output. cd: set session working directory. subscribe: wait for task completion"},
                     "command": {"type":"string","description":"Shell command (action=run) or directory path (action=cd)"},
                     "cwd": {"type":"string","description":"Working directory"},
                     "timeout_ms": {"type":"integer","description":"Timeout in ms"},
