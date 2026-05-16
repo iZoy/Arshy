@@ -217,10 +217,11 @@ fn install_mcp_in_claude_json(path: &std::path::Path) -> Result<()> {
         serde_json::json!({})
     };
 
-    // Use full path so Claude Code can find the binary regardless of its PATH
-    let arshy_bin = std::env::current_exe()
+    // Find the installed arshy binary (prefer installed over debug/current_exe)
+    let arshy_bin = find_installed_binary("arshy")
+        .or_else(|| std::env::current_exe().ok().filter(|p| !p.to_string_lossy().contains("target")))
         .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_else(|_| "arshy".into());
+        .unwrap_or_else(|| "arshy".into());
 
     let arshy_entry = serde_json::json!({
         "type": "stdio",
@@ -708,6 +709,17 @@ WantedBy=default.target
     println!("To enable: systemctl --user enable arshyd.service");
     println!("To start:  systemctl --user start arshyd.service");
     Ok(())
+}
+
+/// Find a named binary in PATH, excluding target/ directories (debug builds).
+fn find_installed_binary(name: &str) -> Option<PathBuf> {
+    for dir in std::env::var("PATH").unwrap_or_default().split(':') {
+        let path = PathBuf::from(dir).join(name);
+        if path.exists() && !path.to_string_lossy().contains("target") {
+            return Some(path);
+        }
+    }
+    None
 }
 
 /// Find arshyd binary path.

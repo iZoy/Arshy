@@ -335,53 +335,27 @@ fn notification_to_json(notif: &Notification) -> Option<serde_json::Value> {
 async fn handle_initialize<W: tokio::io::AsyncWrite + Unpin>(
     stdout: &mut BufWriter<W>,
     id: u64,
-    request: &serde_json::Value,
+    _request: &serde_json::Value,
 ) -> Result<()> {
+    // Per MCP spec: respond with our supported version; the client decides
+    // whether to proceed. Do NOT reject with an error on version mismatch.
     const SERVER_VERSION: &str = "2024-11-05";
 
-    // Validate protocol version (backward-compatible: omit = accept)
-    let client_version = request["params"]["protocolVersion"]
-        .as_str()
-        .unwrap_or(SERVER_VERSION);
-    let major_client = &client_version[..7.min(client_version.len())];
-    let major_server = &SERVER_VERSION[..7];
-    if major_client != major_server {
-        return write_json_error(
-            stdout,
-            id,
-            ipc::error_code::INVALID_REQUEST,
-            &format!(
-                "Unsupported protocol version: {} (server supports {})",
-                client_version, SERVER_VERSION
-            ),
-        )
-        .await;
-    }
-
-    let mut notifications = HashMap::new();
-    notifications.insert("diagnostic".to_string(), serde_json::Value::Object(Default::default()));
-
-    let mut resources = HashMap::new();
-    resources.insert("listChanged".to_string(), serde_json::json!(true));
-
-    let mut prompts = HashMap::new();
-    prompts.insert("listChanged".to_string(), serde_json::json!(true));
-
-    let caps = protocol::ServerCapabilities {
-        protocol_version: SERVER_VERSION.into(),
-        server_info: protocol::ServerInfo {
-            name: "arshy".into(),
-            version: env!("CARGO_PKG_VERSION").into(),
+    let caps = serde_json::json!({
+        "protocolVersion": SERVER_VERSION,
+        "serverInfo": {
+            "name": "arshy",
+            "version": env!("CARGO_PKG_VERSION"),
         },
-        capabilities: protocol::ServerFeatures {
-            tools: HashMap::new(),
-            resources,
-            notifications,
-            prompts,
+        "capabilities": {
+            "tools": { "listChanged": true },
+            "resources": { "listChanged": true },
+            "prompts": { "listChanged": true },
+            "logging": {},
         },
-        instructions: Some(instructions::default_instructions()),
-    };
-    write_json_response(stdout, id, &serde_json::to_value(&caps)?).await
+        "instructions": instructions::default_instructions(),
+    });
+    write_json_response(stdout, id, &caps).await
 }
 
 async fn handle_tools_list(stdout: &mut BufWriter<tokio::io::Stdout>, id: u64) -> Result<()> {
@@ -1024,7 +998,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_initialize_mismatched_version_rejected() {
+    async fn test_initialize_mismatched_version_responds_with_server_version() {
         use tokio::io::AsyncWriteExt;
         let mut buf = tokio::io::BufWriter::new(Vec::new());
         let request = serde_json::json!({
@@ -1036,8 +1010,9 @@ mod tests {
         let output = String::from_utf8(buf.into_inner()).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(output.trim()).unwrap();
         assert_eq!(parsed["id"], 3);
-        assert_eq!(parsed["error"]["code"], ipc::error_code::INVALID_REQUEST);
-        assert!(parsed["error"]["message"].as_str().unwrap().contains("Unsupported protocol version"));
+        // Per MCP spec: server responds with its own version, does NOT error
+        assert_eq!(parsed["result"]["protocolVersion"], "2024-11-05");
+        assert!(parsed["error"].is_null());
     }
 
     #[tokio::test]
