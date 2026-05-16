@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__arshy__arshy_exec",
+      "mcp__arshy__arshy_query",
+      "Bash(arshy *)",
+      "Bash(arshyd *)"
+    ],
+    "deny": [
+      "Bash(*)"
+    ]
+  }
+}
