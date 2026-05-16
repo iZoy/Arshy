@@ -1,0 +1,12 @@
+[Unit]
+Description=Arshy daemon - AI Agent shell execution layer
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=ARSHY_BIN_DIR/arshyd
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

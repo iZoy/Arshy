@@ -1,0 +1,4 @@
+src/handler.go:42:15: undefined: fmt.Printf
+--- FAIL: TestLogin (0.00s)
+ok  	mypackage/auth	0.003s
+FAIL	mypackage/broken	0.002s

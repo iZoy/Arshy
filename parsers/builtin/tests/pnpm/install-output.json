@@ -1,0 +1,6 @@
+[
+  {"type": "summary", "severity": "info"},
+  {"type": "log"},
+  {"type": "diagnostic", "severity": "warning"},
+  {"type": "diagnostic", "severity": "info"}
+]

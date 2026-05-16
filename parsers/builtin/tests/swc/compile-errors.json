@@ -1,0 +1,4 @@
+[
+  {"type": "diagnostic", "severity": "error"},
+  {"type": "location", "severity": "info", "file": "src/parser.ts", "line": 25}
+]

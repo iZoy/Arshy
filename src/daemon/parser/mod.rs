@@ -9,15 +9,19 @@
 //! - `crash` — universal crash/traceback detection
 //! - `registry` — loads and deduplicates parser entries
 //! - `detect` — tool extraction and version detection
-//! - `loader` — filesystem hot-reload watcher
+//! - `loader` — filesystem hot-reload watcher (notify v7)
 
 mod crash;
 mod detect;
+mod json;
 mod loader;
 mod registry;
 pub mod rhai;
 pub mod toml;
 pub mod toml_def;
+
+pub use json::try_parse as try_parse_json;
+pub use toml::stderr_looks_like_error;
 
 pub use detect::*;
 pub use registry::*;
@@ -25,16 +29,17 @@ pub use registry::*;
 use arshy_lib::config::ParserConfig;
 use arshy_lib::ipc::TaskEvent;
 use arshy_lib::Result;
+use std::sync::{Arc, RwLock};
 
 use self::toml::LinePattern;
 
 /// Central parser engine — detects tools, loads parsers, dispatches lines.
 ///
-/// The engine is created once at daemon startup and shared (via `Arc`) across
-/// all task executions. It holds the compiled `ParserRegistry` which contains
-/// all builtin and user-defined parser patterns.
+/// The registry is wrapped in `RwLock` to support hot-reload from the
+/// filesystem watcher thread. Reads (parsing) are lock-free in practice;
+/// writes (reload) happen only when parser files change.
 pub struct Engine {
-    registry: ParserRegistry,
+    registry: Arc<RwLock<ParserRegistry>>,
     config: ParserConfig,
 }
 
@@ -42,35 +47,98 @@ impl Engine {
     /// Build the engine from config: load builtin + filesystem parsers.
     pub fn new(config: &ParserConfig) -> Result<Self> {
         let registry = ParserRegistry::load(config)?;
-        Ok(Self { registry, config: config.clone() })
+        Ok(Self {
+            registry: Arc::new(RwLock::new(registry)),
+            config: config.clone(),
+        })
+    }
+
+    /// Start the filesystem watcher for hot-reload (if configured).
+    /// Returns the watcher handle; dropping it stops watching.
+    pub fn start_watcher(&self) -> Result<Option<loader::ParserWatcher>> {
+        if !self.config.hot_reload {
+            return Ok(None);
+        }
+        let registry = self.registry.clone();
+        let config = self.config.clone();
+        let watcher = loader::ParserWatcher::start(&self.config.dirs, move || {
+            match ParserRegistry::load(&config) {
+                Ok(new_registry) => {
+                    match registry.write() {
+                        Ok(mut reg) => {
+                            *reg = new_registry;
+                            tracing::info!("parsers reloaded");
+                        }
+                        Err(e) => tracing::error!("registry lock poisoned: {}", e),
+                    }
+                }
+                Err(e) => tracing::error!("parser reload failed: {}", e),
+            }
+        })?;
+        Ok(Some(watcher))
+    }
+
+    /// Reload parsers from disk (manual trigger).
+    #[allow(dead_code)]
+    pub fn reload(&self) -> Result<()> {
+        let new_registry = ParserRegistry::load(&self.config)?;
+        let mut reg = self.registry.write()
+            .map_err(|_| arshy_lib::ArshyError::Other("registry lock poisoned".into()))?;
+        *reg = new_registry;
+        tracing::info!("parsers reloaded (manual)");
+        Ok(())
     }
 
     /// Detect the tool from a command string.
     pub fn detect(&self, command: &str) -> Option<ParsedTool> {
-        self.registry.detect(command)
+        self.registry.read().ok()?.detect(command)
+    }
+
+    /// Look up a parser by name (for testing/harness use).
+    #[allow(dead_code)]
+    pub fn get_by_name(&self, name: &str) -> Option<ParsedTool> {
+        let reg = self.registry.read().ok()?;
+        let entry = reg.get(name)?;
+        Some(ParsedTool {
+            tool_name: entry.tool_name.clone(),
+            parser_name: entry.name.clone(),
+            parser_type: entry.parser_type.clone(),
+            version: None,
+        })
     }
 
     /// Create a parser session for a task.
-    ///
-    /// The session holds patterns from the registry and per-task state
-    /// (for stateful parsers). Each task gets its own session instance.
     pub fn create_session(&self, tool: Option<&ParsedTool>) -> ParserSession {
+        let reg = match self.registry.read() {
+            Ok(r) => r,
+            Err(_) => return ParserSession::raw(),
+        };
+
         match tool {
             Some(t) => {
-                if let Some(entry) = self.registry.get(&t.parser_name) {
+                if let Some(entry) = reg.get(&t.parser_name) {
+                    let stateful = if !entry.stateful_patterns.is_empty() {
+                        Some(rhai::StatefulParser::with_patterns(
+                            &entry.name,
+                            entry.stateful_patterns.clone(),
+                        ))
+                    } else if let Some(ref script) = entry.rhai_script {
+                        match rhai::StatefulParser::with_script(script) {
+                            Ok(p) => Some(p),
+                            Err(e) => {
+                                tracing::error!("rhai script '{}': {}", entry.name, e);
+                                None
+                            }
+                        }
+                    } else {
+                        None
+                    };
+
                     return ParserSession {
                         line_patterns: entry.line_patterns.clone(),
-                        stateful: if !entry.stateful_patterns.is_empty() {
-                            Some(rhai::StatefulParser::with_patterns(
-                                &entry.name,
-                                entry.stateful_patterns.clone(),
-                            ))
-                        } else {
-                            None
-                        },
+                        stateful,
                     };
                 }
-                // Tool detected but no parser entry found — raw fallback
                 ParserSession::raw()
             }
             None => ParserSession::raw(),
@@ -78,10 +146,15 @@ impl Engine {
     }
 
     /// Parse a single output line (stateless, for non-session use).
-    #[allow(dead_code)] // stateless interface; session-based used in production
+    #[allow(dead_code)]
     pub fn parse_line(&self, line: &str, seq: u64, tool: Option<&ParsedTool>) -> TaskEvent {
+        let reg = match self.registry.read() {
+            Ok(r) => r,
+            Err(_) => return toml::raw_event(line, seq),
+        };
+
         if let Some(t) = tool {
-            if let Some(entry) = self.registry.get(&t.parser_name) {
+            if let Some(entry) = reg.get(&t.parser_name) {
                 if !entry.line_patterns.is_empty() {
                     let parser = toml::TomlParser::new(entry.line_patterns.clone());
                     if let Some(mut event) = parser.parse_line(line) {
@@ -100,17 +173,12 @@ impl Engine {
 }
 
 /// A per-task parser session that holds patterns and state.
-///
-/// Created via `Engine::create_session()`. For TOML parsers, uses stored
-/// line patterns directly. For stateful parsers, maintains per-task state
-/// in a `StatefulParser` instance.
 pub struct ParserSession {
     line_patterns: Vec<LinePattern>,
     stateful: Option<rhai::StatefulParser>,
 }
 
 impl ParserSession {
-    /// Create a raw (no-pattern) session for unrecognized commands.
     fn raw() -> Self {
         Self {
             line_patterns: Vec::new(),
@@ -119,16 +187,14 @@ impl ParserSession {
     }
 
     /// Parse one line of output.
-    ///
-    /// Strategy:
-    /// 1. Stateful parser (if present) — may return 0..N events
-    /// 2. Line patterns — first match wins, returns 0..1 events
-    /// 3. Crash parser — universal crash/traceback detection
-    /// 4. Raw fallback — every line becomes a log event
     pub fn parse_line(&self, line: &str, seq: u64, _tool: Option<&ParsedTool>) -> Vec<TaskEvent> {
-        // 1. Stateful parser
+        // 1. Stateful parser (if it matched, return; otherwise fall through)
         if let Some(ref stateful) = self.stateful {
-            return stateful.feed_line(line, seq);
+            let events = stateful.feed_line(line, seq);
+            if !events.is_empty() {
+                return events;
+            }
+            // Stateful parser didn't match — fall through to crash/raw
         }
 
         // 2. Line patterns (TOML parser)
@@ -164,7 +230,7 @@ impl ParserSession {
 pub struct ParsedTool {
     pub tool_name: String,
     pub parser_name: String,
-    #[allow(dead_code)] // metadata for debugging/logging
+    #[allow(dead_code)]
     pub parser_type: ParserType,
     pub version: Option<String>,
 }
@@ -182,11 +248,12 @@ pub enum ParserType {
 mod harness_tests {
     use super::*;
 
-    /// Run a fixture test: parse `.txt` with the parser, compare with `.json`.
     fn run_fixture(parser_name: &str, txt_path: &std::path::Path, json_path: &std::path::Path) -> (usize, usize) {
         let config = ParserConfig::default();
         let engine = Engine::new(&config).unwrap();
-        let tool = engine.detect(parser_name);
+        // Try direct name lookup first (parser name != command name for multi-word tools)
+        let tool = engine.get_by_name(parser_name)
+            .or_else(|| engine.detect(parser_name));
         let session = engine.create_session(tool.as_ref());
 
         let txt = std::fs::read_to_string(txt_path).unwrap();
@@ -263,6 +330,57 @@ mod harness_tests {
     fn fixture_jest() { run_parser_fixtures("jest"); }
 
     #[test]
+    fn fixture_eslint() { run_parser_fixtures("eslint"); }
+
+    #[test]
+    fn fixture_go() { run_parser_fixtures("go"); }
+
+    #[test]
+    fn fixture_python() { run_parser_fixtures("python"); }
+
+    #[test]
+    fn fixture_webpack() { run_parser_fixtures("webpack"); }
+
+    #[test]
+    fn fixture_cargo_test() { run_parser_fixtures("cargo-test"); }
+
+    #[test]
+    fn fixture_cc() { run_parser_fixtures("cc"); }
+
+    #[test]
+    fn fixture_clippy() { run_parser_fixtures("clippy"); }
+
+    #[test]
+    fn fixture_esbuild() { run_parser_fixtures("esbuild"); }
+
+    #[test]
+    fn fixture_gradle() { run_parser_fixtures("gradle"); }
+
+    #[test]
+    fn fixture_make() { run_parser_fixtures("make"); }
+
+    #[test]
+    fn fixture_mocha() { run_parser_fixtures("mocha"); }
+
+    #[test]
+    fn fixture_npm() { run_parser_fixtures("npm"); }
+
+    #[test]
+    fn fixture_pip() { run_parser_fixtures("pip"); }
+
+    #[test]
+    fn fixture_pnpm() { run_parser_fixtures("pnpm"); }
+
+    #[test]
+    fn fixture_prettier() { run_parser_fixtures("prettier"); }
+
+    #[test]
+    fn fixture_swc() { run_parser_fixtures("swc"); }
+
+    #[test]
+    fn fixture_vite() { run_parser_fixtures("vite"); }
+
+    #[test]
     fn all_20_parsers_load() {
         let config = ParserConfig::default();
         let engine = Engine::new(&config).unwrap();
@@ -277,5 +395,15 @@ mod harness_tests {
             let tool = engine.detect(name);
             assert!(tool.is_some(), "parser '{}' not detected by engine", name);
         }
+    }
+
+    #[test]
+    fn engine_reload_works() {
+        let config = ParserConfig::default();
+        let engine = Engine::new(&config).unwrap();
+        // Manual reload should succeed without error
+        engine.reload().unwrap();
+        // Parsers should still be available after reload
+        assert!(engine.detect("tsc").is_some());
     }
 }

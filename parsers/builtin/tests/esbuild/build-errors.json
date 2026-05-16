@@ -1,0 +1,7 @@
+[
+  {"type": "diagnostic", "severity": "error"},
+  {"type": "location", "severity": "info", "file": "src/app.ts", "line": 5},
+  {"type": "log"},
+  {"type": "log"},
+  {"type": "diagnostic", "severity": "error"}
+]

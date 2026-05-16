@@ -1,0 +1,2 @@
+  error[swc]: unexpected token
+  --> src/parser.ts:25:10

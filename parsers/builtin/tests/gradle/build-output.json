@@ -1,0 +1,6 @@
+[
+  {"type": "diagnostic", "severity": "error", "file": "Main.java", "line": 42},
+  {"type": "diagnostic", "severity": "warning", "file": "Main.java", "line": 10},
+  {"type": "summary", "severity": "error"},
+  {"type": "summary", "severity": "info"}
+]

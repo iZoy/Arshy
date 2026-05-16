@@ -1,0 +1,9 @@
+[
+  {"type": "location", "severity": "error", "file": "tests/test_login.py", "line": 15},
+  {"type": "diagnostic", "severity": "error"},
+  {"type": "test_result", "severity": "error", "file": "tests/test_login.py::test_login_success"},
+  {"type": "location", "severity": "error", "file": "tests/test_api.py", "line": 42},
+  {"type": "diagnostic", "severity": "error"},
+  {"type": "test_result", "severity": "error", "file": "tests/test_api.py::test_get_user"},
+  {"type": "summary", "severity": "info"}
+]

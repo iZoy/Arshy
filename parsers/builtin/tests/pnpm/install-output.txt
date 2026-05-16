@@ -1,0 +1,4 @@
+  Packages: +10
++++++++++++
+warn foo is deprecated
+Progress: resolved 100, reused 90

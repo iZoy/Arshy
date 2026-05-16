@@ -76,15 +76,9 @@ impl TomlParser {
 /// Raw fallback — every line becomes a log event.
 ///
 /// Used when no parser matches the tool or when no pattern matches the line.
+/// Detects common error/warning patterns across languages and toolchains.
 pub fn raw_event(line: &str, seq: u64) -> TaskEvent {
-    let severity = if line.contains("error") || line.contains("Error") || line.contains("ERROR") || line.contains("fatal") {
-        "error"
-    } else if line.contains("warning") || line.contains("Warning") || line.contains("WARN") {
-        "warning"
-    } else {
-        "info"
-    };
-
+    let severity = classify_severity(line);
     TaskEvent {
         seq,
         event_type: "log".into(),
@@ -94,6 +88,72 @@ pub fn raw_event(line: &str, seq: u64) -> TaskEvent {
         location: None,
         context: None,
     }
+}
+
+/// Classify severity from a raw output line using common cross-language patterns.
+fn classify_severity(line: &str) -> &'static str {
+    let lower = line.to_lowercase();
+
+    let is_error = lower.contains("error")
+        || lower.contains("fatal")
+        || lower.contains("failed")
+        || lower.contains("panic")
+        || lower.contains("aborted")
+        || lower.contains("traceback")
+        || lower.contains("killed")
+        || lower.contains("segmentation fault")
+        || lower.contains("bus error")
+        || lower.contains("assertion failed")
+        || lower.starts_with("e ")
+        || lower.starts_with("e\t");
+
+    if is_error {
+        return "error";
+    }
+
+    let is_warning = lower.contains("warning")
+        || lower.contains("warn")
+        || lower.contains("deprecated")
+        || lower.contains("notice")
+        || lower.contains("attention")
+        || lower.starts_with("w ")
+        || lower.starts_with("w\t");
+
+    if is_warning {
+        return "warning";
+    }
+
+    "info"
+}
+
+/// Evaluate whether a stderr line looks like it contains an error, even when
+/// the tool-specific parser didn't flag it. Used as a safety net for CLI tools
+/// that write errors to stderr without structured formatting.
+///
+/// Returns true if the line strongly signals an error condition.
+pub fn stderr_looks_like_error(line: &str) -> bool {
+    let lower = line.to_lowercase();
+    // Strong signals: explicit error keywords
+    lower.contains("error:")
+        || lower.contains("error ")
+        || lower.contains("failed:")
+        || lower.contains("fatal:")
+        || lower.contains("panic:")
+        || lower.contains("panic!")
+        || lower.contains("traceback (most recent call last)")
+        || lower.contains("segmentation fault")
+        || lower.contains("abort trap")
+        || lower.starts_with("e ")
+        || lower.starts_with("e\t")
+        // Common CLI patterns
+        || lower.contains("command not found")
+        || lower.contains("no such file")
+        || lower.contains("cannot find")
+        || lower.contains("permission denied")
+        || lower.contains("access denied")
+        || lower.contains("not found")
+        || lower.contains("syntax error")
+        || lower.contains("unexpected token")
 }
 
 #[cfg(test)]
@@ -190,5 +250,64 @@ mod tests {
 
         let warn = raw_event("Warning: deprecated usage", 2);
         assert_eq!(warn.severity, Some("warning".into()));
+    }
+
+    /// S3: enhanced error/warning detection
+    #[test]
+    fn test_raw_error_keywords() {
+        for line in &[
+            "FAILED: build step",
+            "fatal: unable to read config",
+            "panic: runtime error: index out of range",
+            "Aborted (core dumped)",
+            "Killed: 9",
+        ] {
+            let event = raw_event(line, 0);
+            assert_eq!(event.severity, Some("error".into()), "line: {}", line);
+        }
+    }
+
+    #[test]
+    fn test_raw_warning_keywords() {
+        for line in &[
+            "WARN: deprecated option",
+            "warn: using fallback",
+            "Deprecated: use --new-flag instead",
+            "NOTICE: configuration changed",
+            "attention: disk usage high",
+        ] {
+            let event = raw_event(line, 0);
+            assert_eq!(event.severity, Some("warning".into()), "line: {}", line);
+        }
+    }
+
+    #[test]
+    fn test_raw_info_for_neutral_text() {
+        for line in &[
+            "building module",
+            "compilation successful",
+            "12 tests passed",
+            "installed packages",
+        ] {
+            let event = raw_event(line, 0);
+            assert_eq!(event.severity, Some("info".into()), "line: {}", line);
+        }
+    }
+
+    #[test]
+    fn test_stderr_looks_like_error_strong_signals() {
+        assert!(stderr_looks_like_error("error: cannot find module 'fs'"));
+        assert!(stderr_looks_like_error("Error: something went wrong"));
+        assert!(stderr_looks_like_error("Command not found: arshy"));
+        assert!(stderr_looks_like_error("Permission denied (os error 13)"));
+        assert!(stderr_looks_like_error("No such file or directory"));
+        assert!(stderr_looks_like_error("syntax error near unexpected token"));
+    }
+
+    #[test]
+    fn test_stderr_looks_like_error_false_for_neutral() {
+        assert!(!stderr_looks_like_error("building..."));
+        assert!(!stderr_looks_like_error("100% complete"));
+        assert!(!stderr_looks_like_error("compiling module"));
     }
 }

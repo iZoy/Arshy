@@ -1,8 +1,8 @@
 [meta]
 name = "cargo-test"
 description = "Cargo test runner"
-detect = ["cargo"]
-priority = 45
+detect_full = ["cargo test"]
+priority = 55
 
 [[pattern]]
 name = "test-fail"

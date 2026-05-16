@@ -1,0 +1,2 @@
+error: Module not found "missing-pkg"
+Build failed

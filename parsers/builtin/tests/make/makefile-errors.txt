@@ -1,0 +1,2 @@
+main.c:42: *** missing separator.  Stop.
+main.c:10:5: warning: unused variable 'x'

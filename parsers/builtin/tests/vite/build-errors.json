@@ -1,0 +1,4 @@
+[
+  {"type": "diagnostic", "severity": "error"},
+  {"type": "summary", "severity": "error"}
+]

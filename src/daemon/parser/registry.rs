@@ -22,6 +22,8 @@ pub struct ParserEntry {
     pub name: String,
     pub tool_name: String,
     pub detect_patterns: Vec<String>,
+    /// Patterns matched against the full command (for multi-word commands).
+    pub detect_full_patterns: Vec<String>,
     pub parser_type: ParserType,
     pub source: ParserSource,
     pub priority: u32,
@@ -29,6 +31,8 @@ pub struct ParserEntry {
     pub line_patterns: Vec<LinePattern>,
     /// Compiled stateful patterns (for stateful parsers). Empty for TOML-only parsers.
     pub stateful_patterns: Vec<StatefulPattern>,
+    /// Rhai script source (for `.rhai` user parsers). None for TOML parsers.
+    pub rhai_script: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Ord, PartialOrd, Eq)]
@@ -59,11 +63,13 @@ impl ParserRegistry {
             name: "raw".into(),
             tool_name: "*".into(),
             detect_patterns: vec![],
+            detect_full_patterns: vec![],
             parser_type: ParserType::Raw,
             source: ParserSource::Builtin,
             priority: 0,
             line_patterns: vec![],
             stateful_patterns: vec![],
+            rhai_script: None,
         });
 
         // 2. Load user parsers from filesystem directories
@@ -95,15 +101,37 @@ impl ParserRegistry {
     }
 
     /// Find the best parser matching a command.
+    ///
+    /// Detection (checked in priority order, first match wins):
+    /// 1. `detect_full` patterns — matched against full command via `starts_with`
+    ///    (e.g. `"cargo test"` matches `"cargo test -- --test-threads=1"`)
+    /// 2. `detect` patterns — matched against first word via `starts_with`
+    ///    (e.g. `"cargo"` matches `"cargo build"`)
+    ///
+    /// `starts_with` avoids false positives that `contains` had
+    /// (e.g. "pnpm" no longer matches npm's "npm" pattern).
     pub fn detect(&self, command: &str) -> Option<ParsedTool> {
         let cmd_name = command.split_whitespace().next()?.to_lowercase();
+        let cmd_lower = command.to_lowercase();
 
         for entry in &self.entries {
             if entry.parser_type == ParserType::Raw {
                 continue;
             }
+            // Check detect_full patterns first (matched against full command)
+            for pat in &entry.detect_full_patterns {
+                if cmd_lower.starts_with(&pat.to_lowercase()) {
+                    return Some(ParsedTool {
+                        tool_name: entry.tool_name.clone(),
+                        parser_name: entry.name.clone(),
+                        parser_type: entry.parser_type.clone(),
+                        version: None,
+                    });
+                }
+            }
+            // Then check detect patterns (matched against first word)
             for pat in &entry.detect_patterns {
-                if cmd_name.contains(&pat.to_lowercase()) {
+                if cmd_name.starts_with(&pat.to_lowercase()) {
                     return Some(ParsedTool {
                         tool_name: entry.tool_name.clone(),
                         parser_name: entry.name.clone(),
@@ -130,11 +158,13 @@ fn def_to_entry(def: toml_def::TomlParserDef, source: ParserSource) -> ParserEnt
         name: def.meta.name.clone(),
         tool_name: def.meta.name.clone(),
         detect_patterns: def.meta.detect.clone(),
+        detect_full_patterns: def.meta.detect_full.clone(),
         parser_type: if is_stateful { ParserType::Rhai } else { ParserType::Toml },
         source,
         priority: def.meta.priority,
         line_patterns: if is_stateful { Vec::new() } else { def.to_line_patterns() },
         stateful_patterns: if is_stateful { def.to_stateful_patterns() } else { Vec::new() },
+        rhai_script: None,
     }
 }
 
@@ -155,17 +185,30 @@ fn load_user_parser(path: &std::path::Path) -> Option<ParserEntry> {
             Some(entry)
         }
         "rhai" => {
-            // Rhai files: create entry with stem as detect pattern.
-            // Actual Rhai script loading is deferred to Phase 2B (Rhai engine).
+            // Load rhai script content from filesystem.
+            let content = match std::fs::read_to_string(path) {
+                Ok(c) => c,
+                Err(e) => {
+                    tracing::warn!("cannot read rhai file '{}': {}", path.display(), e);
+                    return None;
+                }
+            };
+            // Validate syntax before registering.
+            if let Err(e) = rhai::Engine::new().compile(&content) {
+                tracing::warn!("rhai syntax error in '{}': {}", path.display(), e);
+                return None;
+            }
             Some(ParserEntry {
                 name: stem.to_string(),
                 tool_name: stem.to_string(),
                 detect_patterns: vec![stem.to_string()],
+                detect_full_patterns: vec![],
                 parser_type: ParserType::Rhai,
                 source: ParserSource::User,
                 priority: 100, // user parsers get high priority
                 line_patterns: Vec::new(),
                 stateful_patterns: Vec::new(),
+                rhai_script: Some(content),
             })
         }
         _ => None,
@@ -210,8 +253,12 @@ mod tests {
         let config = ParserConfig::default();
         let registry = ParserRegistry::load(&config).unwrap();
 
-        // "cargo test" should match cargo (priority 50), not go
+        // "cargo test" should match cargo-test (detect_full), not cargo or go
         let tool = registry.detect("cargo test").unwrap();
+        assert_eq!(tool.tool_name, "cargo-test");
+
+        // "cargo build" should match cargo (detect prefix), not cargo-test
+        let tool = registry.detect("cargo build").unwrap();
         assert_eq!(tool.tool_name, "cargo");
     }
 

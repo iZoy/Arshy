@@ -1,119 +1,94 @@
 //! File-system watcher for hot-reloading parser changes.
 //!
-//! Uses polling-based file modification time checking as a fallback.
-//! When the `notify` feature is enabled, uses filesystem events instead.
-//! Runs in a background thread, checking for changes every `interval` seconds.
-//! When a parser file is modified, the callback is invoked to trigger a reload.
-
-#![allow(dead_code)] // entire module dormant until notify crate enabled
+//! Uses `notify` v7 for filesystem event monitoring.
+//! When a `.toml` or `.rhai` parser file is created, modified, or deleted,
+//! invokes the callback to trigger a registry reload.
 
 use arshy_lib::Result;
-use std::collections::HashMap;
+use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use std::sync::mpsc;
+use std::time::Duration;
 
 /// A file watcher for parser directories.
 ///
-/// Polls configured directories for changes to `.toml` and `.rhai` files.
+/// Watches configured directories for changes to `.toml` and `.rhai` files.
 /// When a change is detected, invokes the provided callback.
 ///
-/// Dropping the watcher (or calling `stop()`) stops the background thread.
-#[allow(dead_code)] // notify crate unavailable; polling watcher ready for enablement
+/// Dropping the watcher stops the background thread.
 pub struct ParserWatcher {
-    running: Arc<AtomicBool>,
+    _watcher: RecommendedWatcher,
 }
 
 impl ParserWatcher {
-    /// Start watching the given directories in a background thread.
+    /// Start watching the given directories for parser file changes.
     /// Calls `on_change` when any parser file is created, modified, or deleted.
     pub fn start<F>(dirs: &[PathBuf], on_change: F) -> Result<Self>
     where
         F: Fn() + Send + 'static,
     {
-        let running = Arc::new(AtomicBool::new(true));
-        let running_clone = running.clone();
-        let dirs = dirs.to_vec();
-        let interval = Duration::from_secs(5);
+        let (tx, rx) = mpsc::channel::<notify::Result<Event>>();
 
+        let mut watcher = RecommendedWatcher::new(
+            tx,
+            notify::Config::default().with_poll_interval(Duration::from_secs(2)),
+        )
+        .map_err(|e| arshy_lib::ArshyError::Config(format!("notify watcher: {}", e)))?;
+
+        // Watch all configured parser directories
+        for dir in dirs {
+            let expanded = arshy_lib::config::expand_path(dir);
+            if expanded.is_dir() {
+                watcher
+                    .watch(&expanded, RecursiveMode::NonRecursive)
+                    .map_err(|e| arshy_lib::ArshyError::Config(format!("watch {:?}: {}", expanded, e)))?;
+                tracing::debug!("watching parser dir: {}", expanded.display());
+            }
+        }
+
+        // Background thread to receive events and debounce
         std::thread::Builder::new()
             .name("parser-watcher".into())
             .spawn(move || {
-                let mut mtimes: HashMap<PathBuf, SystemTime> = HashMap::new();
+                let mut last_trigger = std::time::Instant::now();
+                let debounce = Duration::from_millis(500);
 
-                while running_clone.load(Ordering::Relaxed) {
-                    std::thread::sleep(interval);
-
-                    let mut changed = false;
-                    let mut current_files = std::collections::HashSet::new();
-
-                    for dir in &dirs {
-                        let expanded = arshy_lib::config::expand_path(dir);
-                        if !expanded.is_dir() {
-                            continue;
-                        }
-                        if let Ok(entries) = std::fs::read_dir(&expanded) {
-                            for entry in entries.flatten() {
-                                let path = entry.path();
-                                if !is_parser_file(&path) {
-                                    continue;
-                                }
-                                current_files.insert(path.clone());
-
-                                if let Ok(meta) = std::fs::metadata(&path) {
-                                    if let Ok(mtime) = meta.modified() {
-                                        let prev = mtimes.get(&path).copied();
-                                        if prev.is_none_or(|p| mtime > p) {
-                                            mtimes.insert(path, mtime);
-                                            changed = true;
-                                        }
-                                    }
-                                }
+                while let Ok(event_result) = rx.recv() {
+                    match event_result {
+                        Ok(event) => {
+                            if is_parser_event(&event) && last_trigger.elapsed() > debounce {
+                                last_trigger = std::time::Instant::now();
+                                tracing::info!("parser file changed: {:?}", event.paths);
+                                on_change();
                             }
                         }
-                    }
-
-                    // Detect deleted files
-                    let deleted: Vec<PathBuf> = mtimes
-                        .keys()
-                        .filter(|p| !current_files.contains(*p))
-                        .cloned()
-                        .collect();
-                    for p in &deleted {
-                        mtimes.remove(p);
-                        changed = true;
-                    }
-
-                    if changed {
-                        tracing::info!("parser files changed, reloading");
-                        on_change();
+                        Err(e) => {
+                            tracing::warn!("watch error: {}", e);
+                        }
                     }
                 }
             })
-            .map_err(|e| arshy_lib::ArshyError::Config(format!("failed to start watcher: {}", e)))?;
+            .map_err(|e| arshy_lib::ArshyError::Config(format!("watcher thread: {}", e)))?;
 
-        Ok(Self { running })
-    }
-
-    /// Stop the watcher.
-    pub fn stop(&self) {
-        self.running.store(false, Ordering::Relaxed);
+        Ok(Self { _watcher: watcher })
     }
 }
 
-impl Drop for ParserWatcher {
-    fn drop(&mut self) {
-        self.stop();
+/// Check if a notify event involves parser files.
+fn is_parser_event(event: &Event) -> bool {
+    match event.kind {
+        EventKind::Create(_)
+        | EventKind::Modify(_)
+        | EventKind::Remove(_) => {
+            event.paths.iter().any(|p| {
+                matches!(
+                    p.extension().and_then(|e| e.to_str()),
+                    Some("toml") | Some("rhai")
+                )
+            })
+        }
+        _ => false,
     }
-}
-
-/// Check if a file path is a parser definition file.
-fn is_parser_file(path: &std::path::Path) -> bool {
-    matches!(
-        path.extension().and_then(|e| e.to_str()),
-        Some("toml") | Some("rhai")
-    )
 }
 
 #[cfg(test)]
@@ -121,11 +96,55 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_is_parser_file() {
-        assert!(is_parser_file(std::path::Path::new("tsc.toml")));
-        assert!(is_parser_file(std::path::Path::new("npm.rhai")));
-        assert!(!is_parser_file(std::path::Path::new("readme.md")));
-        assert!(!is_parser_file(std::path::Path::new("test.txt")));
-        assert!(!is_parser_file(std::path::Path::new("noext")));
+    fn test_is_parser_event_create() {
+        let event = Event {
+            kind: EventKind::Create(notify::event::CreateKind::File),
+            paths: vec![PathBuf::from("/tmp/test.toml")],
+            attrs: Default::default(),
+        };
+        assert!(is_parser_event(&event));
+    }
+
+    #[test]
+    fn test_is_parser_event_rhai() {
+        let event = Event {
+            kind: EventKind::Modify(notify::event::ModifyKind::Data(notify::event::DataChange::Content)),
+            paths: vec![PathBuf::from("/tmp/custom.rhai")],
+            attrs: Default::default(),
+        };
+        assert!(is_parser_event(&event));
+    }
+
+    #[test]
+    fn test_is_parser_event_non_parser() {
+        let event = Event {
+            kind: EventKind::Modify(notify::event::ModifyKind::Data(notify::event::DataChange::Content)),
+            paths: vec![PathBuf::from("/tmp/readme.md")],
+            attrs: Default::default(),
+        };
+        assert!(!is_parser_event(&event));
+    }
+
+    #[test]
+    fn test_is_parser_event_mixed_paths() {
+        let event = Event {
+            kind: EventKind::Create(notify::event::CreateKind::File),
+            paths: vec![
+                PathBuf::from("/tmp/data.txt"),
+                PathBuf::from("/tmp/parser.toml"),
+            ],
+            attrs: Default::default(),
+        };
+        assert!(is_parser_event(&event));
+    }
+
+    #[test]
+    fn test_is_parser_event_remove() {
+        let event = Event {
+            kind: EventKind::Remove(notify::event::RemoveKind::File),
+            paths: vec![PathBuf::from("/tmp/deleted.rhai")],
+            attrs: Default::default(),
+        };
+        assert!(is_parser_event(&event));
     }
 }

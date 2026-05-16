@@ -1,0 +1,6 @@
+[
+  {"type": "diagnostic", "severity": "warning"},
+  {"type": "location", "severity": "info", "file": "src/lib.rs", "line": 15},
+  {"type": "diagnostic", "severity": "error"},
+  {"type": "location", "severity": "info", "file": "src/main.rs", "line": 42}
+]

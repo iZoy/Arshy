@@ -1,0 +1,2 @@
+  10:5   error  Unexpected var, use let or const instead  no-var
+  22:10  warning  'foo' is defined but never used           no-unused-vars

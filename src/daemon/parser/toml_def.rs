@@ -46,6 +46,10 @@ pub struct MetaDef {
     pub name: String,
     pub description: String,
     pub detect: Vec<String>,
+    /// Patterns matched against the full command (not just first word).
+    /// Used for multi-word commands like "cargo test".
+    #[serde(default)]
+    pub detect_full: Vec<String>,
     /// "toml" (default) or "stateful"
     pub parser_type: String,
     pub priority: u32,

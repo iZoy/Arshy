@@ -71,7 +71,7 @@ Agent 加载 Skill → 知道用哪个 CLI → 执行命令 → arshy (shell) �
 | D3 | **版本探测** — tool_versions SQLite 缓存、15 工具支持、24h TTL | ✅ |
 | D4 | **Crash Parser** — 通用崩溃/traceback 检测 (Go/Python/Rust/Node/Shell) | ✅ 8 tests |
 | D5 | **状态解析器** — regex+state-machine 回退实现 (npm/webpack 等多行输出) | ✅ |
-| D6 | **Test Harness** — fixture 格式 (.txt/.json)、匹配率 ≥95% 阈值 | ✅ |
+| D6 | **Test Harness** — fixture 格式 (.txt/.json)、匹配率 ≥95% 阈值、20 parser 全覆盖 | ✅ |
 
 ---
 
@@ -117,34 +117,34 @@ Agent 加载 Skill → 知道用哪个 CLI → 执行命令 → arshy (shell) �
 
 ---
 
-## Stage I: 安全边界 ⬜
+## Stage I: 安全边界 ✅
 
 > P0 — 不做此项，AI Agent 无法安全接入。
 
 | Step | 内容 | 状态 |
 |------|------|------|
-| I1 | **命令过滤引擎** — config 白名单/黑名单 (正则匹配)、默认 blocked 命令集 (rm -rf /, curl\|sh, dd 等) | ⬜ |
-| I2 | **路径沙箱** — 限制 cwd 只能在项目目录内，config `sandbox_paths` 配置 | ⬜ |
-| I3 | **权限分级** — `read-only` (只能 query/tail) / `full` (可 run/kill)，per-tool 权限检查 | ⬜ |
-| I4 | **审计日志** — 所有执行命令独立写入 `~/.local/share/arshy/audit.log`，不受 prune 影响 | ⬜ |
-| I5 | **安全测试** — 白名单命中、黑名单拦截、路径逃逸拒绝、权限拒绝 | ⬜ |
+| I1 | **命令过滤引擎** — config 白名单/黑名单 (正则匹配)、默认 blocked 命令集 (rm -rf /, curl\|sh, dd 等) | ✅ 22 tests |
+| I2 | **路径沙箱** — 限制 cwd 只能在项目目录内，config `sandbox_paths` 配置 | ✅ 8 tests |
+| I3 | **权限分级** — `read-only` (只能 query/tail) / `full` (可 run/kill)，per-tool 权限检查 | ✅ 6 tests |
+| I4 | **审计日志** — 所有执行命令独立写入 `~/.local/share/arshy/audit.log`，不受 prune 影响 | ✅ 9 tests |
+| I5 | **安全测试** — 白名单命中、黑名单拦截、路径逃逸拒绝、权限拒绝 | ✅ 17 e2e tests |
 
 ---
 
-## Stage J: 通知实时性 ⬜
+## Stage J: 通知实时性 ✅
 
 > P0 — 不做此项，async 模式通知不可用。
 
 | Step | 内容 | 状态 |
 |------|------|------|
-| J1 | **Proxy 双向 select** — 主循环同时 select stdin + notification channel，任意就绪即处理 | ⬜ |
-| J2 | **Notification forwarder task** — 独立后台 task 从 daemon channel 读取并写入 stdout | ⬜ |
-| J3 | **通知缓冲** — 高频事件 (多 task 并行) 合并 batch 发送，config `batch_interval_ms` | ⬜ |
-| J4 | **通知测试** — 验证 async 模式下 Agent 发 run 后能即时收到 update/complete | ⬜ |
+| J1 | **Proxy 双向 select** — 主循环同时 select stdin + notification channel，任意就绪即处理 | ✅ |
+| J2 | **Notification forwarder task** — 独立后台 task 从 daemon channel 读取并写入 stdout | ✅ |
+| J3 | **通知缓冲** — 高频事件 (多 task 并行) 合并 batch 发送，config `batch_interval_ms` | ✅ |
+| J4 | **通知测试** — 验证 async 模式下 Agent 发 run 后能即时收到 update/complete | ✅ |
 
 ---
 
-## Stage P: Agent 无缝接入 ⬜
+## Stage P: Agent 无缝接入 ✅
 
 > P0 — 做完此项，arshy 成为 Agent 的唯一 shell 通道。
 
@@ -159,17 +159,17 @@ Agent 加载 Skill → 知道用哪个 CLI → 执行命令 → arshy (shell) �
 
 | Step | 内容 | 状态 |
 |------|------|------|
-| P1 | **mode:auto 智能推断** — 短命令 (≤3 词、无管道、无 watch/serve/daemon 标志) → sync + raw text + 跳过 Store；其余 → async + 结构化 + Store | ⬜ |
-| P2 | **短命令零开销路径** — `executor.run()` 中 auto 模式判断：短命令不 insert_task、不 spawn parser session、直接 spawn → wait → return stdout 原文 | ⬜ |
-| P3 | **输出格式自动切换** — MCP response: 短命令返回 `{"text": "..."}` (纯文本)，长命令返回 `{"structured": {...}}` (task_id + status + events) | ⬜ |
-| P4 | **MCP Instructions 强引导** — instructions 改为: "NEVER use raw shell tools. ALL commands go through arshy_run. Short commands return instantly; long commands stream structured output." | ⬜ |
-| P5 | **Tool description 优化** — arshy_run description 加明: "Works for ALL commands. Short commands (ls, git status) return instantly like a normal shell." | ⬜ |
-| P6 | **接口预留: sandbox_mode** — config `executor.sandbox_mode: "none" | "process" | "container"`，executor 中 stub 分支，当前只走 none | ⬜ |
-| P7 | **接口预留: task/stdin** — IPC 方法定义 + executor stub（返回 "stdin write not supported yet"），为未来交互式 PTY 留口子 | ⬜ |
-| P8 | **接口预留: store.backend** — config `store.backend: "sqlite" | "postgres" | "redis"`，Store 改为 trait，当前只实现 SqliteStore | ⬜ |
-| P9 | **接口预留: proxy middleware** — `proxy::Middleware` trait 定义，proxy_main 中 `Vec<Box<dyn Middleware>>` 骨架，当前为空 Vec | ⬜ |
-| P10 | **接口预留: notifications/stream** — EventBus 新增 `StreamOutput { task_id, data }` variant，当前不产生此事件，为未来 tail -f 留口子 | ⬜ |
-| P11 | **接入测试** — 验证: `arshy_run "ls"` 返回纯文本、`arshy_run "cargo build"` 返回结构化、mode:auto 自动切换、MCP tool list 包含 5 工具 | ⬜ |
+| P1 | **mode:auto 智能推断** — 短命令 (≤3 词、无管道、无 watch/serve/daemon 标志) → sync + raw text + 跳过 Store；其余 → async + 结构化 + Store | ✅ |
+| P2 | **短命令零开销路径** — `executor.run()` 中 auto 模式判断：短命令不 insert_task、不 spawn parser session、直接 spawn → wait → return stdout 原文 | ✅ |
+| P3 | **输出格式自动切换** — MCP response: 短命令返回 `{"text": "..."}` (纯文本)，长命令返回 `{"structured": {...}}` (task_id + status + events) | ✅ |
+| P4 | **MCP Instructions 强引导** — instructions 改为: "NEVER use raw shell tools. ALL commands go through arshy_run. Short commands return instantly; long commands stream structured output." | ✅ |
+| P5 | **Tool description 优化** — arshy_run description 加明: "Works for ALL commands. Short commands (ls, git status) return instantly like a normal shell." | ✅ |
+| P6 | **接口预留: sandbox_mode** — config `executor.sandbox_mode: "none" | "process" | "container"`，executor 中 stub 分支，当前只走 none | ✅ |
+| P7 | **接口预留: task/stdin** — IPC 方法定义 + executor stub（返回 "stdin write not supported yet"），为未来交互式 PTY 留口子 | ✅ |
+| P8 | **接口预留: store.backend** — config `store.backend: "sqlite" | "postgres" | "redis"`，Store 改为 trait，当前只实现 SqliteStore | ✅ |
+| P9 | **接口预留: proxy middleware** — `proxy::Middleware` trait 定义，proxy_main 中 `Vec<Box<dyn Middleware>>` 骨架，当前为空 Vec | ✅ |
+| P10 | **接口预留: notifications/stream** — EventBus 新增 `StreamOutput { task_id, data }` variant，当前不产生此事件，为未来 tail -f 留口子 | ✅ |
+| P11 | **接入测试** — 验证: `arshy_run "ls"` 返回纯文本、`arshy_run "cargo build"` 返回结构化、mode:auto 自动切换、MCP tool list 包含 5 工具 | ✅ |
 
 ### 短命令判定规则 (P1)
 
@@ -248,74 +248,74 @@ pub enum BusEventKind {
 
 ---
 
-## Stage K: Daemon 生命周期管理 ⬜
+## Stage K: Daemon 生命周期管理 ✅
 
 > P1 — 不做此项，生产部署不可靠。
 
 | Step | 内容 | 状态 |
 |------|------|------|
-| K1 | **PID file** — `~/.local/share/arshy/arshyd.pid`，防止重复启动 | ⬜ |
-| K2 | **`arshy daemon start/stop/restart`** — CLI 子命令 | ⬜ |
-| K3 | **Daemon shutdown RPC** — `daemon/shutdown` 方法，优雅关闭并通知所有连接 | ⬜ |
-| K4 | **Stale socket 清理** — 启动时检查旧 UDS 文件是否对应存活进程 | ⬜ |
-| K5 | **macOS launchd plist** — `~/Library/LaunchAgents/com.arshy.daemon.plist`，可选 | ⬜ |
-| K6 | **Linux systemd unit** — `~/.config/systemd/user/arshyd.service`，可选 | ⬜ |
-| K7 | **生命周期测试** — 重复启动拒绝、stop 后连接断开、stale pid 恢复 | ⬜ |
+| K1 | **PID file** — `~/.local/share/arshy/arshyd.pid`，防止重复启动 | ✅ |
+| K2 | **`arshy daemon start/stop/restart`** — CLI 子命令 | ✅ |
+| K3 | **Daemon shutdown RPC** — `daemon/shutdown` 方法，优雅关闭并通知所有连接 | ✅ |
+| K4 | **Stale socket 清理** — 启动时检查旧 UDS 文件是否对应存活进程 | ✅ |
+| K5 | **macOS launchd plist** — `arshy install-launchd` CLI 安装 `~/Library/LaunchAgents/com.arshy.daemon.plist` | ✅ |
+| K6 | **Linux systemd unit** — `arshy install-systemd` CLI 安装 `~/.config/systemd/user/arshyd.service` | ✅ |
+| K7 | **生命周期测试** — 重复启动拒绝、stop 后连接断开、stale pid 恢复 | ✅ |
 
 ---
 
-## Stage L: 结构化错误处理 ⬜
+## Stage L: 结构化错误处理 ✅
 
 > P1 — 不做此项，Agent 无法智能重试。
 
 | Step | 内容 | 状态 |
 |------|------|------|
-| L1 | **JSON-RPC error code 规范** — -32600 invalid request, -32601 method not found, -32602 invalid params, -32603 internal error | ⬜ |
-| L2 | **error.data 字段** — 附加 task_id, parser_name, original_command 等上下文 | ⬜ |
-| L3 | **重试语义标记** — response header 中标记 error 是否可重试 (timeout=true, invalid_params=false) | ⬜ |
-| L4 | **Proxy 错误映射** — IPC error → MCP error 正确转换，保留 code + message + data | ⬜ |
-| L5 | **错误测试** — 覆盖所有 error code 路径 | ⬜ |
+| L1 | **JSON-RPC error code 规范** — -32600 invalid request, -32601 method not found, -32602 invalid params, -32603 internal error | ✅ |
+| L2 | **error.data 字段** — 附加 task_id, parser_name, original_command 等上下文 | ✅ |
+| L3 | **重试语义标记** — response header 中标记 error 是否可重试 (timeout=true, invalid_params=false) | ✅ |
+| L4 | **Proxy 错误映射** — IPC error → MCP error 正确转换，保留 code + message + data | ✅ |
+| L5 | **错误测试** — 覆盖所有 error code 路径 | ✅ |
 
 ---
 
-## Stage M: 数据完整性 + 可观测 ⬜
+## Stage M: 数据完整性 + 可观测 ✅
 
 > P2 — 不做此项，长期运行不可靠。
 
 | Step | 内容 | 状态 |
 |------|------|------|
-| M1 | **Auto-prune** — daemon 启动时自动执行 `prune_older_than_days` | ⬜ |
-| M2 | **WAL checkpoint** — 定期 `PRAGMA wal_checkpoint(TRUNCATE)` 防 WAL 膨胀 | ⬜ |
-| M3 | **Schema migration** — `schema_version` 表，版本递增时自动 ALTER TABLE | ⬜ |
-| M4 | **`arshy stats` CLI** — 平均执行时间、P99、失败率、按 parser 分组统计 | ⬜ |
-| M5 | **资源监控** — 活跃 task 数、SQLite 文件大小、UDS 连接数 | ⬜ |
-| M6 | **完整性测试** — migration 升级、WAL checkpoint、auto-prune 触发 | ⬜ |
+| M1 | **Auto-prune** — daemon 启动时自动执行 `prune_older_than_days` | ✅ |
+| M2 | **WAL checkpoint** — 定期 `PRAGMA wal_checkpoint(TRUNCATE)` 防 WAL 膨胀 | ✅ |
+| M3 | **Schema migration** — `schema_version` 表，版本递增时自动 ALTER TABLE | ✅ |
+| M4 | **`arshy stats` CLI** — 平均执行时间、P99、失败率、按 parser 分组统计 | ✅ |
+| M5 | **资源监控** — 活跃 task 数、SQLite 文件大小、UDS 连接数 | ✅ |
+| M6 | **完整性测试** — migration 升级、WAL checkpoint、auto-prune 触发 | ✅ |
 
 ---
 
-## Stage N: MCP 协议完善 ⬜
+## Stage N: MCP 协议完善 ✅
 
 > P3 — 不做此项，功能非核心但提升 Agent 体验。
 
 | Step | 内容 | 状态 |
 |------|------|------|
-| N1 | **`resources/list` + `resources/read`** — 暴露 task 事件为 MCP resource | ⬜ |
-| N2 | **`notifications/cancelled` 处理** — Agent 取消任务信号 → 调用 `arshy_kill` | ⬜ |
-| N3 | **`prompts/list` + `prompts/get`** — "analyze build failure" 等 prompt 模板 (可选) | ⬜ |
-| N4 | **MCP 协议版本协商** — client/server protocol version 对齐检查 | ⬜ |
+| N1 | **`resources/list` + `resources/read`** — 暴露 task 事件为 MCP resource | ✅ |
+| N2 | **`notifications/cancelled` 处理** — Agent 取消任务信号 → 调用 `arshy_kill` | ✅ |
+| N3 | **`prompts/list` + `prompts/get`** — analyze_build_failure / diagnose_test_failure / review_task_output | ✅ |
+| N4 | **MCP 协议版本协商** — client/server protocol version 对齐检查，不兼容返回 -32600 | ✅ |
 
 ---
 
-## Stage O: Parser 生态解锁 ⬜
+## Stage O: Parser 生态解锁 ✅
 
 > P3 — 不做此项，parser 能力降级但可用。
 
 | Step | 内容 | 状态 |
 |------|------|------|
-| O1 | **解锁 `rhai`** — Tier 2 stateful parser 完整实现，替代 regex+state-machine 回退 | 🔵 依赖下载 |
-| O2 | **解锁 `notify` v7** — Parser 文件热重载，修改无需重启 daemon | 🔵 依赖下载 |
-| O3 | **自定义 parser 文档** — 用户在 `~/.config/arshy/parsers/` 添加 TOML parser 指南 | ⬜ |
-| O4 | **Parser 测试扩展** — 为 stateful parser (npm/webpack) 添加 fixture | ⬜ |
+| O1 | **解锁 `rhai`** — Tier 2 stateful parser 完整实现，替代 regex+state-machine 回退 | ✅ |
+| O2 | **解锁 `notify` v7** — Parser 文件热重载，修改无需重启 daemon | ✅ |
+| O3 | **自定义 parser 文档** — guides/custom-parser-toml.md + custom-parser-rhai.md | ✅ |
+| O4 | **Parser 测试扩展** — 为所有 20 parser 添加 fixture (.txt + .json)，匹配率 ≥95% | ✅ |
 
 ---
 
@@ -396,10 +396,10 @@ arshy_query — 查询结构化事件
 
 ## 待解锁依赖
 
-| 依赖 | 用途 | 阻塞 Stage |
-|------|------|------------|
-| `notify` v7 | Parser 文件热重载 (替代 polling) | O2 |
-| `rhai` | Tier 2 脚本引擎 (替代 regex+state-machine 回退) | O1 |
+| 依赖 | 用途 | 状态 |
+|------|------|------|
+| `notify` v7 | Parser 文件热重载 (替代 polling) | ✅ 已解锁 |
+| `rhai` | Tier 2 脚本引擎 (替代 regex+state-machine 回退) | ✅ 已解锁 |
 
 ---
 
@@ -407,12 +407,14 @@ arshy_query — 查询结构化事件
 
 | 指标 | 值 |
 |------|------|
-| 总测试数 | **153** |
-| Library tests (含 transport 10) | 29 |
-| Daemon tests (含 ipc_handler 16) | 115 |
-| Proxy tests | 9 |
+| 总测试数 | **302** |
+| Library tests (含 transport 10) | 31 |
+| Daemon tests (含 ipc_handler 16+) | 251 |
+| Proxy tests | 20 |
+| Security tests (filter 22 + sandbox 8 + permission 6 + audit 9 + e2e 17) | 内嵌于 daemon tests |
 | Clippy warnings | **0** |
 | Compiler warnings | **0** |
+| Parser fixtures | **20/20** (匹配率 ≥95%) |
 
 ---
 
@@ -431,32 +433,27 @@ arshy_query — 查询结构化事件
 
 | 优先级 | Stage | 说明 |
 |--------|-------|------|
-| **P0** | I (安全), J (通知实时性), **P (Agent 无缝接入), S (CLI+Skill 适承)** | 不做 = 不敢让 Agent 连上来 / Agent 不会用 / 无法承接 Skill 驱动的 CLI 执行 |
-| **P1** | K (生命周期), L (错误处理) | 不做 = 生产部署不可靠 |
-| **P2** | M (数据完整性/可观测) | 不做 = 长期运行磁盘泄漏、无法诊断 |
-| **P3** | N (MCP 完善), O (Parser 解锁) | 不做 = 功能降级但可用 |
-| **P4** | K5/K6 (launchd/systemd) | 可选，手动管理 daemon 也行 |
+| **P0** | I (安全), J (通知实时性), P (Agent 无缝接入), S (CLI+Skill 适承) | ✅ 全部完成 |
+| **P1** | K (生命周期), L (错误处理) | ✅ 全部完成 |
+| **P2** | M (数据完整性/可观测) | ✅ 全部完成 |
+| **P3** | N (MCP 完善), O (Parser 解锁) | ✅ 全部完成 |
+| **P4** | K5/K6 (launchd/systemd) | ✅ 全部完成 |
 
 ---
 
-## 推荐执行顺序
+## 执行状态
 
 ```
-Stage I  (安全)              ← P0, Agent 安全接入的前提
-  ↓
-Stage J  (通知实时性)        ← P0, async 模式可用
-  ↓
-Stage P  (Agent 无缝接入)    ← P0, 成为 Agent 的唯一 shell
-  ↓
-Stage S  (CLI+Skill 适承)    ← P0, 承接 Skill 驱动的任意 CLI 执行
-  ↓
-Stage K  (生命周期)          ← P1, 生产可靠性
-  ↓
-Stage L  (错误处理)          ← P1, Agent 智能重试
-  ↓
-Stage M  (数据完整性)        ← P2, 长期运行
-  ↓
-Stage N  (MCP 完善)          ← P3, 功能增强
-  ↓
-Stage O  (Parser 解锁)       ← P3, 解锁依赖后执行
+Stage I  (安全)              ✅
+Stage J  (通知实时性)        ✅
+Stage P  (Agent 无缝接入)    ✅
+Stage S  (CLI+Skill 适承)    ✅
+Stage K  (生命周期)          ✅
+Stage L  (错误处理)          ✅
+Stage M  (数据完整性)        ✅
+Stage N  (MCP 完善)          ✅
+Stage O  (Parser 解锁)       ✅
+Stage K5/K6 (launchd/systemd) ✅
 ```
+
+**所有 ROADMAP Stage 已完成。**

@@ -1,0 +1,6 @@
+[
+  {"type": "diagnostic", "severity": "warning", "message": "./src/utils.ts"},
+  {"type": "diagnostic", "severity": "warning", "message": "./src/components/old.ts"},
+  {"type": "diagnostic", "severity": "error", "message": "./src/index.ts"},
+  {"type": "diagnostic", "severity": "error", "message": "./src/app.ts"}
+]

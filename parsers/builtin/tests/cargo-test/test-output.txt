@@ -1,0 +1,5 @@
+test handler::test_parse ... ok
+test handler::test_invalid ... FAILED
+test handler::test_ignored ... ignored
+   Compiling myapp v0.1.0
+test result: FAILED. 1 passed; 1 failed; 1 ignored; 0 measured; 0 filtered out; 0.01s

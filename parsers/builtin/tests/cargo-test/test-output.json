@@ -1,0 +1,7 @@
+[
+  {"type": "test_result", "severity": "info"},
+  {"type": "test_result", "severity": "error"},
+  {"type": "test_result", "severity": "info"},
+  {"type": "log"},
+  {"type": "summary", "severity": "error"}
+]

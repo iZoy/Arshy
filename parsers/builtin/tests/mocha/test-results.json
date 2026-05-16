@@ -1,0 +1,6 @@
+[
+  {"type": "summary", "severity": "info"},
+  {"type": "summary", "severity": "error"},
+  {"type": "test_result", "severity": "error"},
+  {"type": "diagnostic", "severity": "error"}
+]
