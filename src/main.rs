@@ -95,6 +95,8 @@ pub enum CliCommand {
     InstallLaunchd,
     /// Install Linux systemd user unit for auto-start
     InstallSystemd,
+    /// Diagnose Claude Code integration and show fix suggestions
+    Doctor,
 }
 
 #[derive(clap::Subcommand, Debug)]

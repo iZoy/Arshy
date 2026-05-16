@@ -39,6 +39,7 @@ pub async fn dispatch(cli: Cli) -> Result<()> {
         Some(CliCommand::Stats) => daemon_stats(config_path, log_level).await,
         Some(CliCommand::InstallLaunchd) => install_launchd(),
         Some(CliCommand::InstallSystemd) => install_systemd(),
+        Some(CliCommand::Doctor) => doctor(config_path, log_level),
         None => {
             println!("Arshy — AI Agent native shell execution layer");
             println!("Usage: arshy [--from-mcp] [OPTIONS] <COMMAND>");
@@ -174,15 +175,44 @@ async fn tail_task(
     Ok(())
 }
 
+/// Required permission entries for seamless arshy integration.
+const ARSHY_PERMISSIONS: &[&str] = &[
+    // MCP tools — auto-approve arshy_exec and arshy_query
+    "mcp__arshy__arshy_exec",
+    "mcp__arshy__arshy_query",
+    // Bash tool — auto-approve arshy CLI commands
+    "Bash(arshy *)",
+    "Bash(arshyd *)",
+];
+
 fn install() -> Result<()> {
-    println!("Registering arshy as MCP server...");
+    println!("Registering arshy as MCP server + permissions...");
+
+    // Write MCP server to ~/.claude/mcp.json
+    let mcp_path = dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("~"))
+        .join(".claude")
+        .join("mcp.json");
+    install_mcp_json(&mcp_path)?;
+
+    // Write permissions to ~/.claude/settings.json
     let settings_path = dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("~"))
         .join(".claude")
         .join("settings.json");
+    install_settings_permissions(&settings_path)?;
 
-    let mut settings: serde_json::Value = if settings_path.exists() {
-        let content = std::fs::read_to_string(&settings_path)?;
+    println!();
+    println!("Done! Restart Claude Code to activate.");
+    println!("  MCP server: {}", mcp_path.display());
+    println!("  Permissions: {}", settings_path.display());
+    Ok(())
+}
+
+/// Write arshy entry to ~/.claude/mcp.json (separate from settings.json).
+fn install_mcp_json(path: &std::path::Path) -> Result<()> {
+    let mut mcp: serde_json::Value = if path.exists() {
+        let content = std::fs::read_to_string(path)?;
         serde_json::from_str(&content).unwrap_or(serde_json::json!({}))
     } else {
         serde_json::json!({})
@@ -190,47 +220,115 @@ fn install() -> Result<()> {
 
     let arshy_entry = serde_json::json!({
         "command": "arshy",
-        "args": ["--from-mcp"],
-        "type": "stdio"
+        "args": ["--from-mcp"]
     });
 
-    if let Some(obj) = settings.as_object_mut() {
-        let mcp_servers = obj
+    if let Some(obj) = mcp.as_object_mut() {
+        let servers = obj
             .entry("mcpServers")
             .or_insert_with(|| serde_json::json!({}));
-        if let Some(servers) = mcp_servers.as_object_mut() {
-            servers.insert("arshy".into(), arshy_entry);
+        if let Some(map) = servers.as_object_mut() {
+            map.insert("arshy".into(), arshy_entry);
         }
-
-        if let Some(parent) = settings_path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::write(&settings_path, serde_json::to_string_pretty(&settings)?)?;
-        println!("Installed to {}", settings_path.display());
     }
 
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, serde_json::to_string_pretty(&mcp)?)?;
+    println!("  ✓ MCP server registered in {}", path.display());
+    Ok(())
+}
+
+/// Merge arshy permissions into ~/.claude/settings.json allow list.
+fn install_settings_permissions(path: &std::path::Path) -> Result<()> {
+    let mut settings: serde_json::Value = if path.exists() {
+        let content = std::fs::read_to_string(path)?;
+        serde_json::from_str(&content).unwrap_or(serde_json::json!({}))
+    } else {
+        serde_json::json!({})
+    };
+
+    if let Some(obj) = settings.as_object_mut() {
+        let perms = obj
+            .entry("permissions")
+            .or_insert_with(|| serde_json::json!({}));
+
+        let allow = perms
+            .as_object_mut()
+            .unwrap()
+            .entry("allow")
+            .or_insert_with(|| serde_json::json!([]));
+
+        if let Some(arr) = allow.as_array_mut() {
+            let existing: Vec<String> = arr
+                .iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect();
+            let mut added = 0;
+            for perm in ARSHY_PERMISSIONS {
+                if !existing.contains(&perm.to_string()) {
+                    arr.push(serde_json::json!(perm));
+                    added += 1;
+                }
+            }
+            if added > 0 {
+                println!("  ✓ Added {} permissions to allow list", added);
+            } else {
+                println!("  ✓ Permissions already configured");
+            }
+        }
+    }
+
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, serde_json::to_string_pretty(&settings)?)?;
     Ok(())
 }
 
 fn uninstall() -> Result<()> {
-    let settings_path = dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("~"))
-        .join(".claude")
-        .join("settings.json");
+    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("~"));
+    let claude_dir = home.join(".claude");
 
-    if settings_path.exists() {
-        let content = std::fs::read_to_string(&settings_path)?;
-        let mut settings: serde_json::Value =
+    // Remove from ~/.claude/mcp.json
+    let mcp_path = claude_dir.join("mcp.json");
+    if mcp_path.exists() {
+        let content = std::fs::read_to_string(&mcp_path)?;
+        let mut mcp: serde_json::Value =
             serde_json::from_str(&content).unwrap_or(serde_json::json!({}));
-        if let Some(obj) = settings.as_object_mut() {
+        if let Some(obj) = mcp.as_object_mut() {
             if let Some(servers) = obj.get_mut("mcpServers") {
                 if let Some(map) = servers.as_object_mut() {
                     map.remove("arshy");
                 }
             }
         }
+        std::fs::write(&mcp_path, serde_json::to_string_pretty(&mcp)?)?;
+        println!("Removed arshy from {}", mcp_path.display());
+    }
+
+    // Remove permissions from ~/.claude/settings.json
+    let settings_path = claude_dir.join("settings.json");
+    if settings_path.exists() {
+        let content = std::fs::read_to_string(&settings_path)?;
+        let mut settings: serde_json::Value =
+            serde_json::from_str(&content).unwrap_or(serde_json::json!({}));
+        if let Some(obj) = settings.as_object_mut() {
+            if let Some(perms) = obj.get_mut("permissions") {
+                if let Some(allow) = perms.get_mut("allow") {
+                    if let Some(arr) = allow.as_array_mut() {
+                        arr.retain(|v| {
+                            v.as_str()
+                                .map(|s| !s.contains("arshy") && !s.contains("arshyd"))
+                                .unwrap_or(true)
+                        });
+                    }
+                }
+            }
+        }
         std::fs::write(&settings_path, serde_json::to_string_pretty(&settings)?)?;
-        println!("Removed arshy from {}", settings_path.display());
+        println!("Removed permissions from {}", settings_path.display());
     }
     Ok(())
 }
@@ -612,4 +710,171 @@ fn which_arshyd() -> Option<PathBuf> {
         }
     }
     None
+}
+
+fn doctor(config_path: Option<PathBuf>, log_level: Option<String>) -> Result<()> {
+    let mut ok = 0u32;
+    let mut fail = 0u32;
+
+    macro_rules! check {
+        ($label:expr, $ok:expr, $msg:expr) => {
+            if $ok {
+                println!("  ✓ {}", $label);
+                ok += 1;
+            } else {
+                println!("  ✗ {} — {}", $label, $msg);
+                fail += 1;
+            }
+        };
+    }
+    macro_rules! hint {
+        ($msg:expr) => {
+            println!("    💡 {}", $msg);
+        };
+    }
+
+    println!("arshy doctor — Claude Code integration diagnostics\n");
+
+    // ── 1. Binary checks ──────────────────────────────────────────────────
+    println!("1. Binaries");
+    let arshy_path = which_arshy_path();
+    check!("arshy in PATH", arshy_path.is_some(),
+        "install with: cargo install arshy");
+    let arshyd_path = which_arshyd();
+    check!("arshyd in PATH", arshyd_path.is_some(),
+        "install with: cargo install arshy");
+
+    // ── 2. Daemon ─────────────────────────────────────────────────────────
+    println!("\n2. Daemon");
+    let cfg = arshy_lib::config::Config::load(arshy_lib::config::CliOverrides {
+        config_path,
+        log_level,
+        ..Default::default()
+    }).unwrap_or_default();
+    let socket_path = cfg.daemon.expanded_socket_path();
+    // Check socket file exists (avoids tokio runtime conflict from within block_on)
+    let daemon_running = socket_path.exists();
+    check!("daemon is running", daemon_running,
+        "start with: arshy daemon start");
+    if !daemon_running {
+        hint!("The daemon must be running for MCP calls to work.");
+        hint!("Also try: arshy install-launchd  (auto-start on macOS)");
+    }
+
+    // ── 3. MCP server config ──────────────────────────────────────────────
+    println!("\n3. MCP server (mcp.json)");
+    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("~"));
+    let claude_dir = home.join(".claude");
+    let mcp_path = claude_dir.join("mcp.json");
+    let mcp_ok = check_mcp_json(&mcp_path);
+    check!("arshy entry in mcp.json", mcp_ok,
+        "run: arshy install");
+    if !mcp_ok {
+        hint!("The MCP server must be registered for Claude Code to see arshy tools.");
+    }
+
+    // ── 4. Permissions ────────────────────────────────────────────────────
+    println!("\n4. Permissions (settings.json)");
+    let settings_path = claude_dir.join("settings.json");
+    let perm_status = check_permissions(&settings_path);
+    match &perm_status {
+        PermStatus::AllGood => {
+            println!("  ✓ all arshy permissions configured");
+            ok += 1;
+        }
+        PermStatus::Missing(missing) => {
+            println!("  ✗ missing {} permission(s):", missing.len());
+            for m in missing {
+                println!("    - {}", m);
+            }
+            fail += 1;
+            hint!("run: arshy install  (auto-adds missing permissions)");
+        }
+        PermStatus::FileMissing => {
+            println!("  ✗ settings.json not found — run: arshy install");
+            fail += 1;
+        }
+    }
+
+    // ── 5. Summary ────────────────────────────────────────────────────────
+    println!("\n{}", "─".repeat(50));
+    println!("  {} passed, 0 warnings, {} failed", ok, fail);
+    if fail == 0 {
+        println!("\n  🎉 Everything looks good! Restart Claude Code to activate arshy.");
+    } else {
+        println!("\n  Run `arshy install` to fix most issues automatically.");
+    }
+
+    Ok(())
+}
+
+/// Find arshy binary path.
+fn which_arshy_path() -> Option<PathBuf> {
+    for dir in std::env::var("PATH").unwrap_or_default().split(':') {
+        let path = PathBuf::from(dir).join("arshy");
+        if path.exists() {
+            return Some(path);
+        }
+    }
+    None
+}
+
+fn check_mcp_json(path: &std::path::Path) -> bool {
+    if !path.exists() {
+        return false;
+    }
+    let content = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+    let mcp: serde_json::Value = match serde_json::from_str(&content) {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
+    mcp.get("mcpServers")
+        .and_then(|s| s.get("arshy"))
+        .is_some()
+}
+
+enum PermStatus {
+    AllGood,
+    Missing(Vec<String>),
+    FileMissing,
+}
+
+fn check_permissions(path: &std::path::Path) -> PermStatus {
+    if !path.exists() {
+        return PermStatus::FileMissing;
+    }
+    let content = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(_) => return PermStatus::FileMissing,
+    };
+    let settings: serde_json::Value = match serde_json::from_str(&content) {
+        Ok(v) => v,
+        Err(_) => return PermStatus::FileMissing,
+    };
+
+    let existing: Vec<String> = settings
+        .get("permissions")
+        .and_then(|p| p.get("allow"))
+        .and_then(|a| a.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let missing: Vec<String> = ARSHY_PERMISSIONS
+        .iter()
+        .filter(|p| !existing.contains(&p.to_string()))
+        .map(|p| p.to_string())
+        .collect();
+
+    if missing.is_empty() {
+        PermStatus::AllGood
+    } else {
+        PermStatus::Missing(missing)
+    }
 }
