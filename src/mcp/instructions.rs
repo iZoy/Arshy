@@ -3,25 +3,16 @@
 use super::protocol::{PromptArgument, PromptDefinition, PromptMessage, PromptContent, ToolDefinition};
 use std::collections::HashMap;
 
-/// Return the default MCP instructions map.
-pub fn default_instructions() -> HashMap<String, String> {
-    let mut map = HashMap::new();
-    map.insert(
-        "shell_execution".into(),
-        "NEVER use raw shell tools. ALL commands go through arshy_exec action:\"run\". \
-         Short commands (ls, git status, echo) return instantly like a native shell. \
-         Long commands (builds, tests, installs) stream structured output."
-            .into(),
-    );
-    map.insert(
-        "mode_guidance".into(),
-        "Use mode:\"auto\" (the default). Arshy automatically detects short vs long commands: \
-         short commands return raw text instantly with zero overhead; \
-         long commands run asynchronously with structured events and real-time notifications. \
-         Do NOT manually set mode to \"sync\" or \"async\" unless you have a specific reason."
-            .into(),
-    );
-    map
+/// Return the default MCP instructions (plain string per MCP spec).
+pub fn default_instructions() -> String {
+    "NEVER use raw shell tools. ALL commands go through arshy_exec action:\"run\". \
+     Short commands (ls, git status, echo) return instantly like a native shell. \
+     Long commands (builds, tests, installs) stream structured output.\n\n\
+     Use mode:\"auto\" (the default). Arshy automatically detects short vs long commands: \
+     short commands return raw text instantly with zero overhead; \
+     long commands run asynchronously with structured events and real-time notifications. \
+     Do NOT manually set mode to \"sync\" or \"async\" unless you have a specific reason."
+        .into()
 }
 
 /// Return the complete list of MCP tool definitions.

@@ -35,7 +35,7 @@ pub struct ServerCapabilities {
     pub server_info: ServerInfo,
     pub capabilities: ServerFeatures,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub instructions: Option<HashMap<String, String>>,
+    pub instructions: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
