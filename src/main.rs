@@ -84,6 +84,17 @@ pub enum CliCommand {
     },
     /// Show daemon status
     Status,
+    /// Manage the daemon process
+    Daemon {
+        #[command(subcommand)]
+        action: DaemonAction,
+    },
+    /// Show aggregate statistics
+    Stats,
+    /// Install macOS launchd plist for auto-start
+    InstallLaunchd,
+    /// Install Linux systemd user unit for auto-start
+    InstallSystemd,
 }
 
 #[derive(clap::Subcommand, Debug)]
@@ -96,6 +107,16 @@ pub enum ConfigAction {
     List,
     /// Show the config file path
     Path,
+}
+
+#[derive(clap::Subcommand, Debug)]
+pub enum DaemonAction {
+    /// Start the daemon (if not already running)
+    Start,
+    /// Stop the running daemon
+    Stop,
+    /// Restart the daemon (stop + start)
+    Restart,
 }
 
 fn main() -> arshy_lib::Result<()> {
