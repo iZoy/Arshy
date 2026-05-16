@@ -54,22 +54,26 @@ pub async fn write_json_line<W: AsyncWriteExt + Unpin, T: Serialize>(
 /// Pending response waiters: request id → oneshot sender.
 type PendingMap = Arc<Mutex<HashMap<u64, oneshot::Sender<Response>>>>;
 
-/// A persistent connection to the daemon supporting request/response and
-/// receiving asynchronous notifications.
+/// A persistent connection to the daemon supporting request/response.
 ///
 /// Spawns two background tasks:
 /// - **writer**: drains outgoing JSON to the socket
 /// - **reader**: routes responses (by id) to pending waiters, notifications to a channel
+///
+/// Notifications are received via a separate `mpsc::Receiver<Notification>`
+/// returned alongside the connection — this enables `tokio::select!` in the
+/// proxy between stdin reads and notification forwarding.
 pub struct DaemonConnection {
     write_tx: mpsc::Sender<serde_json::Value>,
-    notif_rx: mpsc::Receiver<Notification>,
     pending: PendingMap,
     next_id: u64,
 }
 
 impl DaemonConnection {
     /// Wrap a `UnixStream` into a bidirectional connection.
-    pub fn new(stream: UnixStream) -> Self {
+    ///
+    /// Returns the connection handle and a notification receiver channel.
+    pub fn new(stream: UnixStream) -> (Self, mpsc::Receiver<Notification>) {
         let (reader_half, writer_half) = stream.into_split();
         let reader = BufReader::new(reader_half);
         let writer = BufWriter::new(writer_half);
@@ -90,7 +94,7 @@ impl DaemonConnection {
             Self::reader_task(reader, pending_clone, notif_tx).await;
         });
 
-        Self { write_tx, notif_rx, pending, next_id: 1 }
+        (Self { write_tx, pending, next_id: 1 }, notif_rx)
     }
 
     /// Send a JSON-RPC request and wait for the response.
@@ -134,25 +138,6 @@ impl DaemonConnection {
                 )))
             }
         }
-    }
-
-    /// Try to receive a notification without blocking.
-    pub fn try_recv_notification(&mut self) -> Option<Notification> {
-        self.notif_rx.try_recv().ok()
-    }
-
-    /// Receive the next notification, waiting up to `timeout`.
-    pub async fn recv_notification_timeout(&mut self, timeout: std::time::Duration) -> Option<Notification> {
-        tokio::time::timeout(timeout, self.notif_rx.recv()).await.ok().flatten()
-    }
-
-    /// Drain all pending notifications (non-blocking).
-    pub fn drain_notifications(&mut self) -> Vec<Notification> {
-        let mut notifs = Vec::new();
-        while let Ok(n) = self.notif_rx.try_recv() {
-            notifs.push(n);
-        }
-        notifs
     }
 
     // ── Background tasks ────────────────────────────────────────────────────
@@ -288,7 +273,7 @@ mod tests {
     #[tokio::test]
     async fn test_daemon_connection_request_response() {
         let (client, server) = pair();
-        let mut conn = DaemonConnection::new(client);
+        let (mut conn, _notif_rx) = DaemonConnection::new(client);
 
         let handle = tokio::spawn(async move {
             let (mut sr, mut sw) = server.into_split();
@@ -316,7 +301,7 @@ mod tests {
     #[tokio::test]
     async fn test_daemon_connection_timeout() {
         let (client, server) = pair();
-        let mut conn = DaemonConnection::new(client);
+        let (mut conn, _notif_rx) = DaemonConnection::new(client);
 
         // Server reads but never responds; drops after test
         let handle = tokio::spawn(async move {
@@ -341,7 +326,7 @@ mod tests {
     #[tokio::test]
     async fn test_daemon_connection_notification() {
         let (client, server) = pair();
-        let mut conn = DaemonConnection::new(client);
+        let (_conn, mut notif_rx) = DaemonConnection::new(client);
 
         let handle = tokio::spawn(async move {
             let (_sr, mut sw) = server.into_split();
@@ -353,9 +338,9 @@ mod tests {
             write_line(&mut sw, &notif).await;
         });
 
-        let notif = conn.recv_notification_timeout(std::time::Duration::from_secs(2)).await;
-        assert!(notif.is_some());
-        let notif = notif.unwrap();
+        let notif = tokio::time::timeout(std::time::Duration::from_secs(2), notif_rx.recv()).await;
+        assert!(notif.is_ok());
+        let notif = notif.unwrap().unwrap();
         assert_eq!(notif.method, "task/update");
         assert_eq!(notif.params["task_id"], "abc");
         handle.await.unwrap();
@@ -364,7 +349,7 @@ mod tests {
     #[tokio::test]
     async fn test_daemon_connection_drain_notifications() {
         let (client, server) = pair();
-        let mut conn = DaemonConnection::new(client);
+        let (_conn, mut notif_rx) = DaemonConnection::new(client);
 
         let handle = tokio::spawn(async move {
             let (_sr, mut sw) = server.into_split();
@@ -382,7 +367,10 @@ mod tests {
         handle.await.unwrap();
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-        let notifs = conn.drain_notifications();
+        let mut notifs = Vec::new();
+        while let Ok(n) = notif_rx.try_recv() {
+            notifs.push(n);
+        }
         assert_eq!(notifs.len(), 3);
         assert_eq!(notifs[0].params["seq"], 0);
         assert_eq!(notifs[1].params["seq"], 1);
@@ -392,7 +380,7 @@ mod tests {
     #[tokio::test]
     async fn test_daemon_connection_routes_response_and_notification() {
         let (client, server) = pair();
-        let mut conn = DaemonConnection::new(client);
+        let (mut conn, mut notif_rx) = DaemonConnection::new(client);
 
         let handle = tokio::spawn(async move {
             let (mut sr, mut sw) = server.into_split();
@@ -426,7 +414,10 @@ mod tests {
         // Then drain notifications — should get the notification
         handle.await.unwrap();
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        let notifs = conn.drain_notifications();
+        let mut notifs = Vec::new();
+        while let Ok(n) = notif_rx.try_recv() {
+            notifs.push(n);
+        }
         assert_eq!(notifs.len(), 1);
         assert_eq!(notifs[0].method, "task/complete");
     }
@@ -434,17 +425,17 @@ mod tests {
     #[tokio::test]
     async fn test_daemon_connection_try_recv_empty() {
         let (client, server) = pair();
-        let mut conn = DaemonConnection::new(client);
+        let (_conn, mut notif_rx) = DaemonConnection::new(client);
         drop(server);
 
-        let notif = conn.try_recv_notification();
+        let notif = notif_rx.try_recv().ok();
         assert!(notif.is_none());
     }
 
     #[tokio::test]
     async fn test_daemon_connection_closed_write() {
         let (client, server) = pair();
-        let mut conn = DaemonConnection::new(client);
+        let (mut conn, _notif_rx) = DaemonConnection::new(client);
         drop(server);
 
         let result = conn.send_request_with_timeout(

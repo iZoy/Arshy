@@ -36,6 +36,8 @@ fn default_blocked_patterns() -> Vec<String> {
     ]
 }
 fn default_access_level() -> String { "full".into() }
+fn default_sandbox_mode() -> String { "none".into() }
+fn default_backend() -> String { "sqlite".into() }
 
 // ── Top-level ────────────────────────────────────────────────────────────────
 
@@ -85,6 +87,7 @@ partial_section!(PartialDaemonConfig {
     kill_graceful_ms: u64,
     kill_force_ms: u64,
     max_concurrent_tasks: u32,
+    sandbox_mode: String,
 });
 
 partial_section!(PartialStoreConfig {
@@ -94,6 +97,7 @@ partial_section!(PartialStoreConfig {
     auto_prune: bool,
     prune_keep: usize,
     prune_older_than_days: u32,
+    backend: String,
 });
 
 partial_section!(PartialParserConfig {
@@ -150,6 +154,9 @@ pub struct DaemonConfig {
     pub kill_force_ms: u64,
     #[serde(default = "d_4")]
     pub max_concurrent_tasks: u32,
+    /// Reserved: "none" | "process" | "container". Currently only "none" is implemented.
+    #[serde(default = "default_sandbox_mode")]
+    pub sandbox_mode: String,
 }
 
 impl Default for DaemonConfig {
@@ -164,6 +171,7 @@ impl Default for DaemonConfig {
             kill_graceful_ms: d_3s(),
             kill_force_ms: d_2s(),
             max_concurrent_tasks: d_4(),
+            sandbox_mode: default_sandbox_mode(),
         }
     }
 }
@@ -188,6 +196,9 @@ pub struct StoreConfig {
     pub prune_keep: usize,
     #[serde(default = "d_30")]
     pub prune_older_than_days: u32,
+    /// Reserved: "sqlite" | "postgres" | "redis". Currently only "sqlite" is implemented.
+    #[serde(default = "default_backend")]
+    pub backend: String,
 }
 
 impl Default for StoreConfig {
@@ -199,6 +210,7 @@ impl Default for StoreConfig {
             auto_prune: false,
             prune_keep: d_1000(),
             prune_older_than_days: d_30(),
+            backend: default_backend(),
         }
     }
 }

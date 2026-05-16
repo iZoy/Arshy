@@ -14,13 +14,33 @@ pub const METHOD_QUERY: &str = "task/query";
 pub const METHOD_LIST: &str = "task/list";
 pub const METHOD_KILL: &str = "task/kill";
 pub const METHOD_TAIL: &str = "task/tail";
+pub const METHOD_STDIN: &str = "task/stdin";
 pub const METHOD_STATUS: &str = "daemon/status";
 pub const METHOD_PRUNE: &str = "daemon/prune";
+pub const METHOD_SHUTDOWN: &str = "daemon/shutdown";
+pub const METHOD_STATS: &str = "daemon/stats";
 
 pub const NOTIF_TASK_UPDATE: &str = "task/update";
 pub const NOTIF_TASK_COMPLETE: &str = "task/complete";
 pub const NOTIF_DIAGNOSTIC: &str = "diagnostic";
 pub const NOTIF_DAEMON_SHUTDOWN: &str = "daemon/shutdown";
+
+// ── JSON-RPC error codes ────────────────────────────────────────────────────
+
+/// Standard JSON-RPC 2.0 error codes.
+pub mod error_code {
+    pub const PARSE_ERROR: i64 = -32700;
+    pub const INVALID_REQUEST: i64 = -32600;
+    pub const METHOD_NOT_FOUND: i64 = -32601;
+    pub const INVALID_PARAMS: i64 = -32602;
+    pub const INTERNAL_ERROR: i64 = -32603;
+
+    // Application-defined codes (outside -32000..-32099 reserved range)
+    pub const TASK_NOT_FOUND: i64 = -32001;
+    pub const TASK_TIMEOUT: i64 = -32002;
+    pub const ACCESS_DENIED: i64 = -32003;
+    pub const COMMAND_BLOCKED: i64 = -32004;
+}
 
 // ── JSON-RPC types ───────────────────────────────────────────────────────────
 
@@ -51,6 +71,8 @@ pub struct ErrorResponse {
 pub struct JsonRpcError {
     pub code: i64,
     pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -144,6 +166,11 @@ pub struct RunTaskParams {
     pub timeout_ms: Option<u64>,
     #[serde(default = "default_mode")]
     pub mode: String,
+    /// Hint for expected output format: "json", "csv", "table", "raw".
+    /// When set, the executor prioritizes the matching parser and bypasses
+    /// the zero-overhead short path to ensure structured output.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parse_hint: Option<String>,
 }
 
 fn default_mode() -> String { "auto".into() }
@@ -173,3 +200,32 @@ pub struct QueryParams {
 }
 
 fn default_limit() -> usize { 20 }
+
+// ── Stats response ──────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StatsResponse {
+    pub total_tasks: u64,
+    pub by_status: StatusCounts,
+    pub total_events: u64,
+    pub total_errors: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub avg_duration_ms: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub p50_duration_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub p99_duration_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure_rate: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub db_size_bytes: Option<u64>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct StatusCounts {
+    pub running: u64,
+    pub completed: u64,
+    pub failed: u64,
+    pub killed: u64,
+    pub timeout: u64,
+}

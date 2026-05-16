@@ -19,6 +19,10 @@ pub enum BusEventKind {
     Diagnostic { task_id: String, event: arshy_lib::ipc::TaskEvent },
     #[allow(dead_code)] // future: graceful shutdown notification
     DaemonShutdown { reason: String, grace_period_ms: u64 },
+    /// Reserved: stream real-time output for `tail -f` / interactive PTY.
+    /// Not currently produced by any code path.
+    #[allow(dead_code)]
+    StreamOutput { task_id: String, data: String },
 }
 
 /// Multi-producer, multi-consumer event bus.

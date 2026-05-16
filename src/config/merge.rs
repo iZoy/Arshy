@@ -15,6 +15,7 @@ pub fn merge_partial(mut cfg: Config, partial: PartialConfig) -> Config {
         if let Some(v) = d.kill_graceful_ms { cfg.daemon.kill_graceful_ms = v; }
         if let Some(v) = d.kill_force_ms { cfg.daemon.kill_force_ms = v; }
         if let Some(v) = d.max_concurrent_tasks { cfg.daemon.max_concurrent_tasks = v; }
+        if let Some(v) = d.sandbox_mode { cfg.daemon.sandbox_mode = v; }
     }
     if let Some(s) = partial.store {
         if let Some(v) = s.db_path { cfg.store.db_path = v; }
@@ -23,6 +24,7 @@ pub fn merge_partial(mut cfg: Config, partial: PartialConfig) -> Config {
         if let Some(v) = s.auto_prune { cfg.store.auto_prune = v; }
         if let Some(v) = s.prune_keep { cfg.store.prune_keep = v; }
         if let Some(v) = s.prune_older_than_days { cfg.store.prune_older_than_days = v; }
+        if let Some(v) = s.backend { cfg.store.backend = v; }
     }
     if let Some(p) = partial.parser {
         if let Some(v) = p.dirs { cfg.parser.dirs = v; }

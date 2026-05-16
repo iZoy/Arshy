@@ -38,6 +38,8 @@ impl NotificationRouter {
                 });
                 (ipc::NOTIF_DAEMON_SHUTDOWN, payload)
             }
+            // Reserved: not currently produced, no notification mapping yet
+            BusEventKind::StreamOutput { .. } => return None,
         };
 
         Some(ipc::Notification {
