@@ -23,8 +23,14 @@ event_type = "test_result"
 severity = "info"
 
 [[pattern]]
-name = "test-summary"
-regex = '^test result: (FAILED|ok)\. (\d+) passed.*'
+name = "test-summary-pass"
+regex = '^test result: ok\. (\d+) passed.*'
+event_type = "summary"
+severity = "info"
+
+[[pattern]]
+name = "test-summary-fail"
+regex = '^test result: FAILED\. (\d+) passed.*'
 event_type = "summary"
 severity = "error"
 

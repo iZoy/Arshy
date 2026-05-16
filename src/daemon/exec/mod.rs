@@ -45,6 +45,25 @@ pub fn is_short_command(command: &str) -> bool {
     if long_flags.iter().any(|f| cmd.contains(f)) {
         return false;
     }
+    // Build/test/install commands always produce substantial output → non-short
+    let long_output_prefixes = [
+        "cargo test", "cargo build", "cargo clippy", "cargo bench", "cargo doc",
+        "npm test", "npm run", "npm install", "npm ci",
+        "npx", "yarn test", "yarn run", "yarn install",
+        "pnpm test", "pnpm run", "pnpm install",
+        "pytest", "python -m pytest",
+        "go test", "go build", "go run",
+        "make", "make test", "make build",
+        "gradle", "./gradlew", "mvn",
+        "pip install", "pip3 install",
+        "docker build", "docker compose",
+        "cmake", "ninja",
+    ];
+    let first_word = cmd.split_whitespace().next().unwrap_or("");
+    let first_two = cmd.split_whitespace().take(2).collect::<Vec<_>>().join(" ");
+    if long_output_prefixes.iter().any(|p| first_two.starts_with(p) || first_word == *p) {
+        return false;
+    }
     cmd.split_whitespace().count() <= 5
 }
 
@@ -907,6 +926,29 @@ mod tests {
     #[test]
     fn short_command_daemon_flag() {
         assert!(!is_short_command("nginx daemon off"));
+    }
+
+    #[test]
+    fn short_command_long_output_prefixes() {
+        // Build/test commands always produce substantial output
+        assert!(!is_short_command("cargo test"));
+        assert!(!is_short_command("cargo build"));
+        assert!(!is_short_command("cargo clippy"));
+        assert!(!is_short_command("npm test"));
+        assert!(!is_short_command("npm run build"));
+        assert!(!is_short_command("yarn test"));
+        assert!(!is_short_command("go test ./..."));
+        assert!(!is_short_command("go build"));
+        assert!(!is_short_command("make"));
+        assert!(!is_short_command("make test"));
+        assert!(!is_short_command("pytest"));
+        assert!(!is_short_command("pip install requests"));
+        assert!(!is_short_command("docker build ."));
+        // Simple commands that don't produce much output should still be short
+        assert!(is_short_command("ls"));
+        assert!(is_short_command("echo hello"));
+        assert!(is_short_command("git status"));
+        assert!(is_short_command("pwd"));
     }
 
     /// Auto mode with a short command returns raw_output + short_command flag.
