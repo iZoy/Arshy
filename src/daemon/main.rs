@@ -208,17 +208,22 @@ async fn main() -> Result<()> {
     // Remove socket to reject new connections while tasks drain
     let _ = tokio::fs::remove_file(&socket_path).await;
 
-    // Wait for running tasks to finish (with a grace period)
-    let drain_deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
+    // Phase 1: wait 5s for natural completion
+    let phase1 = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    let hard_deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
     loop {
         let running = store.list_tasks(Some("running"), 10_000).map(|t| t.len()).unwrap_or(0);
         if running == 0 {
             tracing::info!("all tasks completed, clean shutdown");
             break;
         }
-        if tokio::time::Instant::now() > drain_deadline {
-            tracing::warn!("{} tasks still running after grace period, forcing shutdown", running);
+        if tokio::time::Instant::now() >= hard_deadline {
+            tracing::warn!("{} tasks still running after 30s grace, forcing exit", running);
             break;
+        }
+        // Phase 2: after 5s, actively kill remaining tasks with process-tree signals
+        if tokio::time::Instant::now() >= phase1 {
+            executor.kill_all().await;
         }
         tracing::debug!("waiting for {} running tasks to complete...", running);
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;

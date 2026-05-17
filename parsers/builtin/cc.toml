@@ -17,3 +17,24 @@ regex = '^(.+?):(\d+):(\d+): warning: (.+)$'
 event_type = "diagnostic"
 severity = "warning"
 fields = { file = 1, line = 2, column = 3, message = 4 }
+
+[[pattern]]
+name = "cc-note"
+regex = '^(.+?):(\d+):(\d+): note: (.+)$'
+event_type = "diagnostic"
+severity = "info"
+fields = { file = 1, line = 2, column = 3, message = 4 }
+
+[[pattern]]
+name = "cc-fatal"
+regex = '^(.+?):(\d+):(\d+): fatal error: (.+)$'
+event_type = "diagnostic"
+severity = "error"
+fields = { file = 1, line = 2, column = 3, message = 4 }
+
+[[pattern]]
+name = "cc-summary"
+regex = '^(\d+) errors? generated\.?$'
+event_type = "summary"
+severity = "error"
+fields = { message = 0 }

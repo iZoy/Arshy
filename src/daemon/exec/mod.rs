@@ -246,6 +246,18 @@ impl Executor {
         &self.access_level
     }
 
+    /// Kill all running tasks. Used during daemon shutdown to drain work.
+    pub async fn kill_all(&self) {
+        let registry = self.kill_registry.lock().await;
+        let count = registry.len();
+        if count > 0 {
+            tracing::info!("killing {} running task(s)", count);
+        }
+        for (_task_id, tx) in registry.iter() {
+            let _ = tx.send(()).await;
+        }
+    }
+
     /// Schedule a command for execution.
     ///
     /// Mode behavior:

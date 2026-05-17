@@ -5,9 +5,9 @@
 use super::pty::ProcessHandle;
 use arshy_lib::Result;
 
-/// Gracefully terminate a process with escalating signals.
+/// Gracefully terminate an entire process tree with escalating signals.
 ///
-/// Steps:
+/// Steps (each targets the process group + direct PID):
 /// 1. Send SIGINT and wait `grace_ms` for exit
 /// 2. Send SIGTERM and wait `force_ms` for exit
 /// 3. Send SIGKILL (unconditional)
@@ -20,37 +20,39 @@ pub async fn graceful_kill(
 ) -> Result<bool> {
     let pid = handle.pid;
 
-    // Step 1: SIGINT (Ctrl+C equivalent)
-    send_signal(pid, libc::SIGINT);
-    tracing::debug!("sent SIGINT to pid {}", pid);
+    // Step 1: SIGINT to process group + direct PID
+    send_signal_tree(pid, libc::SIGINT);
+    tracing::debug!("sent SIGINT to pid {} and process group", pid);
 
-    // Wait for graceful exit
     if wait_for_exit(handle, grace_ms).await? {
         tracing::debug!("pid {} exited after SIGINT", pid);
         return Ok(true);
     }
 
-    // Step 2: SIGTERM
-    send_signal(pid, libc::SIGTERM);
-    tracing::debug!("sent SIGTERM to pid {}", pid);
+    // Step 2: SIGTERM to process group + direct PID
+    send_signal_tree(pid, libc::SIGTERM);
+    tracing::debug!("sent SIGTERM to pid {} and process group", pid);
 
     if wait_for_exit(handle, force_ms).await? {
         tracing::debug!("pid {} exited after SIGTERM", pid);
         return Ok(true);
     }
 
-    // Step 3: SIGKILL (no return)
-    tracing::warn!("force killing pid {}", pid);
+    // Step 3: SIGKILL to process group + direct PID
+    tracing::warn!("force killing pid {} and its children", pid);
+    send_signal_tree(pid, libc::SIGKILL);
     handle.force_kill()?;
     Ok(false)
 }
 
-/// Send a signal to a process by PID.
-/// Uses raw libc::kill on Unix. No-op on non-Unix (shouldn't happen for daemon).
-fn send_signal(pid: u32, signal: libc::c_int) {
-    // SAFETY: kill() is safe to call with a valid PID and signal.
-    // We only use standard signals (SIGINT, SIGTERM, SIGKILL).
+/// Send a signal to a process tree: the process group (negative PID) and the
+/// direct PID. This catches child processes spawned by shell pipelines and
+/// build tools that fork subprocesses.
+fn send_signal_tree(pid: u32, signal: libc::c_int) {
+    let pgid = -(pid as libc::pid_t);
+    // SAFETY: kill() with valid PID and standard signals (SIGINT, SIGTERM, SIGKILL).
     unsafe {
+        libc::kill(pgid, signal);
         libc::kill(pid as libc::pid_t, signal);
     }
 }
@@ -69,18 +71,5 @@ async fn wait_for_exit(handle: &mut ProcessHandle, timeout_ms: u64) -> Result<bo
             return Ok(false);
         }
         tokio::time::sleep(poll_interval).await;
-    }
-}
-
-/// Terminate an entire process tree.
-/// Sends the signal to the process group (negative PID) and the process directly.
-#[allow(dead_code)] // future: process tree cleanup
-pub fn kill_process_tree(pid: u32, signal: libc::c_int) {
-    // Kill the entire process group by using negative PID.
-    // libc::kill takes pid_t which is i32 on most platforms.
-    let pgid = -(pid as i32);
-    unsafe {
-        libc::kill(pgid, signal);
-        libc::kill(pid as libc::pid_t, signal);
     }
 }
