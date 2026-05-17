@@ -8,6 +8,7 @@ use std::sync::Mutex;
 
 /// Append-only audit log writer.
 pub struct AuditLog {
+    /// Stored for future audit log rotation and tooling (path inspection).
     #[allow(dead_code)]
     path: PathBuf,
     file: Mutex<std::fs::File>,
@@ -39,13 +40,14 @@ impl AuditLog {
     pub fn log(&self, entry: &AuditEntry) -> Result<()> {
         let mut line = serde_json::to_string(entry)?;
         line.push('\n');
-        let mut file = self.file.lock().expect("audit mutex poisoned");
-        file.write_all(line.as_bytes())?;
-        file.flush()?;
-        Ok(())
+        let mut file = self.file.lock().map_err(|_| {
+            arshy_lib::ArshyError::Other("audit log mutex poisoned".into())
+        })?;
+        file.write_all(line.as_bytes())
+            .map_err(|e| arshy_lib::ArshyError::Io(e))
     }
 
-    /// Path to the audit log file.
+    /// Path to the audit log file. Reserved for audit log tooling.
     #[allow(dead_code)]
     pub fn path(&self) -> &Path {
         &self.path

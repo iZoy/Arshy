@@ -5,18 +5,20 @@ mod cli;
 mod proxy;
 
 #[derive(Parser, Debug)]
-#[command(name = "arshy", version, about = "AI Agent native shell execution layer")]
+#[command(name = "arshy", version, about = "AI Agent native shell — structured output, auto-mode intelligence, command filtering", long_about = "Arshy is a structured shell execution layer for AI agents. It replaces raw Bash with typed, queryable command execution: smart sync for short commands, async structured output for long commands, and 20 built-in parsers for common build/test tools.")]
 pub struct Cli {
-    /// Run as MCP stdio proxy
-    #[arg(long = "from-mcp")]
+    /// Run as MCP stdio proxy (for Claude Code / Cursor integration).
+    /// The proxy connects to the arshyd daemon via Unix socket and translates
+    /// MCP JSON-RPC tool calls into arshy IPC commands.
+    #[arg(long = "from-mcp", verbatim_doc_comment)]
     pub from_mcp: bool,
 
-    /// Path to config file
-    #[arg(long = "config")]
+    /// Path to config file. If not set, defaults are used with env var overrides.
+    #[arg(long = "config", verbatim_doc_comment)]
     pub config: Option<PathBuf>,
 
-    /// Log level
-    #[arg(long = "log-level")]
+    /// Log level (trace, debug, info, warn, error). Overrides config file.
+    #[arg(long = "log-level", verbatim_doc_comment)]
     pub log_level: Option<String>,
 
     #[command(subcommand)]

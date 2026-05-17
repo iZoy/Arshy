@@ -51,6 +51,13 @@ impl Config {
             );
         }
 
+        // 5. Guardrails — clamp unsafe zero/negative values to safe minimums
+        cfg.daemon.kill_force_ms = cfg.daemon.kill_force_ms.max(100);
+        cfg.daemon.kill_graceful_ms = cfg.daemon.kill_graceful_ms.max(100);
+        cfg.daemon.max_task_duration_ms = cfg.daemon.max_task_duration_ms.max(1_000);
+        cfg.store.prune_older_than_days = cfg.store.prune_older_than_days.max(1);
+        cfg.parser.coverage_warning_threshold = cfg.parser.coverage_warning_threshold.max(0.01);
+
         Ok(cfg)
     }
 
@@ -120,9 +127,18 @@ pub fn expand_path(path: &Path) -> PathBuf {
 }
 
 /// Initialize tracing/logging globally.
+/// Falls back to "info" if `level` is not a recognized log level.
 pub fn init_logging(level: &str, format: &str) {
     use tracing_subscriber::prelude::*;
     use tracing_subscriber::{fmt, EnvFilter};
+
+    let valid_levels = ["trace", "debug", "info", "warn", "error"];
+    let level = if valid_levels.contains(&level) {
+        level
+    } else {
+        eprintln!("arshy: unknown log level '{}', falling back to 'info'", level);
+        "info"
+    };
 
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(level));
 
