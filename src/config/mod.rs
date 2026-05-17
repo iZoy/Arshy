@@ -45,6 +45,15 @@ impl Config {
         // 3. CLI overrides
         merge::apply_cli(&mut cfg, &overrides);
 
+        // 4. Version check — warn if config was written for a newer schema
+        if cfg.version > 1 {
+            tracing::warn!(
+                "config version {} is newer than this build (version 1). \
+                 Some settings may not be recognized. Consider upgrading arshy.",
+                cfg.version
+            );
+        }
+
         Ok(cfg)
     }
 

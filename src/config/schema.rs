@@ -44,6 +44,10 @@ fn default_backend() -> String { "sqlite".into() }
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
+    /// Config format version. Incremented when the schema changes incompatibly.
+    /// The current version is 1. Unknown versions trigger a warning.
+    #[serde(default = "default_config_version")]
+    pub version: u32,
     pub daemon: DaemonConfig,
     pub store: StoreConfig,
     pub parser: ParserConfig,
@@ -52,6 +56,8 @@ pub struct Config {
     pub telemetry: TelemetryConfig,
     pub security: SecurityConfig,
 }
+
+fn default_config_version() -> u32 { 1 }
 
 // ── Partial config (all optional — for file merge) ───────────────────────────
 

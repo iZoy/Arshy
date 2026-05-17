@@ -151,7 +151,10 @@ impl Executor {
     }
 
     pub fn with_security(mut self, config: &arshy_lib::config::SecurityConfig) -> Self {
-        self.filter = CommandFilter::from_config(config);
+        self.filter = CommandFilter::from_config(config).unwrap_or_else(|e| {
+            tracing::error!("security config: {} — using permissive fallback", e);
+            CommandFilter::permissive()
+        });
         self.sandbox_paths = config.sandbox_paths.clone();
         self.access_level = config.access_level.clone();
         self
@@ -255,6 +258,8 @@ impl Executor {
         let cmd = command.to_string();
         let task_id_bg = task_id.clone();
         let detected_tool = tool;
+
+        super::telemetry::record_task_created();
 
         let (done_tx, done_rx) = if is_sync {
             let (tx, rx) = oneshot::channel::<CompletionInfo>();
@@ -734,6 +739,8 @@ async fn run_background(mut t: BackgroundTask) -> Result<()> {
             duration_ms,
         },
     });
+
+    super::telemetry::record_task_completed(exit_code_val == 0);
 
     tracing::info!(
         "task {} completed: status={:?}, exit_code={}, duration={}ms, events={}, errors={}",

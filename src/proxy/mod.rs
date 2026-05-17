@@ -74,6 +74,7 @@ async fn proxy_main(config_path: Option<PathBuf>) -> Result<()> {
     // continuous activity (the select! health branch only fires when idle).
     let mut last_health_check = tokio::time::Instant::now();
     let health_interval = Duration::from_secs(30);
+    let mut consecutive_health_failures: u32 = 0;
 
     // Shutdown signal — triggered by SIGTERM from parent process (Claude Code)
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
@@ -231,7 +232,11 @@ async fn proxy_main(config_path: Option<PathBuf>) -> Result<()> {
 
                         // Opportunistic health check — runs during active use too
                         if last_health_check.elapsed() >= health_interval {
-                            perform_health_check(&mut daemon, &mut notif_rx, &cfg, &socket_path, &mut last_health_check).await;
+                            if perform_health_check(&mut daemon, &mut notif_rx, &cfg, &socket_path, &mut last_health_check).await {
+                                consecutive_health_failures = 0;
+                            } else {
+                                consecutive_health_failures = consecutive_health_failures.saturating_add(1);
+                            }
                         }
 
                         line.clear();
@@ -274,9 +279,23 @@ async fn proxy_main(config_path: Option<PathBuf>) -> Result<()> {
             }
 
             // ── Health check branch ─────────────────────────────────────
-            // Fires after 30s of inactivity to detect daemon crashes
+            // Fires after 30s of inactivity to detect daemon crashes.
+            // Backs off on consecutive failures to avoid thundering herd.
             _ = tokio::time::sleep(health_interval) => {
-                perform_health_check(&mut daemon, &mut notif_rx, &cfg, &socket_path, &mut last_health_check).await;
+                if perform_health_check(&mut daemon, &mut notif_rx, &cfg, &socket_path, &mut last_health_check).await {
+                    consecutive_health_failures = 0;
+                } else {
+                    consecutive_health_failures = consecutive_health_failures.saturating_add(1);
+                    // Exponential backoff: 1s, 2s, 4s, 8s... capped at 60s
+                    let delay = Duration::from_secs(
+                        (1u64 << consecutive_health_failures.min(6)).min(60)
+                    );
+                    tracing::warn!(
+                        "health check failed {} times, backing off {}s",
+                        consecutive_health_failures, delay.as_secs()
+                    );
+                    tokio::time::sleep(delay).await;
+                }
                 continue;
             }
 
@@ -301,13 +320,14 @@ async fn proxy_main(config_path: Option<PathBuf>) -> Result<()> {
 }
 
 /// Check daemon health and reconnect if needed. Updates `last_check` on success.
+/// Returns `true` if the daemon is healthy, `false` if reconnection failed.
 async fn perform_health_check(
     daemon: &mut DaemonConnection,
     notif_rx: &mut mpsc::Receiver<Notification>,
     cfg: &Config,
     socket_path: &std::path::Path,
     last_check: &mut tokio::time::Instant,
-) {
+) -> bool {
     match daemon.send_request_with_timeout(
         ipc::METHOD_HEALTH,
         serde_json::json!({}),
@@ -315,6 +335,7 @@ async fn perform_health_check(
     ).await {
         Ok(_) => {
             *last_check = tokio::time::Instant::now();
+            true
         }
         Err(e) if is_connection_error(&e) && cfg.daemon.auto_start => {
             tracing::warn!("health check failed, reconnecting...");
@@ -324,15 +345,18 @@ async fn perform_health_check(
                     *notif_rx = new_notif_rx;
                     *last_check = tokio::time::Instant::now();
                     tracing::info!("reconnected via health check");
+                    true
                 }
                 Err(re) => {
                     tracing::error!("health reconnect failed: {}", re);
                     record_daemon_crash();
+                    false
                 }
             }
         }
         Err(e) => {
             tracing::warn!("health check error (non-connection): {}", e);
+            true // non-connection errors are benign — daemon is still reachable
         }
     }
 }

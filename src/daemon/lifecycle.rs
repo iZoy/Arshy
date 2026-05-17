@@ -33,17 +33,30 @@ fn check_pid_file(path: &Path) -> Result<u32> {
 }
 
 /// Write the current process PID to the default PID file.
+/// No-op when ARSHY_TEST_NO_LIFECYCLE=1.
 pub fn write_pid() -> Result<()> {
+    if std::env::var("ARSHY_TEST_NO_LIFECYCLE").is_ok() {
+        return Ok(());
+    }
     write_pid_to(&pid_path())
 }
 
 /// Remove the PID file on shutdown.
+/// No-op when ARSHY_TEST_NO_LIFECYCLE=1.
 pub fn remove_pid() {
+    if std::env::var("ARSHY_TEST_NO_LIFECYCLE").is_ok() {
+        return;
+    }
     let _ = std::fs::remove_file(pid_path());
 }
 
 /// Check if a daemon is already running.
+/// Returns 0 (not running) when ARSHY_TEST_NO_LIFECYCLE=1 is set
+/// (for integration tests that spawn multiple daemons).
 pub fn check_running() -> Result<u32> {
+    if std::env::var("ARSHY_TEST_NO_LIFECYCLE").is_ok() {
+        return Ok(0);
+    }
     check_pid_file(&pid_path())
 }
 

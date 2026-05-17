@@ -300,6 +300,7 @@ async fn dispatch(
                 "tasks_running": running,
                 "tasks_total": all.len(),
                 "db_size_bytes": db_size,
+                "counters": super::telemetry::snapshot(),
             }))
         }
         METHOD_HEALTH => {
@@ -317,6 +318,7 @@ async fn dispatch(
                 "tasks_running": running_count,
                 "tasks_total": total_tasks,
                 "uptime_secs": daemon_uptime_secs(),
+                "counters": super::telemetry::snapshot(),
             }))
         }
         METHOD_PRUNE => {

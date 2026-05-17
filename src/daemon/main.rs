@@ -8,6 +8,7 @@ mod lifecycle;
 mod parser;
 mod security;
 mod store;
+mod telemetry;
 
 use arshy_lib::config::{Config, expand_path};
 use arshy_lib::Result;
@@ -79,6 +80,15 @@ async fn main() -> Result<()> {
         }
     }
 
+    // ── Security validation ──────────────────────────────────────────────────
+    if cfg.daemon.sandbox_mode != "none" {
+        return Err(arshy_lib::ArshyError::Config(format!(
+            "sandbox_mode '{}' is not implemented; only 'none' is supported. \
+             See https://github.com/izoy/arshy#sandbox for roadmap.",
+            cfg.daemon.sandbox_mode
+        )));
+    }
+
     // ── Executor ───────────────────────────────────────────────────────────
     let parser_engine = Arc::new(parser::Engine::new(&cfg.parser)?);
     let event_bus = bus::EventBus::new();
@@ -116,20 +126,30 @@ async fn main() -> Result<()> {
     tracing::info!("listening on {}", socket_path.display());
 
     let mut conn_id: u64 = 0;
+    // Limit concurrent connections to avoid resource exhaustion.
+    // MCP proxy typically uses 1–2 connections; this headroom handles bursts.
+    let conn_semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(64));
 
     loop {
         tokio::select! {
             result = listener.accept() => {
                 let (stream, _) = result?;
                 let id = conn_id;
-                conn_id += 1;
+                conn_id = conn_id.wrapping_add(1);
+                telemetry::record_connection_accepted();
 
                 let exec = executor.clone();
                 let db = store.clone();
                 let bus = event_bus.clone();
                 let sd = shutdown_tx.clone();
+                let permit = conn_semaphore.clone();
 
                 tokio::spawn(async move {
+                    let _permit = permit.acquire().await;
+                    if let Err(e) = _permit {
+                        tracing::error!("conn {} semaphore closed: {}", id, e);
+                        return;
+                    }
                     tracing::debug!("conn {} established", id);
                     if let Err(e) = ipc_handler::handle(stream, id, exec, db, bus, sd).await {
                         tracing::error!("conn {} error: {}", id, e);

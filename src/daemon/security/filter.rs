@@ -12,20 +12,24 @@ pub struct CommandFilter {
 impl CommandFilter {
     /// Build a filter from security config.
     ///
-    /// Panics if any blocked pattern is an invalid regex (checked at startup).
-    pub fn from_config(config: &SecurityConfig) -> Self {
-        let blocked_patterns = config
-            .blocked_patterns
-            .iter()
-            .map(|p| regex::Regex::new(p).expect("invalid blocked pattern regex"))
-            .collect();
+    /// Returns an error if any blocked pattern is an invalid regex.
+    pub fn from_config(config: &SecurityConfig) -> Result<Self> {
+        let mut blocked_patterns = Vec::with_capacity(config.blocked_patterns.len());
+        for p in &config.blocked_patterns {
+            blocked_patterns.push(
+                regex::Regex::new(p)
+                    .map_err(|e| ArshyError::Config(format!(
+                        "invalid blocked pattern '{}': {}", p, e
+                    )))?
+            );
+        }
 
         let allowed_commands = config.allowed_commands.clone();
 
-        Self {
+        Ok(Self {
             blocked_patterns,
             allowed_commands,
-        }
+        })
     }
 
     /// Create a permissive filter (no blocked patterns, no whitelist).
@@ -73,7 +77,7 @@ mod tests {
 
     fn default_filter() -> CommandFilter {
         let config = SecurityConfig::default();
-        CommandFilter::from_config(&config)
+        CommandFilter::from_config(&config).unwrap()
     }
 
     // ── Blocked commands ──────────────────────────────────────────────────
@@ -160,7 +164,7 @@ mod tests {
             allowed_commands: Some(vec!["ls".into(), "echo".into()]),
             ..Default::default()
         };
-        let filter = CommandFilter::from_config(&config);
+        let filter = CommandFilter::from_config(&config).unwrap();
 
         assert!(filter.check("ls -la").is_ok());
         assert!(filter.check("echo hello").is_ok());
@@ -174,7 +178,7 @@ mod tests {
             allowed_commands: Some(vec!["cargo".into(), "git".into()]),
             ..Default::default()
         };
-        let filter = CommandFilter::from_config(&config);
+        let filter = CommandFilter::from_config(&config).unwrap();
 
         assert!(filter.check("cargo build").is_ok());
         assert!(filter.check("git status").is_ok());
@@ -186,7 +190,7 @@ mod tests {
             allowed_commands: Some(vec!["rm".into()]),
             ..Default::default()
         };
-        let filter = CommandFilter::from_config(&config);
+        let filter = CommandFilter::from_config(&config).unwrap();
 
         // rm is whitelisted, but rm -rf / is still blocked
         assert!(filter.check("rm -rf /").is_err());
@@ -200,7 +204,7 @@ mod tests {
             allowed_commands: Some(vec!["cargo".into()]),
             ..Default::default()
         };
-        let filter = CommandFilter::from_config(&config);
+        let filter = CommandFilter::from_config(&config).unwrap();
 
         // /usr/bin/cargo should match "cargo" after stripping path
         assert!(filter.check("/usr/bin/cargo build").is_ok());
