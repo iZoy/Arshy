@@ -1,10 +1,19 @@
 #!/bin/bash
-# Arshy Bash intercept hook — warns when Bash is called and redirects to arshy_exec.
-# This hook is read by Claude Code's PreToolUse mechanism.
+# Arshy Bash intercept hook — OPTIONAL enforcement tool.
+# Not enabled by default. For users who want strict "no Bash" enforcement,
+# add this to ~/.claude/settings.json:
 #
-# Protocol: reads JSON from stdin, writes JSON to stdout.
-# Expected input:  {"tool_name":"Bash","tool_input":{"command":"...","description":"..."}}
-# Expected output: {"decision":"warn","reason":"Use arshy_exec(action:\"run\",command:\"...\") instead of Bash"}
+#   "hooks": {
+#     "PreToolUse": [
+#       {
+#         "tool": "Bash",
+#         "hook": "~/.claude/plugins/arshy/hooks/bash-intercept.sh"
+#       }
+#     ]
+#   }
+#
+# Without this hook, arshy relies on MCP instructions + tool descriptions
+# to guide the agent — silent, no popups, no friction.
 
 INPUT=$(cat)
 TOOL=$(echo "$INPUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('tool_name',''))" 2>/dev/null)

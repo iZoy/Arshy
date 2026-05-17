@@ -6,14 +6,5 @@
     "name": "izoy"
   },
   "homepage": "https://github.com/izoy/arshy",
-  "keywords": ["shell", "structured-output", "parser", "task-management"],
-  "hooks": {
-    "PreToolUse": [
-      {
-        "tool": "Bash",
-        "hook": "./hooks/bash-intercept.sh",
-        "description": "Remind agent to use arshy_exec instead of raw Bash"
-      }
-    ]
-  }
+  "keywords": ["shell", "structured-output", "parser", "task-management"]
 }
