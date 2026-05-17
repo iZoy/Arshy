@@ -1,93 +1,72 @@
 # Daemon 管理
 
-## 启停
+## 启动
+
+Daemon 按需启动，无需手动干预。首次 `arshy_exec` 调用时 proxy 自动 spawn daemon。
+
+手动管理：
 
 ```bash
-arshy daemon start      # 启动（已运行则报错）
-arshy daemon stop       # 优雅关闭
-arshy daemon restart    # stop + start
+arshy daemon start     # 启动（如未运行）
+arshy daemon stop      # 优雅关闭
+arshy daemon restart   # 重启
+arshy status           # 查看状态
 ```
 
-## 自动启动
+## 空闲退出
 
-默认 `auto_start = true`。执行 `arshy run` 或 MCP proxy 连接时，daemon 未运行会自动启动。
+Daemon 在 5 分钟无活动后自动退出以节省资源。proxy 保持运行，下次 `arshy_exec` 调用时自动重启 daemon。
 
-## PID 文件
+自定义超时：
 
-路径：`~/.local/share/arshy/arshyd.pid`
+```bash
+export ARSHY_IDLE_TIMEOUT_SECS=600  # 10 分钟
+```
 
-- 启动时写入 PID，防止重复启动
-- 退出时自动删除
-- 残留 PID 文件会检查进程是否存活
+## 进程树关闭
 
-## Socket 清理
+终止任务时，`graceful_kill` 发送信号到进程组（负 PID）+ 直接 PID，捕获 shell 管道和构建工具 fork 的子进程。
 
-路径：`~/.local/share/arshy/arshyd.sock`
+信号升级：SIGINT → wait → SIGTERM → wait → SIGKILL。
 
-- 启动时清理残留 socket（对应进程已不存在）
-- 退出时自动删除
+Daemon 关闭时的 drain 流程：
+1. 移除 socket（拒绝新连接）
+2. 发布 `DaemonShutdown` 通知
+3. 5 秒自然等待运行中任务完成
+4. 调用 `executor.kill_all()` 主动终止剩余任务（进程组信号）
+5. 30 秒硬截止后强制退出
 
-## 信号处理
+## 健康检查
 
-| 信号 | 行为 |
+Proxy 每 30 秒空闲时检查 daemon 健康状态。连续失败时指数退避：1s → 2s → 4s → 8s → ... → 60s 上限。防止多个 proxy 同时重连造成雷群。
+
+## 生命周期文件
+
+| 文件 | 用途 |
 |------|------|
-| `SIGINT` (Ctrl-C) | 优雅关闭：等待当前任务完成，清理资源 |
-| `SIGTERM` | 同上 |
-| `daemon/shutdown` RPC | 同上 |
+| `~/.local/share/arshy/arshyd.sock` | Unix socket（0600） |
+| `~/.local/share/arshy/arshy.db` | SQLite 数据库 |
+| `~/.local/share/arshy/arshyd.pid` | 进程 PID |
+| `/tmp/arshyd.spawn-lock` | 防止重复 spawn 的原子锁（自动清理） |
 
-## 系统服务（可选）
+## 崩溃保护
 
-### macOS launchd
+- **Circuit Breaker**：2 分钟内 crash 超过 5 次 → 抑制自动重启
+- **Panic Hook**：全局 panic 拦截器，进程退出前记录消息和位置
+- **Spawn Lock**：`/tmp/arshyd.spawn-lock` 确保只有一个 proxy 在 spawn
+- **连接限制**：`Semaphore(64)` 限制并发连接数
+- **Telemetry**：原子计数器（tasks/events/connections）暴露在 stats/health 端点
 
-创建 `~/Library/LaunchAgents/com.arshy.daemon.plist`：
+## 开机自启（可选）
 
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
-  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>com.arshy.daemon</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>/usr/local/bin/arshyd</string>
-    </array>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>KeepAlive</key>
-    <true/>
-</dict>
-</plist>
-```
+macOS：
 
 ```bash
-launchctl load ~/Library/LaunchAgents/com.arshy.daemon.plist
+arshy install-launchd
 ```
 
-### Linux systemd
-
-创建 `~/.config/systemd/user/arshyd.service`：
-
-```ini
-[Unit]
-Description=Arshy daemon
-
-[Service]
-ExecStart=/usr/local/bin/arshyd
-Restart=on-failure
-
-[Install]
-WantedBy=default.target
-```
+Linux：
 
 ```bash
-systemctl --user enable --now arshyd
-```
-
-## 状态查看
-
-```bash
-arshy status            # daemon 运行状态
-arshy stats             # 任务统计（P50/P99/失败率）
+arshy install-systemd
 ```

@@ -5,9 +5,10 @@
 ```
 arshy [OPTIONS] [COMMAND]
 
---from-mcp          以 MCP stdio proxy 模式运行
---config <PATH>      配置文件路径
---log-level <LEVEL>  日志级别：trace/debug/info/warn/error
+--from-mcp          以 MCP stdio proxy 模式运行。proxy 连接 arshyd daemon 并通过 Unix socket
+                    转发 MCP JSON-RPC 请求。用于 Claude Code / Cursor 集成
+--config <PATH>      配置文件路径。不设置时使用默认路径，支持 env var 覆盖
+--log-level <LEVEL>  日志级别：trace/debug/info/warn/error。覆盖配置文件中的值
 ```
 
 ## 子命令
@@ -18,14 +19,14 @@ arshy [OPTIONS] [COMMAND]
 
 ```
 arshy run <COMMAND>
-  --cwd <PATH>          工作目录
-  --timeout-ms <MS>     超时时间
+  --cwd <PATH>          工作目录（绝对路径）
+  --timeout-ms <MS>     超时时间（ms）
   --mode <MODE>         auto（默认）| sync | async
 ```
 
-- `auto`：短命令同步返回，长命令异步执行
-- `sync`：阻塞等待完成
-- `async`：立即返回 task_id
+- `auto`：80+ 条规则智能判断短/长命令。短命令同步返回原文，长命令异步执行
+- `sync`：阻塞等待完成，返回完整结构化结果
+- `async`：立即返回 task_id，后台执行
 
 ### arshy list
 
@@ -39,26 +40,24 @@ arshy list
 
 ### arshy query
 
-查询任务事件。
+查询任务的结构化事件。
 
 ```
 arshy query <TASK_ID>
-  --event-type <TYPE>   过滤事件类型
+  --event-type <TYPE>   过滤事件类型（diagnostic/location/test_result/summary/crash）
   --severity <SEV>      过滤严重度：error/warning/info
-  --code <CODE>         过滤错误码
+  --code <CODE>         过滤错误码（如 E0308、TS2345）
   --file <FILE>         过滤文件路径
   --limit <N>           最大条数（默认 20）
 ```
 
 ### arshy kill
 
-终止运行中的任务。
+终止运行中的任务。发送进程组信号：SIGINT → SIGTERM（可配置）→ SIGKILL。
 
 ```
 arshy kill <TASK_ID>
 ```
-
-优雅终止：SIGINT → SIGTERM（2s）→ SIGKILL（2s）
 
 ### arshy tail
 
@@ -67,18 +66,16 @@ arshy kill <TASK_ID>
 ```
 arshy tail <TASK_ID>
   --lines <N>           行数（默认 50）
-  --format <FMT>        event（默认）| raw
+  --format <FMT>        event（默认，结构化）| raw（原始文本）
 ```
+
+### arshy status
+
+显示 daemon 状态：运行状态、任务数、连接数、遥测计数器。
 
 ### arshy stats
 
-查看聚合统计。
-
-```
-arshy stats
-```
-
-输出：总任务数、状态分布、P50/P99 耗时、失败率、数据库大小。
+聚合统计：总任务数、状态分布、数据库大小、遥测快照。
 
 ### arshy prune
 
@@ -86,8 +83,8 @@ arshy stats
 
 ```
 arshy prune
-  --keep <N>            保留最近 N 条
-  --older-than <DAYS>   删除 N 天前的数据
+  --keep <N>            保留最近 N 条任务
+  --older-than <DAYS>   删除 N 天前的数据（最小 1 天）
 ```
 
 ### arshy config
@@ -95,7 +92,7 @@ arshy prune
 管理配置。
 
 ```
-arshy config get <KEY>          获取配置值
+arshy config get <KEY>          获取配置值（如 daemon.log_level）
 arshy config set <KEY> <VALUE>  设置配置值
 arshy config list               列出所有配置
 arshy config path               显示配置文件路径
@@ -106,35 +103,23 @@ arshy config path               显示配置文件路径
 管理 daemon 进程。
 
 ```
-arshy daemon start      启动
-arshy daemon stop       停止
-arshy daemon restart    重启
+arshy daemon start      启动 daemon（如未运行）
+arshy daemon stop       停止 daemon（发送 shutdown 请求）
+arshy daemon restart    重启 daemon
 ```
-
-### arshy status
-
-显示 daemon 状态：运行状态、任务数、连接数。
 
 ### arshy install / uninstall
 
-注册/注销 MCP server（Claude Code、Cursor）。
+注册/注销 MCP server（写入/删除 `~/.claude/settings.json` 或 `.cursor/mcp.json`）。
 
 ### arshy install-launchd
 
-安装 macOS launchd plist，使 daemon 开机自启。
-
-```
-arshy install-launchd
-→ 安装到 ~/Library/LaunchAgents/com.arshy.daemon.plist
-→ launchctl load/unload 管理
-```
+安装 macOS launchd plist 到 `~/Library/LaunchAgents/com.arshy.daemon.plist`。
 
 ### arshy install-systemd
 
-安装 Linux systemd user unit，使 daemon 开机自启。
+安装 Linux systemd user unit 到 `~/.config/systemd/user/arshyd.service`。
 
-```
-arshy install-systemd
-→ 安装到 ~/.config/systemd/user/arshyd.service
-→ systemctl --user enable/start 管理
-```
+### arshy doctor
+
+诊断 Claude Code 集成状态，显示修复建议。

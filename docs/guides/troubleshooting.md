@@ -4,89 +4,114 @@
 
 **"daemon already running (pid xxx)"**
 
-PID 文件残留但进程已死：
+已有 daemon 实例在运行。检查：
 
 ```bash
-rm ~/.local/share/arshy/arshyd.pid
-arshy daemon start
+pgrep arshyd
+arshy status
 ```
 
-**"Address already in use"**
-
-Socket 文件残留：
+如需重启：
 
 ```bash
-rm ~/.local/share/arshy/arshyd.sock
-arshy daemon start
-```
-
-## Agent 无法执行命令
-
-**"daemon unreachable"**
-
-daemon 未运行：
-
-```bash
-arshy daemon start
-```
-
-**"access denied: read-only mode"**
-
-安全策略限制：
-
-```bash
-arshy config set security.access_level full
 arshy daemon restart
 ```
 
+**socket 未出现**
+
+```bash
+# 检查日志
+cat /tmp/arshyd.log
+
+# 手动清理 stale socket 和 PID
+rm -f ~/.local/share/arshy/arshyd.sock ~/.local/share/arshy/arshyd.pid
+```
+
+**"circuit breaker tripped"**
+
+Daemon 在 2 分钟内 crash 超过 5 次，自动重启被抑制。检查日志查找 crash 原因，修复后手动启动：
+
+```bash
+arshy daemon start
+```
+
+## arshy_exec 返回 DaemonUnreachable
+
+1. 确认 daemon 在运行：`arshy status`
+2. 确认 socket 存在：`ls -la ~/.local/share/arshy/arshyd.sock`
+3. 确认 socket 权限：应为 `srwx------`（0600）
+4. 重启 daemon：`arshy daemon restart`
+
+Proxy 会在连接断开时自动重连。健康检查指数退避防止雷群。
+
+## 命令被拦截
+
 **"command blocked"**
 
-命令被安全过滤器拦截。检查 `security.blocked_patterns` 或 `security.allowed_commands`。
-
-## Parser 不生效
-
-**自定义 parser 未加载**
-
-1. 确认文件在 `~/.arshy/parsers/` 下（`.toml` 或 `.rhai`）
-2. 检查 daemon 日志：`arshy daemon restart`，观察是否有 `parsers reloaded`
-3. TOML 语法错误会在日志中报告
-
-**命令未匹配到 parser**
-
-`detect` 列表必须包含命令首词的子串。`detect = ["cargo"]` 匹配 `cargo build` 但不匹配 `rustc`。
-
-## 输出未结构化
-
-**短命令返回纯文本**
-
-正常行为。`mode = "auto"` 时，短命令（如 `ls`、`echo`）走零开销路径，不经过 parser。
-
-**长命令也返回纯文本**
-
-检查 parser 是否匹配了该工具：`arshy query <task_id>` 查看是否有结构化事件。
-
-## 数据库问题
-
-**磁盘空间不足**
+检查安全配置：
 
 ```bash
-arshy prune --older-than 7   # 删除 7 天前的任务
-arshy stats                   # 查看数据库大小
+arshy config get security.blocked_patterns
+arshy config get security.allowed_commands
 ```
 
-**数据库损坏**
+或在 `~/.config/arshy/config.toml` 中查看。
+
+**"access denied"（read-only 模式）**
+
+检查 `access_level` 配置：
 
 ```bash
-arshy daemon stop
-sqlite3 ~/.local/share/arshy/arshy.db "PRAGMA integrity_check;"
+arshy config get security.access_level
 ```
 
-## 性能
+## Parser 问题
 
-**命令执行慢**
+**输出全是 raw（log 类型）**
 
-检查 `daemon.max_task_duration_ms`（默认 3600000 = 1 小时）。超时任务会被自动终止。
+1. 确认 parser 被正确检测：长输出命令（build/test）不会走短路径
+2. 检查命令首词是否命中 `detect` 匹配（链式命令用分段检测）
+3. 查看 daemon 日志中 parser 加载信息
 
-**通知延迟**
+**Parser 修改后未生效**
 
-调整 `notifications.batch_interval_ms`（默认 100ms）。设为 0 禁用批处理。
+热重载默认启用。如未生效：
+1. 确认文件在 `~/.arshy/parsers/` 目录
+2. 检查 TOML 语法：`arshy doctor`
+3. 手动触发重载：`pkill -HUP arshyd`（预留）
+
+**自定义 parser 的 pattern 被跳过**
+
+检查 daemon 日志：
+- `"ReDoS: nested quantifier detected"` → 正则被拒绝，简化 pattern
+- `"invalid regex"` → 修复正则语法
+
+## 测试 parser
+
+```bash
+# 生成/更新 fixture
+ARSHY_BLESS=1 cargo test --bin arshyd
+
+# 运行 parser 测试
+cargo test --bin arshyd fixture
+```
+
+## 日志
+
+设置日志级别为 debug 获取详细诊断：
+
+```bash
+arshy --log-level debug daemon start
+# 或
+export ARSHY_DAEMON_LOG_LEVEL=debug
+```
+
+日志输出到 stderr（默认 text 格式，可配置 json）。
+
+## 集成诊断
+
+```bash
+arshy doctor
+```
+
+检查：daemon 状态、socket 权限、MCP 配置、parser 加载、数据库完整性。

@@ -2,11 +2,15 @@
 
 ## 默认安全策略
 
-零配置下 arshy 已启用基本防护：
+零配置下 arshy 已启用多层防护：
 
-- **命令黑名单**：拦截 `rm -rf /`、`curl|sh`、`dd`、`mkfs`、fork bomb 等
+- **命令黑名单**：拦截 `rm -rf /`、`curl|sh`、`dd`、`mkfs`、fork bomb 等危险命令
 - **权限分级**：`full`（默认）/ `read-only`
-- **路径沙箱**：可选限制 cwd 范围
+- **路径沙箱**：限制 cwd 白名单
+- **审计日志**：所有命令执行记录到 JSON Lines 文件
+- **Socket 权限**：Unix Domain Socket 权限 `0600`（owner-only）
+- **ReDoS 防护**：Parser 正则编译时静态校验，拒绝嵌套量词和重叠交替
+- **沙箱模式校验**：不支持的 sandbox_mode 启动时明确拒绝（不静默降级）
 
 ## 配置
 
@@ -15,84 +19,46 @@
 # 权限级别："full" 或 "read-only"
 access_level = "full"
 
-# 命令白名单（设置后仅允许列表中的命令）
-allowed_commands = null  # null = 使用黑名单模式
+# 命令白名单（设置后仅允许列表中的命令；null = 黑名单模式）
+allowed_commands = ["ls", "git", "cargo", "npm", "python3"]
 
-# 自定义黑名单（追加到默认黑名单）
-blocked_patterns = [
-    "rm\\s+-rf\\s+/",
-    "curl.*\\|\\s*sh",
-]
+# 额外拦截的正则模式（追加到默认黑名单）
+blocked_patterns = ["curl.*\\|.*sh", "eval"]
 
-# 路径沙箱（限制 cwd 范围）
-sandbox_paths = []
+# 允许的工作目录白名单
+sandbox_paths = ["/home/user/projects/"]
 
-# 审计日志路径（null = 不记录）
-audit_log = "~/.local/share/arshy/audit.log"
+# 沙箱模式（当前仅支持 "none"；未来支持 "process" / "container"）
+sandbox_mode = "none"
+
+# 审计日志路径（null = 不启用）
+audit_log = "/var/log/arshy/audit.log"
 ```
 
 ## 命令过滤
 
-两种模式：
-
-### 黑名单模式（默认）
-
-`allowed_commands = null`。默认拦截：
-
-| 模式 | 说明 |
-|------|------|
-| `rm\s+-rf\s+/` | 根目录删除 |
-| `rm\s+-rf\s+~/` | 主目录删除 |
-| `curl.*\|\s*sh` | 远程代码执行 |
-| `wget.*\|\s*sh` | 远程代码执行 |
-| `dd\s+if=` | 磁盘覆写 |
-| `mkfs` | 文件系统格式化 |
-| `:(){ :|:& };:` | fork bomb |
-
-可追加自定义 `blocked_patterns`。
-
-### 白名单模式
-
-设置 `allowed_commands` 后仅允许列表中的命令前缀：
-
-```toml
-[security]
-allowed_commands = ["git", "cargo", "npm", "ls", "cat"]
-```
-
-`cargo build` ✅（前缀匹配），`rm -rf /` ❌。
-
-## 路径沙箱
-
-限制命令的 `cwd` 必须在指定路径下：
-
-```toml
-[security]
-sandbox_paths = ["/home/user/projects", "/tmp"]
-```
-
-`cwd = "/etc"` ❌，`cwd = "/home/user/projects/app"` ✅。
-
-## 权限分级
-
-| 级别 | run | kill | list/query | stats |
-|------|-----|------|------------|-------|
-| `full` | ✅ | ✅ | ✅ | ✅ |
-| `read-only` | ❌ | ❌ | ✅ | ✅ |
-
-`read-only` 模式下 run/kill 返回 `ACCESS_DENIED (-32003)`。
+`CommandFilter::from_config()` 在 daemon 启动时编译黑名单正则。**无效正则不会 panic** — 返回 `Err` 并记录 error 日志，回退到宽松模式。启动后所有命令执行前经过 `check()` 方法。
 
 ## 审计日志
 
-启用后记录所有命令执行和拦截事件：
+每行一个 JSON 对象，记录：
 
-```toml
-[security]
-audit_log = "~/.local/share/arshy/audit.log"
+```json
+{"timestamp":"2026-05-17T12:00:00Z","task_id":"abc-123","command":"cargo build","cwd":"/project","exit_code":0,"blocked":false}
 ```
 
-格式：JSON Lines，每行包含时间戳、命令、结果（allowed/blocked/failed）。
+写失败（磁盘满、权限变更）不会导致 daemon crash — `AuditLog::log()` 返回 `Err` 并优雅降级。
 
-## MCP 端安全
+## 沙箱模式
 
-Agent 通过 MCP 执行的命令同样受安全策略约束。安全过滤在 daemon 侧强制执行，proxy 无法绕过。
+| 模式 | 状态 | 说明 |
+|------|:----:|------|
+| `none` | ✅ 已实现 | 不隔离，依赖命令过滤和路径限制 |
+| `process` | 🔮 预留 | 进程级隔离（seccomp/pledge） |
+| `container` | 🔮 预留 | 容器级隔离 |
+
+配置 `sandbox_mode = "process"` 时 daemon 启动明确拒绝并报错，不会静默降级。
+
+## Socket 安全
+
+Daemon 绑定的 Unix Domain Socket 自动设置权限 `0o600`（仅 owner 可读写），防止同一主机上的其他用户通过 socket 执行命令。

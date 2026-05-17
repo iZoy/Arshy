@@ -1,25 +1,28 @@
-# TOML Parser 格式参考
+# TOML Parser 格式参考（Schema v1.0）
 
 ## 文件位置
 
 | 来源 | 路径 | 说明 |
 |------|------|------|
-| 内置 | 编译时嵌入 | 20 个 builtin parser |
-| 用户 | `~/.arshy/parsers/*.toml` | 自定义 parser |
+| 内置 | 编译时嵌入 | 20 个 builtin parser（31 pattern） |
+| 用户 | `~/.arshy/parsers/*.toml` | 自定义 parser，优先级 > 内置 |
 
-同名用户 parser 覆盖内置 parser。
+同名用户 parser 覆盖内置。热重载自动检测文件变更并输出 diff 审计日志。
 
-## 结构
+## 完整结构
 
 ```toml
 [meta]
 name = "tsc"
 description = "TypeScript compiler"
-detect = ["tsc"]
-parser_type = "toml"        # "toml"（默认）或 "stateful"
+detect = ["tsc"]              # 匹配第一词（starts_with）
+detect_full = ["npx tsc"]     # 匹配完整命令（starts_with）
+parser_type = "toml"          # "toml"（默认）或 "stateful"
 priority = 50
-min_version = "4.0.0"       # 可选
-max_version = "6.0.0"       # 可选
+schema_version = "1.0"        # schema 版本
+since_version = "0.1.0"       # 引入版本（可选）
+min_version = "4.0.0"         # 工具最低版本（可选，semver）
+max_version = "6.0.0"         # 工具最高版本（可选，semver）
 
 [[pattern]]
 name = "ts-error"
@@ -27,151 +30,69 @@ regex = '^(.+?)\((\d+),(\d+)\): error TS(\d+): (.+)$'
 event_type = "diagnostic"
 severity = "error"
 fields = { file = 1, line = 2, column = 3, code = 4, message = 5 }
+deprecated = false            # 弃用标记（可选，默认 false）
+replaced_by = "ts-error-v2"   # 替代 pattern 名称（可选）
+since_version = "0.1.0"       # 引入版本（可选）
+
+# stateful-only 字段：
+state_condition = "state=value"    # 匹配条件（可选）
+state_transition = "key=value"     # 状态转移（可选）
 ```
 
 ## [meta] 字段
 
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `name` | string | ✅ | parser 唯一名称 |
-| `description` | string | | 描述 |
-| `detect` | string[] | ✅ | 命令匹配词列表 |
-| `parser_type` | string | | `"toml"`（默认）或 `"stateful"` |
-| `priority` | integer | | 优先级，默认 50，高值优先匹配 |
-| `min_version` | string | | 最低工具版本（语义化） |
-| `max_version` | string | | 最高工具版本（语义化） |
-
-### detect 匹配规则
-
-命令首词（小写）与 `detect` 列表中的词（小写）做子串匹配：
-
-- `detect = ["cargo"]` → 匹配 `cargo build`、`cargo test`
-- `detect = ["tsc"]` → 匹配 `npx tsc --noEmit`（首词 `npx` 不匹配，但 `tsc` 是子串则不匹配 — 需要首词包含 detect 词）
-
-> **注意**：匹配的是命令首词。`npx tsc` 的首词是 `npx`，不会匹配 `detect = ["tsc"]`。
+| 字段 | 类型 | 必填 | 默认 | 说明 |
+|------|------|:--:|------|------|
+| `name` | string | ✅ | — | parser 唯一名称 |
+| `description` | string | | — | 描述 |
+| `detect` | string[] | ✅ | — | 命令匹配词（与第一词 starts_with 匹配） |
+| `detect_full` | string[] | | `[]` | 完整命令匹配（与完整命令 starts_with 匹配） |
+| `parser_type` | string | | `"toml"` | `"toml"` 或 `"stateful"` |
+| `priority` | integer | | 50 | 优先级，高值优先匹配 |
+| `schema_version` | string | | `"1.0"` | 此 parser 的 schema 版本 |
+| `since_version` | string | | — | 此 parser 引入的 arshy 版本 |
+| `min_version` | string | | — | 工具最低支持版本（semver，含） |
+| `max_version` | string | | — | 工具最高支持版本（semver，含） |
 
 ## [[pattern]] 字段
 
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `name` | string | ✅ | 模式名称（用于日志） |
-| `regex` | string | ✅ | 正则表达式（Rust regex 语法） |
-| `event_type` | string | ✅ | 事件类型 |
-| `severity` | string | ✅ | 严重度：`error` / `warning` / `info` |
-| `fields` | map | | 捕获组映射 |
-| `state_condition` | string | stateful 时 | 状态条件 `"key=value"` |
-| `state_transition` | string | stateful 时 | 状态转换 `"key=value"` |
+| 字段 | 类型 | 必填 | 默认 | 说明 |
+|------|------|:--:|------|------|
+| `name` | string | ✅ | — | pattern 唯一名称 |
+| `regex` | string | ✅ | — | 正则表达式（编译时经 ReDoS 安全校验） |
+| `event_type` | string | ✅ | — | 事件类型：diagnostic / location / test_result / summary / crash |
+| `severity` | string | ✅ | — | 严重度：error / warning / info |
+| `fields` | map | | `{}` | 捕获组映射（file/line/column/code/message/severity） |
+| `deprecated` | bool | | false | 标记弃用；加载时 log warn |
+| `replaced_by` | string | | — | 替代 pattern 名；弃用且存在替代时自动跳过 |
+| `since_version` | string | | — | 此 pattern 引入的 arshy 版本 |
+| `state_condition` | string | | — | stateful-only：匹配前置条件（`"key=value"`） |
+| `state_transition` | string | | — | stateful-only：匹配后状态转移（`"key=value"`） |
 
-### fields 映射
+## fields 映射
 
-将正则捕获组映射到事件字段：
+| 键 | 说明 | 示例 |
+|----|------|------|
+| `file` | 文件路径（捕获组索引） | `file = 1` |
+| `line` | 行号（捕获组索引） | `line = 2` |
+| `column` | 列号（捕获组索引） | `column = 3` |
+| `code` | 错误码（捕获组索引） | `code = 4` |
+| `message` | 诊断消息（捕获组索引） | `message = 5` |
+| `severity` | 动态严重度覆盖（捕获组索引） | `severity = 3` |
 
-| key | 映射到 | 说明 |
-|-----|--------|------|
-| `file` | `location.file` | 文件路径 |
-| `line` | `location.line` | 行号 |
-| `column` | `location.column` | 列号 |
-| `code` | `event.code` | 错误码 |
-| `message` | `event.message` | 消息文本 |
-| `severity` | `event.severity` | 覆盖静态 severity |
+## ReDoS 安全校验
 
-值为正则捕获组序号（从 1 开始）。
+所有正则编译时自动检测 ReDoS 漏洞：
+- **嵌套量词**：`(a+)+`、`(a*)*`、`(.+)+` → 拒绝加载
+- **重叠交替**：`(a|ab)+b` → 拒绝加载
 
-### event_type 常用值
+校验失败时 pattern 被跳过并记录 warn 日志，不影响其他 pattern。
 
-| 值 | 说明 |
-|----|------|
-| `diagnostic` | 编译/lint 诊断 |
-| `location` | 文件位置信息 |
-| `test_result` | 测试结果 |
-| `summary` | 汇总信息 |
-| `log` | 通用日志 |
+## Pattern 生命周期
 
-## 正则表达式
-
-使用 Rust `regex` crate（Thompson NFA 引擎）：
-
-- **不支持**：反向引用 `\1`、前瞻/后顾断言 `(?=)`、`(?!))`
-- **支持**：捕获组 `()`、字符类 `[]`、量词 `*+?{n,m}`、锚点 `^$`
-- **行为**：`regex.captures(line)` 在行内搜索匹配（类似 Python 的 `search()`）
-- **多行**：每次匹配一行，不含换行符
-
-### 常用模式
-
-```toml
-# file:line:col 格式
-regex = '^(.+?):(\d+):(\d+)$'
-fields = { file = 1, line = 2, column = 3 }
-
-# error[Exxxx]: message
-regex = '^error\[E(\d+)\]: (.+)$'
-fields = { code = 1, message = 2 }
-
-# 缩进 + 行号 + 级别 + 消息
-regex = '^\s+(\d+):(\d+)\s+(error|warning)\s+(.+?)\s+(\S+)$'
-fields = { line = 1, column = 2, severity = 3, message = 4, code = 5 }
 ```
-
-## Stateful 模式
-
-当 `parser_type = "stateful"` 时，pattern 支持跨行状态机：
-
-```toml
-[meta]
-name = "npm"
-parser_type = "stateful"
-detect = ["npm"]
-
-[[pattern]]
-name = "npm-error"
-regex = '^npm ERR! (.+)$'
-event_type = "diagnostic"
-severity = "error"
-fields = { message = 1 }
-state_transition = "has_error=true"    # 匹配后设置状态
-
-[[pattern]]
-name = "npm-added"
-regex = '^added (\d+) packages?'
-event_type = "summary"
-severity = "info"
-state_condition = "has_error=false"    # 仅在未出错时匹配
-state_transition = "packages_added=done"
+引入 (since_version) → 正常使用 → 弃用 (deprecated=true, replaced_by="...")
+                                       │
+                                       ├─ 有替代：自动跳过，使用替代 pattern
+                                       └─ 无替代：继续使用，每次匹配 log warn
 ```
-
-### 状态条件
-
-- `state_condition = "key=value"`：仅当状态 `key` 等于 `value` 时匹配
-- `state_transition = "key=value"`：匹配成功后设置状态
-- 状态在任务生命周期内持久，跨行共享
-
-## 完整示例
-
-```toml
-[meta]
-name = "eslint"
-description = "ESLint linter"
-detect = ["eslint"]
-priority = 50
-
-[[pattern]]
-name = "eslint-diagnostic"
-regex = '^\s+(\d+):(\d+)\s+(error|warning)\s+(.+?)\s+(\S+)$'
-event_type = "diagnostic"
-severity = "error"
-fields = { line = 1, column = 2, severity = 3, message = 4, code = 5 }
-
-[[pattern]]
-name = "eslint-location"
-regex = '^(.+?):(\d+):(\d+)$'
-event_type = "location"
-severity = "info"
-fields = { file = 1, line = 2, column = 3 }
-```
-
-## 加载与热重载
-
-1. 启动时加载内置 + 用户 parser
-2. 用户 parser 修改后自动重载（`parser.hot_reload = true`）
-3. 无效正则跳过并记录警告
-4. TOML 语法错误跳过并记录错误
