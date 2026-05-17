@@ -190,7 +190,13 @@ impl Executor {
         }
 
         // ── Full structured path ──────────────────────────────────────────
-        let tool = self.parser.detect(command);
+        // When parse_hint names a parser, use it directly; otherwise auto-detect.
+        let tool = if let Some(hint) = parse_hint {
+            self.parser.get_by_name(hint)
+                .or_else(|| self.parser.detect(command))
+        } else {
+            self.parser.detect(command)
+        };
         let task_id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now().to_rfc3339();
         let cwd_string = cwd.map(String::from);
@@ -454,7 +460,17 @@ async fn run_background(mut t: BackgroundTask) -> Result<()> {
             &t.store,
             t.parser.config().version_cache_ttl_hours,
         ).await {
-            tool.version = Some(version);
+            // If the detected parser has version constraints, verify compatibility.
+            // Downgrade to raw parser if the tool version is outside the supported range.
+            if !t.parser.is_version_compatible(&tool.parser_name, &version) {
+                tracing::info!(
+                    "parser '{}' incompatible with {} version {}, falling back to raw",
+                    tool.parser_name, tool.tool_name, version
+                );
+                t.detected_tool = None;
+            } else {
+                tool.version = Some(version);
+            }
         }
     }
 

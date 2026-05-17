@@ -107,6 +107,23 @@ impl Engine {
         })
     }
 
+    /// Check whether a parser's version constraints are satisfied by a probed version.
+    /// Returns true if the parser has no constraints or the version satisfies them.
+    pub fn is_version_compatible(&self, parser_name: &str, version: &str) -> bool {
+        let reg = match self.registry.read() {
+            Ok(r) => r,
+            Err(_) => return true, // can't read registry — don't filter
+        };
+        match reg.get(parser_name) {
+            Some(entry) => detect::version_satisfies(
+                version,
+                entry.min_version.as_deref(),
+                entry.max_version.as_deref(),
+            ),
+            None => true,
+        }
+    }
+
     /// Create a parser session for a task.
     pub fn create_session(&self, tool: Option<&ParsedTool>) -> ParserSession {
         let reg = match self.registry.read() {
@@ -135,7 +152,11 @@ impl Engine {
                     };
 
                     return ParserSession {
-                        line_patterns: entry.line_patterns.clone(),
+                        toml_parser: if entry.line_patterns.is_empty() {
+                            None
+                        } else {
+                            Some(toml::TomlParser::new(entry.line_patterns.clone()))
+                        },
                         stateful,
                     };
                 }
@@ -172,16 +193,16 @@ impl Engine {
     }
 }
 
-/// A per-task parser session that holds patterns and state.
+/// A per-task parser session that holds a pre-built TOML parser and state.
 pub struct ParserSession {
-    line_patterns: Vec<LinePattern>,
+    toml_parser: Option<toml::TomlParser>,
     stateful: Option<rhai::StatefulParser>,
 }
 
 impl ParserSession {
     fn raw() -> Self {
         Self {
-            line_patterns: Vec::new(),
+            toml_parser: None,
             stateful: None,
         }
     }
@@ -197,9 +218,8 @@ impl ParserSession {
             // Stateful parser didn't match — fall through to crash/raw
         }
 
-        // 2. Line patterns (TOML parser)
-        if !self.line_patterns.is_empty() {
-            let parser = toml::TomlParser::new(self.line_patterns.clone());
+        // 2. TOML parser (pre-built at session creation, no per-line clone)
+        if let Some(ref parser) = self.toml_parser {
             if let Some(mut event) = parser.parse_line(line) {
                 event.seq = seq;
                 return vec![event];

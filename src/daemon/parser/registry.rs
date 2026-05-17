@@ -33,6 +33,10 @@ pub struct ParserEntry {
     pub stateful_patterns: Vec<StatefulPattern>,
     /// Rhai script source (for `.rhai` user parsers). None for TOML parsers.
     pub rhai_script: Option<String>,
+    /// Minimum tool version required (semver, inclusive). None = no minimum.
+    pub min_version: Option<String>,
+    /// Maximum tool version supported (semver, inclusive). None = no maximum.
+    pub max_version: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Ord, PartialOrd, Eq)]
@@ -70,6 +74,8 @@ impl ParserRegistry {
             line_patterns: vec![],
             stateful_patterns: vec![],
             rhai_script: None,
+            min_version: None,
+            max_version: None,
         });
 
         // 2. Load user parsers from filesystem directories
@@ -165,6 +171,8 @@ fn def_to_entry(def: toml_def::TomlParserDef, source: ParserSource) -> ParserEnt
         line_patterns: if is_stateful { Vec::new() } else { def.to_line_patterns() },
         stateful_patterns: if is_stateful { def.to_stateful_patterns() } else { Vec::new() },
         rhai_script: None,
+        min_version: def.meta.min_version.clone(),
+        max_version: def.meta.max_version.clone(),
     }
 }
 
@@ -209,6 +217,8 @@ fn load_user_parser(path: &std::path::Path) -> Option<ParserEntry> {
                 line_patterns: Vec::new(),
                 stateful_patterns: Vec::new(),
                 rhai_script: Some(content),
+                min_version: None,
+                max_version: None,
             })
         }
         _ => None,

@@ -540,8 +540,9 @@ async fn handle_tool_call(
     let content = if is_short {
         let raw = result["raw_output"].as_str().unwrap_or("");
         // Provide meaningful message for timeouts
-        let text = if raw.is_empty() && status == "timeout" {
-            format!("[command timed out: {}]", result["exit_code"].as_i64().unwrap_or(-1))
+        let text = if raw.is_empty() && (status == "failed" || status == "timeout") {
+            let label = if status == "timeout" { "timed out" } else { "failed" };
+            format!("[command {}: exit code {}]", label, result["exit_code"].as_i64().unwrap_or(-1))
         } else {
             raw.to_string()
         };
@@ -788,11 +789,13 @@ fn start_daemon() -> Result<()> {
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()
-        .map_err(|e| arshy_lib::ArshyError::DaemonUnreachable(
-            format!("spawn {}: {}", path.display(), e)))?;
+        .map_err(|e| {
+            let _ = std::fs::remove_file(&lock_path);
+            arshy_lib::ArshyError::DaemonUnreachable(
+            format!("spawn {}: {}", path.display(), e))
+        })?;
 
-    // Release the lock once the daemon has started (the lock file will be
-    // cleaned up by the daemon on its own startup, or we remove it here).
+    // Release the lock once the daemon has started.
     drop(lock_file);
     let _ = std::fs::remove_file(&lock_path);
 
@@ -817,7 +820,7 @@ fn prune_crash_log(log: &mut Vec<Instant>) {
 }
 
 fn check_circuit_breaker() -> bool {
-    let mut guard = CRASH_LOG.lock().unwrap();
+    let mut guard = CRASH_LOG.lock().expect("CRASH_LOG poisoned");
     let log = guard.get_or_insert_with(Vec::new);
     prune_crash_log(log);
     if log.len() >= MAX_CRASHES {
@@ -831,7 +834,7 @@ fn check_circuit_breaker() -> bool {
 }
 
 fn record_daemon_crash() {
-    let mut guard = CRASH_LOG.lock().unwrap();
+    let mut guard = CRASH_LOG.lock().expect("CRASH_LOG poisoned");
     let log = guard.get_or_insert_with(Vec::new);
     prune_crash_log(log);
     log.push(Instant::now());
