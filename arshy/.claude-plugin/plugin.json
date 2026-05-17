@@ -1,8 +1,19 @@
 {
   "name": "arshy",
   "version": "0.1.0",
-  "description": "Structured shell execution for Claude Code — smart sync, audit log, command filtering, and task lifecycle management. Prefer arshy_exec over raw Bash for ALL shell commands.",
+  "description": "Your primary shell for Claude Code. Route ALL shell commands through arshy_exec — it automatically detects short vs long commands, provides structured output (diagnostics with file/line/code) for build/test tools, and manages async task lifecycle. Stop regex-parsing compiler output; let arshy give you typed events.",
   "author": {
     "name": "izoy"
+  },
+  "homepage": "https://github.com/izoy/arshy",
+  "keywords": ["shell", "structured-output", "parser", "task-management"],
+  "hooks": {
+    "PreToolUse": [
+      {
+        "tool": "Bash",
+        "hook": "./hooks/bash-intercept.sh",
+        "description": "Remind agent to use arshy_exec instead of raw Bash"
+      }
+    ]
   }
 }
