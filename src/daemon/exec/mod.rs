@@ -31,9 +31,6 @@ pub fn is_short_command(command: &str) -> bool {
     if cmd.is_empty() {
         return true;
     }
-    if cmd.len() > 80 {
-        return false;
-    }
     // Pipes, redirects, chaining, backgrounding → non-short
     // Note: '|' is intentionally allowed — simple pipes (≤5 words, ≤80 chars)
     // take the fast short path; multi-pipe chains are caught by word-count limit.
@@ -47,6 +44,10 @@ pub fn is_short_command(command: &str) -> bool {
     if long_flags.iter().any(|f| cmd.contains(f)) {
         return false;
     }
+
+    let first_word = cmd.split_whitespace().next().unwrap_or("");
+    let first_two = cmd.split_whitespace().take(2).collect::<Vec<_>>().join(" ");
+
     // Build/test/install commands always produce substantial output → non-short
     let long_output_prefixes = [
         "cargo test", "cargo build", "cargo clippy", "cargo bench", "cargo doc",
@@ -61,9 +62,34 @@ pub fn is_short_command(command: &str) -> bool {
         "docker build", "docker compose",
         "cmake", "ninja",
     ];
-    let first_word = cmd.split_whitespace().next().unwrap_or("");
-    let first_two = cmd.split_whitespace().take(2).collect::<Vec<_>>().join(" ");
     if long_output_prefixes.iter().any(|p| first_two.starts_with(p) || first_word == *p) {
+        return false;
+    }
+
+    // Read-only inspection tools — always short path.
+    // These tools never produce structured build/test output; their raw text
+    // is more useful to the agent than a stream of "log" events.
+    let inspection_tools = [
+        "echo", "cat", "ls", "ll", "dir", "pwd", "whoami", "date", "env", "printenv",
+        "uname", "hostname", "id", "groups", "tty",
+        "head", "tail", "wc", "stat", "file", "which", "whereis",
+        "sort", "uniq", "cut", "tr", "printf",
+        "find", "locate", "du", "df",
+        "pgrep", "pidof",
+        "true", "false", "test", "[",
+        "basename", "dirname", "realpath", "readlink",
+        "expr", "seq", "tee",
+        "grep", "egrep", "fgrep", "rg", "ag",
+        "awk", "sed", "xargs",
+        "git status", "git log", "git diff", "git branch", "git tag",
+        "git show", "git stash", "git remote", "git config",
+    ];
+    if inspection_tools.iter().any(|t| first_two.starts_with(t) || first_word == *t) {
+        return true;
+    }
+
+    // Standard limits for everything else
+    if cmd.len() > 80 {
         return false;
     }
     cmd.split_whitespace().count() <= 5
@@ -907,8 +933,13 @@ mod tests {
 
     #[test]
     fn short_command_over_80_chars() {
-        let long = "echo this is a really really really really really really really long command that exceeds eighty characters easily";
-        assert!(!is_short_command(long));
+        // Inspection tools (echo, cat, etc.) bypass the 80-char limit —
+        // their raw text is more useful than structured "log" events.
+        let long_inspect = "echo this is a really really really really really really really long command that exceeds eighty characters easily";
+        assert!(is_short_command(long_inspect));
+        // Non-inspection commands over 80 chars are still non-short
+        let long_build = "cargo build --manifest-path /some/really/really/really/long/path/Cargo.toml --release";
+        assert!(!is_short_command(long_build));
     }
 
     #[test]
@@ -916,8 +947,10 @@ mod tests {
         // Simple pipes are now allowed as short commands
         assert!(is_short_command("ls -la | grep foo"));
         assert!(is_short_command("cat file.txt | head -5"));
-        // Multi-pipe chains with many words → non-short
-        assert!(!is_short_command("cat file | sort | uniq | head -n 20"));
+        // Multi-pipe text-processing chains with inspection tools → short
+        assert!(is_short_command("cat file | sort | uniq | head -n 20"));
+        // Non-inspection tools with many pipes → still non-short
+        assert!(!is_short_command("cargo build | grep error | wc -l"));
     }
 
     #[test]
@@ -994,29 +1027,37 @@ mod tests {
         assert!(result.duration_ms.is_some());
     }
 
-    /// Auto mode with a long command (over 80 chars) takes the async path.
+    /// Auto mode with a long non-inspection command takes the async path.
     #[tokio::test]
     async fn auto_long_takes_async_path() {
         let (store, parser, bus, _tmp) = setup();
         let executor = Executor::new(store.clone(), parser, bus);
 
         let result = executor.run(
-            "echo this-command-is-definitely-longer-than-eighty-characters-so-it-should-trigger-async-path-xxxxxxxxx",
-            None,
-            None,
-            "auto",
-            None,
-        None,
+            "cargo build --manifest-path /some/really/really/really/long/path/Cargo.toml --release",
+            None, None, "auto", None, None,
         ).await.unwrap();
-        assert!(!result.short_command, "long command should not be short_command");
+        assert!(!result.short_command, "long build command should not be short_command");
         assert_eq!(result.status, TaskStatus::Running);
         assert!(result.raw_output.is_none(), "async path should not populate raw_output");
 
-        // Wait for background task completion
-        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        // Cleanup: kill the spawned cargo build
+        executor.kill(&result.task_id).await.ok();
+    }
 
-        let task = store.get_task(&result.task_id).unwrap().unwrap();
-        assert_eq!(task.status, TaskStatus::Completed);
+    /// Inspection tools over 80 chars still take the short path — raw text beats log events.
+    #[tokio::test]
+    async fn auto_long_inspect_takes_short_path() {
+        let (store, parser, bus, _tmp) = setup();
+        let executor = Executor::new(store.clone(), parser, bus);
+
+        let result = executor.run(
+            "echo this-command-is-definitely-longer-than-eighty-characters-so-it-should-still-use-short-path",
+            None, None, "auto", None, None,
+        ).await.unwrap();
+        assert!(result.short_command, "long echo should still use short path");
+        assert_eq!(result.status, TaskStatus::Completed);
+        assert!(result.raw_output.is_some());
     }
 
     /// Auto mode with a simple piped command: now takes the short path

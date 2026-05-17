@@ -113,6 +113,8 @@ impl ParserRegistry {
     ///    (e.g. `"cargo test"` matches `"cargo test -- --test-threads=1"`)
     /// 2. `detect` patterns — matched against first word via `starts_with`
     ///    (e.g. `"cargo"` matches `"cargo build"`)
+    /// 3. For chained commands (`&&`, `||`, `;`) — retry with each segment's
+    ///    first word (e.g. `"echo x && cargo build"` → detects `"cargo"`)
     ///
     /// `starts_with` avoids false positives that `contains` had
     /// (e.g. "pnpm" no longer matches npm's "npm" pattern).
@@ -120,6 +122,40 @@ impl ParserRegistry {
         let cmd_name = command.split_whitespace().next()?.to_lowercase();
         let cmd_lower = command.to_lowercase();
 
+        // Pass 1: full command + first word (standard detection)
+        if let Some(tool) = self.try_detect(&cmd_lower, &cmd_name) {
+            return Some(tool);
+        }
+
+        // Pass 2: chained command — split on &&, ||, ; and retry each segment
+        let has_chain = cmd_lower.contains("&&")
+            || cmd_lower.contains("||")
+            || cmd_lower.contains(';');
+        if has_chain {
+            let segments: Vec<&str> = cmd_lower
+                .split("&&")
+                .flat_map(|s| s.split("||"))
+                .flat_map(|s| s.split(';'))
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .collect();
+            for segment in segments {
+                let seg_name = segment.split_whitespace().next()?;
+                if seg_name == cmd_name {
+                    continue; // already tried
+                }
+                if let Some(tool) = self.try_detect(&cmd_lower, seg_name) {
+                    return Some(tool);
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Try to match a command against all registry entries using the given
+    /// first-word hint. Returns the first matching parsed tool, or None.
+    fn try_detect(&self, cmd_lower: &str, first_word: &str) -> Option<ParsedTool> {
         for entry in &self.entries {
             if entry.parser_type == ParserType::Raw {
                 continue;
@@ -137,7 +173,7 @@ impl ParserRegistry {
             }
             // Then check detect patterns (matched against first word)
             for pat in &entry.detect_patterns {
-                if cmd_name.starts_with(&pat.to_lowercase()) {
+                if first_word.starts_with(&pat.to_lowercase()) {
                     return Some(ParsedTool {
                         tool_name: entry.tool_name.clone(),
                         parser_name: entry.name.clone(),
@@ -256,6 +292,32 @@ mod tests {
         let tool = registry.detect("npm install").unwrap();
         assert_eq!(tool.tool_name, "npm");
         assert_eq!(tool.parser_type, ParserType::Rhai);
+    }
+
+    #[test]
+    fn test_detect_chained_command() {
+        let config = ParserConfig::default();
+        let registry = ParserRegistry::load(&config).unwrap();
+
+        // Standard: first word is the tool
+        let tool = registry.detect("cargo build").unwrap();
+        assert_eq!(tool.tool_name, "cargo");
+
+        // Chained with &&: second segment contains the tool
+        let tool = registry.detect("echo hello && rustc file.rs 2>&1").unwrap();
+        assert_eq!(tool.tool_name, "cargo"); // rustc maps to cargo parser
+
+        // Chained with ||: second segment
+        let tool = registry.detect("cat file || npm test -- --coverage").unwrap();
+        assert_eq!(tool.tool_name, "npm");
+
+        // Chained with ;: second segment
+        let tool = registry.detect("ls -la; python3 -m pytest -v").unwrap();
+        assert_eq!(tool.tool_name, "python");
+
+        // No parser should match non-tool commands
+        assert!(registry.detect("echo hello world").is_none());
+        assert!(registry.detect("cd /tmp && ls").is_none());
     }
 
     #[test]

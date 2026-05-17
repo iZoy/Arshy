@@ -31,8 +31,6 @@ use arshy_lib::ipc::TaskEvent;
 use arshy_lib::Result;
 use std::sync::{Arc, RwLock};
 
-use self::toml::LinePattern;
-
 /// Central parser engine — detects tools, loads parsers, dispatches lines.
 ///
 /// The registry is wrapped in `RwLock` to support hot-reload from the
