@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "arshy": {
+      "type": "stdio",
+      "command": "${HOME}/.cargo/bin/arshy",
+      "args": ["--from-mcp"],
+      "env": {}
+    }
+  }
+}

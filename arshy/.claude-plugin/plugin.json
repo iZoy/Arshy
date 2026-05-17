@@ -1,0 +1,8 @@
+{
+  "name": "arshy",
+  "version": "0.1.0",
+  "description": "Structured shell execution for Claude Code — smart sync, audit log, command filtering, and task lifecycle management. Prefer arshy_exec over raw Bash for ALL shell commands.",
+  "author": {
+    "name": "izoy"
+  }
+}
