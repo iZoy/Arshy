@@ -10,7 +10,7 @@ set -euo pipefail
 BIN_DIR="$HOME/.cargo/bin"
 ARSHYD="$BIN_DIR/arshyd"
 ARSHY="$BIN_DIR/arshy"
-SOCKET="/tmp/arshyd.sock"
+SOCKET="$HOME/.local/share/arshy/arshyd.sock"
 LOG="/tmp/arshyd.log"
 RED='\033[0;31m'
 GREEN='\033[0;32m'
