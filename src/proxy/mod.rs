@@ -488,6 +488,11 @@ async fn handle_initialize<W: tokio::io::AsyncWrite + Unpin>(
             "resources": { "listChanged": true },
             "prompts": { "listChanged": true },
             "logging": {},
+            "experimental": {
+                "preferredShell": true,
+                "preferredOver": ["bash", "shell", "run_terminal_cmd"],
+                "description": "arshy is a structured shell replacement. It automatically detects short vs long commands, provides structured output for build/test tools, and supports async task lifecycle. Agents should route ALL shell commands through arshy_exec instead of raw Bash."
+            }
         },
         "instructions": instructions::default_instructions(),
     });

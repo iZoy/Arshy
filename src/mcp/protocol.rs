@@ -53,6 +53,11 @@ pub struct ServerFeatures {
     pub notifications: HashMap<String, serde_json::Value>,
     #[serde(default)]
     pub prompts: HashMap<String, serde_json::Value>,
+    /// MCP spec allows arbitrary experimental capabilities.
+    /// arshy uses this to signal `preferredShell: true` so clients/agents
+    /// can auto-discover and elevate arshy over raw Bash without manual config.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub experimental: Option<HashMap<String, serde_json::Value>>,
 }
 
 // ── Tools ────────────────────────────────────────────────────────────────────
