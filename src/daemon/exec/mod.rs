@@ -51,16 +51,17 @@ pub fn is_short_command(command: &str) -> bool {
     // Build/test/install commands always produce substantial output → non-short
     let long_output_prefixes = [
         "cargo test", "cargo build", "cargo clippy", "cargo bench", "cargo doc",
+        "cargo run", "rustc",
         "npm test", "npm run", "npm install", "npm ci",
         "npx", "yarn test", "yarn run", "yarn install",
         "pnpm test", "pnpm run", "pnpm install",
         "pytest", "python -m pytest",
-        "go test", "go build", "go run",
+        "go test", "go build", "go run", "go vet", "go lint",
         "make", "make test", "make build",
         "gradle", "./gradlew", "mvn",
         "pip install", "pip3 install",
         "docker build", "docker compose",
-        "cmake", "ninja",
+        "cmake", "ninja", "gcc", "clang", "g++", "clang++",
     ];
     if long_output_prefixes.iter().any(|p| first_two.starts_with(p) || first_word == *p) {
         return false;
