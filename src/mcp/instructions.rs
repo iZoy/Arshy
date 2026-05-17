@@ -1,6 +1,8 @@
 //! MCP initialization instructions, tool definitions, and prompt templates.
 
-use super::protocol::{PromptArgument, PromptDefinition, PromptMessage, PromptContent, ToolDefinition};
+use super::protocol::{
+    PromptArgument, PromptContent, PromptDefinition, PromptMessage, ToolDefinition,
+};
 use std::collections::HashMap;
 
 /// Return the default MCP instructions (plain string per MCP spec).
@@ -61,12 +63,12 @@ pub fn tool_definitions() -> Vec<ToolDefinition> {
                     "action": {"type":"string","enum":["run","kill","list","tail","cd","subscribe"],
                               "description":"run: execute command. kill: stop task. list: show tasks. tail: view output. cd: set session working directory. subscribe: wait for task completion"},
                     "command": {"type":"string","description":"Shell command (action=run) or directory path (action=cd)"},
-                    "cwd": {"type":"string","description":"Working directory"},
+                    "cwd": {"type":"string","description":"Absolute path for working directory (one-off override; use action:cd for session-wide)"},
                     "timeout_ms": {"type":"integer","description":"Timeout in ms"},
                     "mode": {"type":"string","enum":["auto","sync","async"],"default":"auto",
                              "description":"auto: smart detect short/long. sync: wait. async: return immediately"},
-                    "parse_hint": {"type":"string","enum":["json","csv","table","raw"],
-                                  "description":"Hint expected output format"},
+                    "parse_hint": {"type":"string",
+                                  "description":"Expected output format (json|csv|table|raw) or parser name to force (e.g. \"python\", \"cargo\")"},
                     "env": {"type":"object","description":"Environment variables as key-value pairs (e.g. {\"RUST_LOG\":\"debug\"})"},
                     "task_id": {"type":"string","description":"Task ID from a previous run response (action=kill|tail)"},
                     "lines": {"type":"integer","default":50,"description":"Lines (action=tail)"},
@@ -115,7 +117,8 @@ pub fn prompt_definitions() -> Vec<PromptDefinition> {
                 },
                 PromptArgument {
                     name: "output".into(),
-                    description: "The build output or error log (optional, can also query by task_id)".into(),
+                    description:
+                        "The build output or error log (optional, can also query by task_id)".into(),
                     required: false,
                 },
             ],
@@ -123,24 +126,20 @@ pub fn prompt_definitions() -> Vec<PromptDefinition> {
         PromptDefinition {
             name: "diagnose_test_failure".into(),
             description: "Help me understand why these tests failed and suggest next steps.".into(),
-            arguments: vec![
-                PromptArgument {
-                    name: "task_id".into(),
-                    description: "The task ID of the failed test run".into(),
-                    required: true,
-                },
-            ],
+            arguments: vec![PromptArgument {
+                name: "task_id".into(),
+                description: "The task ID of the failed test run".into(),
+                required: true,
+            }],
         },
         PromptDefinition {
             name: "review_task_output".into(),
             description: "Review the structured output of a command and summarize findings.".into(),
-            arguments: vec![
-                PromptArgument {
-                    name: "task_id".into(),
-                    description: "The task ID to review".into(),
-                    required: true,
-                },
-            ],
+            arguments: vec![PromptArgument {
+                name: "task_id".into(),
+                description: "The task ID to review".into(),
+                required: true,
+            }],
         },
     ]
 }
@@ -164,12 +163,9 @@ pub fn get_prompt(name: &str, args: &HashMap<String, String>) -> Option<Vec<Prom
                 "\nPlease:\n\
                  1. Identify the root cause of the failure\n\
                  2. List the specific errors and their locations\n\
-                 3. Suggest concrete fixes for each error"
+                 3. Suggest concrete fixes for each error",
             );
-            Some(vec![PromptMessage {
-                role: "user".into(),
-                content: PromptContent::Text { text },
-            }])
+            Some(vec![PromptMessage { role: "user".into(), content: PromptContent::Text { text } }])
         }
         "diagnose_test_failure" => {
             let task_id = args.get("task_id").map(|s| s.as_str()).unwrap_or("unknown");

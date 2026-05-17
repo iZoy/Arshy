@@ -30,10 +30,7 @@ pub fn check_path(cwd: &str, sandbox_paths: &[String]) -> Result<()> {
         }
     }
 
-    Err(ArshyError::Ipc(format!(
-        "access denied: cwd '{}' is outside sandbox",
-        cwd
-    )))
+    Err(ArshyError::Ipc(format!("access denied: cwd '{}' is outside sandbox", cwd)))
 }
 
 /// Expand `~` to the home directory.

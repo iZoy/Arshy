@@ -4,10 +4,26 @@
       "mcp__arshy__arshy_exec",
       "mcp__arshy__arshy_query",
       "Bash(arshy *)",
-      "Bash(arshyd *)"
+      "Bash(arshyd *)",
+      "Bash(kill *)",
+      "Bash(ps *)",
+      "Bash(ls *)",
+      "Bash(cat *)",
+      "Bash(echo *)",
+      "Bash(stat *)",
+      "Bash(grep *)",
+      "Bash(pkill *)",
+      "Bash(nohup *)",
+      "Bash(bash *)",
+      "Bash(cp *)",
+      "Bash(mkdir *)",
+      "Bash(md5 *)",
+      "Bash(strings *)",
+      "Bash(head *)",
+      "Bash(python3 *)",
+      "Bash(*arshyd*)",
+      "Bash(*arshy*)"
     ],
-    "deny": [
-      "Bash(*)"
-    ]
+    "deny": []
   }
 }

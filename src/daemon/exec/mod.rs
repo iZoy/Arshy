@@ -34,9 +34,7 @@ pub fn is_short_command(command: &str) -> bool {
     // Pipes, redirects, chaining, backgrounding → non-short
     // Note: '|' is intentionally allowed — simple pipes (≤5 words, ≤80 chars)
     // take the fast short path; multi-pipe chains are caught by word-count limit.
-    if cmd.contains(">>") || cmd.contains("&&")
-        || cmd.contains("||") || cmd.contains('&')
-    {
+    if cmd.contains(">>") || cmd.contains("&&") || cmd.contains("||") || cmd.contains('&') {
         return false;
     }
     // Long-running flags → non-short
@@ -50,18 +48,47 @@ pub fn is_short_command(command: &str) -> bool {
 
     // Build/test/install commands always produce substantial output → non-short
     let long_output_prefixes = [
-        "cargo test", "cargo build", "cargo clippy", "cargo bench", "cargo doc",
-        "cargo run", "rustc",
-        "npm test", "npm run", "npm install", "npm ci",
-        "npx", "yarn test", "yarn run", "yarn install",
-        "pnpm test", "pnpm run", "pnpm install",
-        "pytest", "python -m pytest",
-        "go test", "go build", "go run", "go vet", "go lint",
-        "make", "make test", "make build",
-        "gradle", "./gradlew", "mvn",
-        "pip install", "pip3 install",
-        "docker build", "docker compose",
-        "cmake", "ninja", "gcc", "clang", "g++", "clang++",
+        "cargo test",
+        "cargo build",
+        "cargo clippy",
+        "cargo bench",
+        "cargo doc",
+        "cargo run",
+        "rustc",
+        "npm test",
+        "npm run",
+        "npm install",
+        "npm ci",
+        "npx",
+        "yarn test",
+        "yarn run",
+        "yarn install",
+        "pnpm test",
+        "pnpm run",
+        "pnpm install",
+        "pytest",
+        "python -m pytest",
+        "go test",
+        "go build",
+        "go run",
+        "go vet",
+        "go lint",
+        "make",
+        "make test",
+        "make build",
+        "gradle",
+        "./gradlew",
+        "mvn",
+        "pip install",
+        "pip3 install",
+        "docker build",
+        "docker compose",
+        "cmake",
+        "ninja",
+        "gcc",
+        "clang",
+        "g++",
+        "clang++",
     ];
     if long_output_prefixes.iter().any(|p| first_two.starts_with(p) || first_word == *p) {
         return false;
@@ -71,19 +98,68 @@ pub fn is_short_command(command: &str) -> bool {
     // These tools never produce structured build/test output; their raw text
     // is more useful to the agent than a stream of "log" events.
     let inspection_tools = [
-        "echo", "cat", "ls", "ll", "dir", "pwd", "whoami", "date", "env", "printenv",
-        "uname", "hostname", "id", "groups", "tty",
-        "head", "tail", "wc", "stat", "file", "which", "whereis",
-        "sort", "uniq", "cut", "tr", "printf",
-        "find", "locate", "du", "df",
-        "pgrep", "pidof",
-        "true", "false", "test", "[",
-        "basename", "dirname", "realpath", "readlink",
-        "expr", "seq", "tee",
-        "grep", "egrep", "fgrep", "rg", "ag",
-        "awk", "sed", "xargs",
-        "git status", "git log", "git diff", "git branch", "git tag",
-        "git show", "git stash", "git remote", "git config",
+        "echo",
+        "cat",
+        "ls",
+        "ll",
+        "dir",
+        "pwd",
+        "whoami",
+        "date",
+        "env",
+        "printenv",
+        "uname",
+        "hostname",
+        "id",
+        "groups",
+        "tty",
+        "head",
+        "tail",
+        "wc",
+        "stat",
+        "file",
+        "which",
+        "whereis",
+        "sort",
+        "uniq",
+        "cut",
+        "tr",
+        "printf",
+        "find",
+        "locate",
+        "du",
+        "df",
+        "pgrep",
+        "pidof",
+        "true",
+        "false",
+        "test",
+        "[",
+        "basename",
+        "dirname",
+        "realpath",
+        "readlink",
+        "expr",
+        "seq",
+        "tee",
+        "grep",
+        "egrep",
+        "fgrep",
+        "rg",
+        "ag",
+        "awk",
+        "sed",
+        "xargs",
+        "git status",
+        "git log",
+        "git diff",
+        "git branch",
+        "git tag",
+        "git show",
+        "git stash",
+        "git remote",
+        "git config",
+        "git", // covers "git -C <path> ..." and other git variants
     ];
     if inspection_tools.iter().any(|t| first_two.starts_with(t) || first_word == *t) {
         return true;
@@ -123,7 +199,7 @@ impl Default for ExecutorConfig {
     fn default() -> Self {
         Self {
             max_task_duration_ms: 3_600_000, // 1 hour
-            max_output_bytes: 10_485_760,     // 10 MB
+            max_output_bytes: 10_485_760,    // 10 MB
             kill_graceful_ms: 3_000,
             kill_force_ms: 2_000,
         }
@@ -202,10 +278,7 @@ impl Executor {
             return Err(e);
         }
 
-        super::security::check_path(
-            cwd.unwrap_or("."),
-            &self.sandbox_paths,
-        )?;
+        super::security::check_path(cwd.unwrap_or("."), &self.sandbox_paths)?;
 
         let is_auto = mode == "auto";
         let is_explicit_sync = mode == "sync";
@@ -222,8 +295,7 @@ impl Executor {
         // ── Full structured path ──────────────────────────────────────────
         // When parse_hint names a parser, use it directly; otherwise auto-detect.
         let tool = if let Some(hint) = parse_hint {
-            self.parser.get_by_name(hint)
-                .or_else(|| self.parser.detect(command))
+            self.parser.get_by_name(hint).or_else(|| self.parser.detect(command))
         } else {
             self.parser.detect(command)
         };
@@ -491,13 +563,17 @@ async fn run_background(mut t: BackgroundTask) -> Result<()> {
             &tool.tool_name,
             &t.store,
             t.parser.config().version_cache_ttl_hours,
-        ).await {
+        )
+        .await
+        {
             // If the detected parser has version constraints, verify compatibility.
             // Downgrade to raw parser if the tool version is outside the supported range.
             if !t.parser.is_version_compatible(&tool.parser_name, &version) {
                 tracing::info!(
                     "parser '{}' incompatible with {} version {}, falling back to raw",
-                    tool.parser_name, tool.tool_name, version
+                    tool.parser_name,
+                    tool.tool_name,
+                    version
                 );
                 t.detected_tool = None;
             } else {
@@ -526,9 +602,8 @@ async fn run_background(mut t: BackgroundTask) -> Result<()> {
         },
     });
 
-    let timeout_dur = tokio::time::Duration::from_millis(
-        t.timeout_ms.unwrap_or(t.config.max_task_duration_ms),
-    );
+    let timeout_dur =
+        tokio::time::Duration::from_millis(t.timeout_ms.unwrap_or(t.config.max_task_duration_ms));
 
     let max_bytes = t.config.max_output_bytes;
 
@@ -718,15 +793,14 @@ async fn run_background(mut t: BackgroundTask) -> Result<()> {
         }
         t.event_bus.publish(BusEvent {
             connection_id: 0,
-            kind: BusEventKind::Diagnostic {
-                task_id: t.task_id.clone(),
-                event,
-            },
+            kind: BusEventKind::Diagnostic { task_id: t.task_id.clone(), event },
         });
     }
 
     // Update task in DB
-    if let Err(e) = t.store.update_task(&t.task_id, &final_status, Some(exit_code_val), Some(duration_ms)) {
+    if let Err(e) =
+        t.store.update_task(&t.task_id, &final_status, Some(exit_code_val), Some(duration_ms))
+    {
         tracing::error!("task {} failed to update final status: {}", t.task_id, e);
     }
 
@@ -744,7 +818,12 @@ async fn run_background(mut t: BackgroundTask) -> Result<()> {
 
     tracing::info!(
         "task {} completed: status={:?}, exit_code={}, duration={}ms, events={}, errors={}",
-        t.task_id, final_status, exit_code_val, duration_ms, seq, error_count
+        t.task_id,
+        final_status,
+        exit_code_val,
+        duration_ms,
+        seq,
+        error_count
     );
 
     // Audit log: task completed
@@ -844,7 +923,8 @@ mod tests {
         let (store, parser, bus, _tmp) = setup();
         let executor = Executor::new(store.clone(), parser, bus);
 
-        let result = executor.run("printf 'a\nb\nc\n'", None, None, "async", None, None).await.unwrap();
+        let result =
+            executor.run("printf 'a\nb\nc\n'", None, None, "async", None, None).await.unwrap();
 
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
@@ -856,10 +936,7 @@ mod tests {
     async fn test_executor_timeout() {
         let (store, parser, bus, _tmp) = setup();
         let executor = Executor::new(store.clone(), parser, bus)
-            .with_config(ExecutorConfig {
-                max_task_duration_ms: 500,
-                ..Default::default()
-            });
+            .with_config(ExecutorConfig { max_task_duration_ms: 500, ..Default::default() });
 
         let result = executor.run("sleep 60", None, Some(500), "async", None, None).await.unwrap();
 
@@ -916,11 +993,7 @@ mod tests {
 
         // Check task was updated
         let task = store.get_task(&result.task_id).unwrap().unwrap();
-        assert!(
-            task.status == TaskStatus::Killed,
-            "expected Killed, got {:?}",
-            task.status
-        );
+        assert!(task.status == TaskStatus::Killed, "expected Killed, got {:?}", task.status);
     }
 
     // ── P11: Auto mode tests ──────────────────────────────────────────────────
@@ -946,7 +1019,8 @@ mod tests {
         let long_inspect = "echo this is a really really really really really really really long command that exceeds eighty characters easily";
         assert!(is_short_command(long_inspect));
         // Non-inspection commands over 80 chars are still non-short
-        let long_build = "cargo build --manifest-path /some/really/really/really/long/path/Cargo.toml --release";
+        let long_build =
+            "cargo build --manifest-path /some/really/really/really/long/path/Cargo.toml --release";
         assert!(!is_short_command(long_build));
     }
 
@@ -1075,7 +1149,8 @@ mod tests {
         let (store, parser, bus, _tmp) = setup();
         let executor = Executor::new(store.clone(), parser, bus);
 
-        let result = executor.run("echo hello | cat", None, None, "auto", None, None).await.unwrap();
+        let result =
+            executor.run("echo hello | cat", None, None, "auto", None, None).await.unwrap();
         assert!(result.short_command, "simple piped cmd should use short path");
         assert_eq!(result.status, TaskStatus::Completed);
         assert!(result.raw_output.is_some(), "short path populates raw_output");
@@ -1119,7 +1194,8 @@ mod tests {
         let executor = Executor::new(store.clone(), parser, bus);
 
         // Short command with parse_hint="json" → should NOT take short path
-        let result = executor.run("echo hello", None, None, "auto", Some("json"), None).await.unwrap();
+        let result =
+            executor.run("echo hello", None, None, "auto", Some("json"), None).await.unwrap();
         assert!(!result.short_command, "parse_hint should force structured path");
         assert_eq!(result.status, TaskStatus::Running);
 
@@ -1136,14 +1212,10 @@ mod tests {
         let (store, parser, bus, _tmp) = setup();
         let executor = Executor::new(store.clone(), parser, bus);
 
-        let result = executor.run(
-            r#"echo '{"status":"ok","count":1}'"#,
-            None,
-            None,
-            "auto",
-            Some("json"),
-        None,
-        ).await.unwrap();
+        let result = executor
+            .run(r#"echo '{"status":"ok","count":1}'"#, None, None, "auto", Some("json"), None)
+            .await
+            .unwrap();
         assert!(!result.short_command);
 
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
@@ -1172,7 +1244,8 @@ mod tests {
         let executor = Executor::new(store.clone(), parser, bus);
 
         // Short command with parse_hint="raw" → structured path
-        let result = executor.run("echo hello", None, None, "auto", Some("raw"), None).await.unwrap();
+        let result =
+            executor.run("echo hello", None, None, "auto", Some("raw"), None).await.unwrap();
         assert!(!result.short_command, "any parse_hint should force structured path");
         assert_eq!(result.status, TaskStatus::Running);
 
@@ -1218,14 +1291,10 @@ mod tests {
         let (store, parser, bus, _tmp) = setup();
         let executor = Executor::new(store.clone(), parser, bus);
 
-        let result = executor.run(
-            r#"printf '{"name":"test","count":42}\n'"#,
-            None,
-            None,
-            "async",
-            None,
-        None,
-        ).await.unwrap();
+        let result = executor
+            .run(r#"printf '{"name":"test","count":42}\n'"#, None, None, "async", None, None)
+            .await
+            .unwrap();
 
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
@@ -1254,14 +1323,10 @@ mod tests {
         let (store, parser, bus, _tmp) = setup();
         let executor = Executor::new(store.clone(), parser, bus);
 
-        let result = executor.run(
-            r#"echo '["item-a","item-b","item-c"]'"#,
-            None,
-            None,
-            "auto",
-            Some("json"),
-        None,
-        ).await.unwrap();
+        let result = executor
+            .run(r#"echo '["item-a","item-b","item-c"]'"#, None, None, "auto", Some("json"), None)
+            .await
+            .unwrap();
 
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
@@ -1322,14 +1387,17 @@ mod tests {
         let (store, parser, bus, _tmp) = setup();
         let executor = Executor::new(store.clone(), parser, bus);
 
-        let result = executor.run(
-            r#"sh -c 'echo "Permission denied (os error 13)" >&2; exit 1'"#,
-            None,
-            None,
-            "async",
-            None,
-        None,
-        ).await.unwrap();
+        let result = executor
+            .run(
+                r#"sh -c 'echo "Permission denied (os error 13)" >&2; exit 1'"#,
+                None,
+                None,
+                "async",
+                None,
+                None,
+            )
+            .await
+            .unwrap();
 
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
@@ -1357,14 +1425,8 @@ mod tests {
         let executor = Executor::new(store.clone(), parser, bus);
 
         // Short command with parse_hint → forced structured path
-        let result = executor.run(
-            "echo structured",
-            None,
-            None,
-            "auto",
-            Some("raw"),
-        None,
-        ).await.unwrap();
+        let result =
+            executor.run("echo structured", None, None, "auto", Some("raw"), None).await.unwrap();
 
         assert!(!result.short_command);
 
@@ -1382,14 +1444,10 @@ mod tests {
         let executor = Executor::new(store.clone(), parser, bus);
 
         // Plain text output
-        let result = executor.run(
-            "printf 'regular output\nmore output\n'",
-            None,
-            None,
-            "async",
-            None,
-        None,
-        ).await.unwrap();
+        let result = executor
+            .run("printf 'regular output\nmore output\n'", None, None, "async", None, None)
+            .await
+            .unwrap();
 
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 

@@ -31,11 +31,7 @@ impl Store {
     /// Returns `Ok(())` if the database is healthy, or an error with details.
     pub fn integrity_check(&self) -> Result<String> {
         let conn = self.lock();
-        let result: String = conn.query_row(
-            "PRAGMA integrity_check",
-            [],
-            |row| row.get(0),
-        )?;
+        let result: String = conn.query_row("PRAGMA integrity_check", [], |row| row.get(0))?;
         Ok(result)
     }
 
@@ -49,7 +45,7 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arshy_lib::ipc::{Task, TaskEvent, TaskStatus, EventLocation, QueryParams};
+    use arshy_lib::ipc::{EventLocation, QueryParams, Task, TaskEvent, TaskStatus};
     use tempfile::TempDir;
 
     /// Create a temporary store with initialized schema.
@@ -273,11 +269,8 @@ mod tests {
         store.insert_task(&make_task("loc-1", "cmd", TaskStatus::Running)).unwrap();
 
         let mut event = make_event("diagnostic", "error", "undefined var");
-        event.location = Some(EventLocation {
-            file: "src/main.rs".to_string(),
-            line: 42,
-            column: Some(10),
-        });
+        event.location =
+            Some(EventLocation { file: "src/main.rs".to_string(), line: 42, column: Some(10) });
         store.insert_event("loc-1", 1, &event).unwrap();
 
         let params = QueryParams {
@@ -367,7 +360,9 @@ mod tests {
         let (store, _tmp) = test_store();
         store.insert_task(&make_task("pg1", "cmd", TaskStatus::Running)).unwrap();
         for i in 0..10 {
-            store.insert_event("pg1", i, &make_event("log", "info", &format!("line {}", i))).unwrap();
+            store
+                .insert_event("pg1", i, &make_event("log", "info", &format!("line {}", i)))
+                .unwrap();
         }
 
         // First page
@@ -450,14 +445,18 @@ mod tests {
     // ── Prune tests ─────────────────────────────────────────────────────────
 
     fn insert_tasks_with_offset(store: &Store, count: usize) {
-        let base = chrono::NaiveDate::from_ymd_opt(2024, 1, 1).unwrap()
-            .and_hms_opt(0, 0, 0).unwrap().and_utc();
+        let base = chrono::NaiveDate::from_ymd_opt(2024, 1, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_utc();
         for i in 0..count {
             let mut task = make_task(&format!("prune-{:03}", i), "cmd", TaskStatus::Completed);
             task.started_at = (base + chrono::Duration::days(i as i64)).to_rfc3339();
             store.insert_task(&task).unwrap();
-            store.insert_event(&format!("prune-{:03}", i), 1,
-                &make_event("log", "info", "msg")).unwrap();
+            store
+                .insert_event(&format!("prune-{:03}", i), 1, &make_event("log", "info", "msg"))
+                .unwrap();
         }
     }
 

@@ -25,26 +25,27 @@ use tokio::sync::mpsc;
 #[allow(dead_code)]
 pub trait Middleware: Send + Sync {
     /// Called before forwarding a request to the daemon.
-    fn on_request(&self, _request: &serde_json::Value) -> Result<()> { Ok(()) }
+    fn on_request(&self, _request: &serde_json::Value) -> Result<()> {
+        Ok(())
+    }
     /// Called before writing a response to stdout.
-    fn on_response(&self, _response: &serde_json::Value) -> Result<()> { Ok(()) }
+    fn on_response(&self, _response: &serde_json::Value) -> Result<()> {
+        Ok(())
+    }
     /// Called before forwarding a notification to the MCP client.
-    fn on_notification(&self, _notif: &Notification) -> Result<()> { Ok(()) }
+    fn on_notification(&self, _notif: &Notification) -> Result<()> {
+        Ok(())
+    }
 }
 
 /// Run the MCP stdio proxy. Reads JSON-RPC from stdin, forwards to daemon, writes to stdout.
 pub fn run(config_path: Option<PathBuf>) -> Result<()> {
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()?;
+    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
     rt.block_on(proxy_main(config_path))
 }
 
 async fn proxy_main(config_path: Option<PathBuf>) -> Result<()> {
-    let cfg = Config::load(arshy_lib::config::CliOverrides {
-        config_path,
-        ..Default::default()
-    })?;
+    let cfg = Config::load(arshy_lib::config::CliOverrides { config_path, ..Default::default() })?;
 
     let socket_path = cfg.daemon.expanded_socket_path();
     let stream = connect_or_start(&cfg, &socket_path).await?;
@@ -63,10 +64,8 @@ async fn proxy_main(config_path: Option<PathBuf>) -> Result<()> {
 
     // Idle timeout: shut down daemon after 5 min of inactivity.
     // Override with ARSHY_IDLE_TIMEOUT_SECS.
-    let idle_timeout_secs: u64 = std::env::var("ARSHY_IDLE_TIMEOUT_SECS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(300);
+    let idle_timeout_secs: u64 =
+        std::env::var("ARSHY_IDLE_TIMEOUT_SECS").ok().and_then(|v| v.parse().ok()).unwrap_or(300);
     let idle_timeout = tokio::time::Duration::from_secs(idle_timeout_secs);
     let mut last_activity = tokio::time::Instant::now();
 
@@ -79,7 +78,9 @@ async fn proxy_main(config_path: Option<PathBuf>) -> Result<()> {
     // Shutdown signal — triggered by SIGTERM from parent process (Claude Code)
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
     tokio::spawn(async move {
-        if let Ok(mut sig) = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+        if let Ok(mut sig) =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+        {
             let _ = sig.recv().await;
             tracing::info!("received SIGTERM, initiating graceful shutdown");
             let _ = shutdown_tx.send(true);
@@ -328,11 +329,14 @@ async fn perform_health_check(
     socket_path: &std::path::Path,
     last_check: &mut tokio::time::Instant,
 ) -> bool {
-    match daemon.send_request_with_timeout(
-        ipc::METHOD_HEALTH,
-        serde_json::json!({}),
-        Duration::from_secs(3),
-    ).await {
+    match daemon
+        .send_request_with_timeout(
+            ipc::METHOD_HEALTH,
+            serde_json::json!({}),
+            Duration::from_secs(3),
+        )
+        .await
+    {
         Ok(_) => {
             *last_check = tokio::time::Instant::now();
             true
@@ -394,9 +398,7 @@ async fn flush_batch(
         write_mcp_notification(stdout, &batch[0]).await?;
     } else {
         // Coalesce: send as a single notifications/message with a JSON array payload
-        let items: Vec<serde_json::Value> = batch.iter()
-            .filter_map(notification_to_json)
-            .collect();
+        let items: Vec<serde_json::Value> = batch.iter().filter_map(notification_to_json).collect();
 
         if !items.is_empty() {
             let mcp_notif = serde_json::json!({
@@ -456,12 +458,10 @@ fn notification_to_json(notif: &Notification) -> Option<serde_json::Value> {
                 "location": event.get("location"),
             }))
         }
-        "daemon/shutdown" => {
-            Some(serde_json::json!({
-                "event": "shutdown",
-                "reason": notif.params["reason"].as_str().unwrap_or(""),
-            }))
-        }
+        "daemon/shutdown" => Some(serde_json::json!({
+            "event": "shutdown",
+            "reason": notif.params["reason"].as_str().unwrap_or(""),
+        })),
         _ => None,
     }
 }
@@ -520,17 +520,26 @@ async fn handle_prompts_get<W: tokio::io::AsyncWrite + Unpin>(
 
     match instructions::get_prompt(name, &args) {
         Some(messages) => {
-            write_json_response(stdout, id, &serde_json::json!({
-                "description": format!("Prompt: {}", name),
-                "messages": messages,
-            })).await
+            write_json_response(
+                stdout,
+                id,
+                &serde_json::json!({
+                    "description": format!("Prompt: {}", name),
+                    "messages": messages,
+                }),
+            )
+            .await
         }
-        None => write_json_error(
-            stdout,
-            id,
-            ipc::error_code::INVALID_PARAMS,
-            &format!("Unknown prompt: {}", name),
-        ).await,
+        None => {
+            write_json_error(
+                stdout,
+                id,
+                ipc::error_code::INVALID_PARAMS,
+                &format!("Unknown prompt: {}", name),
+                false,
+            )
+            .await
+        }
     }
 }
 
@@ -550,8 +559,9 @@ async fn handle_tool_call(
     // Check for IPC-level error
     if result.get("error").is_some() {
         let err_msg = result["error"]["message"].as_str().unwrap_or("unknown error");
-        let code = result["error"]["code"].as_i64().unwrap_or(arshy_lib::ipc::error_code::INTERNAL_ERROR);
-        write_json_error(stdout, id, code, err_msg).await?;
+        let code =
+            result["error"]["code"].as_i64().unwrap_or(arshy_lib::ipc::error_code::INTERNAL_ERROR);
+        write_json_error(stdout, id, code, err_msg, false).await?;
         return Ok(None);
     }
 
@@ -608,17 +618,20 @@ async fn handle_resources_list(
     let response = daemon.send_request(ipc::METHOD_LIST, serde_json::json!({"limit": 50})).await?;
     let tasks = response.result.as_array().cloned().unwrap_or_default();
 
-    let resources: Vec<protocol::ResourceDefinition> = tasks.iter().map(|t| {
-        let task_id = t["task_id"].as_str().unwrap_or("");
-        let command = t["command"].as_str().unwrap_or("");
-        let status = t["status"].as_str().unwrap_or("unknown");
-        protocol::ResourceDefinition {
-            uri: format!("arshy://task/{}", task_id),
-            name: format!("{} [{}]", command, status),
-            description: Some(format!("Task {} — {}", task_id, command)),
-            mime_type: Some("application/json".into()),
-        }
-    }).collect();
+    let resources: Vec<protocol::ResourceDefinition> = tasks
+        .iter()
+        .map(|t| {
+            let task_id = t["task_id"].as_str().unwrap_or("");
+            let command = t["command"].as_str().unwrap_or("");
+            let status = t["status"].as_str().unwrap_or("unknown");
+            protocol::ResourceDefinition {
+                uri: format!("arshy://task/{}", task_id),
+                name: format!("{} [{}]", command, status),
+                description: Some(format!("Task {} — {}", task_id, command)),
+                mime_type: Some("application/json".into()),
+            }
+        })
+        .collect();
 
     write_json_response(stdout, id, &serde_json::json!({ "resources": resources })).await
 }
@@ -633,15 +646,27 @@ async fn handle_resources_read(
     let task_id = uri.strip_prefix("arshy://task/").unwrap_or("");
 
     if task_id.is_empty() {
-        write_json_error(stdout, id, ipc::error_code::INVALID_PARAMS, "invalid resource URI").await?;
+        write_json_error(
+            stdout,
+            id,
+            ipc::error_code::INVALID_PARAMS,
+            "invalid resource URI",
+            false,
+        )
+        .await?;
         return Ok(());
     }
 
     // Get task details via list (with task_id filter not available, query directly)
-    let query_resp = daemon.send_request(ipc::METHOD_QUERY, serde_json::json!({
-        "task_id": task_id,
-        "limit": 200,
-    })).await?;
+    let query_resp = daemon
+        .send_request(
+            ipc::METHOD_QUERY,
+            serde_json::json!({
+                "task_id": task_id,
+                "limit": 200,
+            }),
+        )
+        .await?;
 
     let events = query_resp.result["events"].as_array().cloned().unwrap_or_default();
     let total = query_resp.result["total"].as_u64().unwrap_or(0);
@@ -660,9 +685,14 @@ async fn handle_resources_read(
         text,
     };
 
-    write_json_response(stdout, id, &serde_json::json!({
-        "contents": [resource_content],
-    })).await
+    write_json_response(
+        stdout,
+        id,
+        &serde_json::json!({
+            "contents": [resource_content],
+        }),
+    )
+    .await
 }
 
 // ── Daemon notification → MCP notification mapping ──────────────────────────
@@ -676,25 +706,30 @@ async fn write_mcp_notification<W: tokio::io::AsyncWriteExt + Unpin>(
         "task/update" => {
             let task_id = notif.params["task_id"].as_str().unwrap_or("");
             let status = notif.params["status"].as_str().unwrap_or("");
-            (protocol::LogLevel::Info, "arshy", serde_json::json!({
-                "event": "task_update",
-                "task_id": task_id,
-                "status": status,
-            }))
+            (
+                protocol::LogLevel::Info,
+                "arshy",
+                serde_json::json!({
+                    "event": "task_update",
+                    "task_id": task_id,
+                    "status": status,
+                }),
+            )
         }
         "task/complete" => {
             let task_id = notif.params["task_id"].as_str().unwrap_or("");
             let exit_code = notif.params["exit_code"].as_i64().unwrap_or(-1);
-            let level = if exit_code == 0 {
-                protocol::LogLevel::Info
-            } else {
-                protocol::LogLevel::Error
-            };
-            (level, "arshy", serde_json::json!({
-                "event": "task_complete",
-                "task_id": task_id,
-                "exit_code": exit_code,
-            }))
+            let level =
+                if exit_code == 0 { protocol::LogLevel::Info } else { protocol::LogLevel::Error };
+            (
+                level,
+                "arshy",
+                serde_json::json!({
+                    "event": "task_complete",
+                    "task_id": task_id,
+                    "exit_code": exit_code,
+                }),
+            )
         }
         "diagnostic" => {
             let event = &notif.params["event"];
@@ -705,21 +740,27 @@ async fn write_mcp_notification<W: tokio::io::AsyncWriteExt + Unpin>(
                 "debug" => protocol::LogLevel::Debug,
                 _ => protocol::LogLevel::Info,
             };
-            (level, "arshy.parser", serde_json::json!({
-                "event": "diagnostic",
-                "task_id": notif.params["task_id"].as_str().unwrap_or(""),
-                "type": event["type"].as_str().unwrap_or(""),
-                "severity": severity,
-                "message": event["message"].as_str().unwrap_or(""),
-                "location": event.get("location"),
-            }))
+            (
+                level,
+                "arshy.parser",
+                serde_json::json!({
+                    "event": "diagnostic",
+                    "task_id": notif.params["task_id"].as_str().unwrap_or(""),
+                    "type": event["type"].as_str().unwrap_or(""),
+                    "severity": severity,
+                    "message": event["message"].as_str().unwrap_or(""),
+                    "location": event.get("location"),
+                }),
+            )
         }
-        "daemon/shutdown" => {
-            (protocol::LogLevel::Warning, "arshy.daemon", serde_json::json!({
+        "daemon/shutdown" => (
+            protocol::LogLevel::Warning,
+            "arshy.daemon",
+            serde_json::json!({
                 "event": "shutdown",
                 "reason": notif.params["reason"].as_str().unwrap_or(""),
-            }))
-        }
+            }),
+        ),
         _ => return Ok(()), // Unknown notification, skip
     };
 
@@ -742,7 +783,10 @@ async fn write_mcp_notification<W: tokio::io::AsyncWriteExt + Unpin>(
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-async fn connect_or_start(cfg: &Config, socket_path: &std::path::Path) -> Result<tokio::net::UnixStream> {
+async fn connect_or_start(
+    cfg: &Config,
+    socket_path: &std::path::Path,
+) -> Result<tokio::net::UnixStream> {
     match ipc::connect(socket_path).await {
         Ok(s) => Ok(s),
         Err(_) if cfg.daemon.auto_start => {
@@ -761,9 +805,7 @@ async fn connect_or_start(cfg: &Config, socket_path: &std::path::Path) -> Result
             }
             // Daemon failed to start — record crash for circuit breaker
             record_daemon_crash();
-            Err(arshy_lib::ArshyError::DaemonUnreachable(
-                "daemon did not start within 10s".into(),
-            ))
+            Err(arshy_lib::ArshyError::DaemonUnreachable("daemon did not start within 10s".into()))
         }
         Err(e) => Err(e),
     }
@@ -780,18 +822,14 @@ fn start_daemon() -> Result<()> {
     // ── Circuit breaker check ───────────────────────────────────────────
     if !check_circuit_breaker() {
         return Err(arshy_lib::ArshyError::DaemonUnreachable(
-            "daemon crash-loop detected, auto-start suppressed".into()
+            "daemon crash-loop detected, auto-start suppressed".into(),
         ));
     }
 
     // Atomic lock — if another proxy already spawned (or is spawning) the daemon,
     // this will fail and we'll just wait for the socket to appear.
     let lock_path = std::path::PathBuf::from("/tmp/arshyd.spawn-lock");
-    let mut lock_file = match OpenOptions::new()
-        .create_new(true)
-        .write(true)
-        .open(&lock_path)
-    {
+    let mut lock_file = match OpenOptions::new().create_new(true).write(true).open(&lock_path) {
         Ok(f) => f,
         Err(_) => {
             tracing::debug!("spawn lock held by another process, skipping spawn");
@@ -815,8 +853,7 @@ fn start_daemon() -> Result<()> {
         .spawn()
         .map_err(|e| {
             let _ = std::fs::remove_file(&lock_path);
-            arshy_lib::ArshyError::DaemonUnreachable(
-            format!("spawn {}: {}", path.display(), e))
+            arshy_lib::ArshyError::DaemonUnreachable(format!("spawn {}: {}", path.display(), e))
         })?;
 
     // Release the lock once the daemon has started.
@@ -850,7 +887,8 @@ fn check_circuit_breaker() -> bool {
     if log.len() >= MAX_CRASHES {
         tracing::error!(
             "circuit breaker tripped: {} daemon crashes in {}s, refusing auto-start",
-            log.len(), CRASH_WINDOW_SECS
+            log.len(),
+            CRASH_WINDOW_SECS
         );
         return false;
     }
@@ -862,8 +900,13 @@ fn record_daemon_crash() {
     let log = guard.get_or_insert_with(Vec::new);
     prune_crash_log(log);
     log.push(Instant::now());
-    tracing::warn!("daemon crash recorded ({}/{}) — {} in last {}s",
-        log.len(), MAX_CRASHES, log.len(), CRASH_WINDOW_SECS);
+    tracing::warn!(
+        "daemon crash recorded ({}/{}) — {} in last {}s",
+        log.len(),
+        MAX_CRASHES,
+        log.len(),
+        CRASH_WINDOW_SECS
+    );
 }
 
 /// Check if an error indicates a broken daemon connection.
@@ -929,11 +972,16 @@ async fn write_json_error<W: tokio::io::AsyncWrite + Unpin>(
     id: u64,
     code: i64,
     message: &str,
+    retryable: bool,
 ) -> Result<()> {
     let response = serde_json::json!({
         "jsonrpc": "2.0",
         "id": id,
-        "error": { "code": code, "message": message }
+        "error": {
+            "code": code,
+            "message": message,
+            "data": { "retryable": retryable }
+        }
     });
     let mut json = serde_json::to_vec(&response)?;
     json.push(b'\n');
@@ -1030,13 +1078,17 @@ mod tests {
         // Timed out
         assert!(is_connection_error(&arshy_lib::ArshyError::Ipc("request timed out".into())));
         // Channel dropped
-        assert!(is_connection_error(&arshy_lib::ArshyError::Ipc("response channel dropped".into())));
+        assert!(is_connection_error(&arshy_lib::ArshyError::Ipc(
+            "response channel dropped".into()
+        )));
         // Broken pipe
         assert!(is_connection_error(&arshy_lib::ArshyError::Ipc("broken pipe".into())));
         // Connection refused
         assert!(is_connection_error(&arshy_lib::ArshyError::Ipc("Connection refused".into())));
         // No such file
-        assert!(is_connection_error(&arshy_lib::ArshyError::Ipc("No such file or directory".into())));
+        assert!(is_connection_error(&arshy_lib::ArshyError::Ipc(
+            "No such file or directory".into()
+        )));
 
         // Non-connection errors
         assert!(!is_connection_error(&arshy_lib::ArshyError::Ipc("parse error".into())));
@@ -1357,8 +1409,10 @@ mod tests {
     fn test_instructions_are_plain_string() {
         let instructions = instructions::default_instructions();
         // Must be a plain string, not a JSON object
-        assert!(serde_json::from_str::<serde_json::Value>(&instructions).is_err(),
-            "instructions should be plain text, not valid JSON");
+        assert!(
+            serde_json::from_str::<serde_json::Value>(&instructions).is_err(),
+            "instructions should be plain text, not valid JSON"
+        );
         assert!(instructions.contains("arshy_exec"));
         assert!(instructions.contains("fallback"));
     }

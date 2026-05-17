@@ -46,10 +46,7 @@ pub fn version_satisfies(actual: &str, min: Option<&str>, max: Option<&str>) -> 
     if min.is_none() && max.is_none() {
         return true;
     }
-    let actual_parts: Vec<u32> = actual
-        .split('.')
-        .filter_map(|s| s.parse().ok())
-        .collect();
+    let actual_parts: Vec<u32> = actual.split('.').filter_map(|s| s.parse().ok()).collect();
     if actual_parts.is_empty() {
         return true; // can't parse actual version — don't filter
     }
@@ -87,11 +84,7 @@ pub async fn probe_version(
     let cmd = version_command(tool)?;
     tracing::debug!("probing version for '{}' via '{}'", tool, cmd);
 
-    let output = tokio::process::Command::new("sh")
-        .args(["-c", cmd])
-        .output()
-        .await
-        .ok()?;
+    let output = tokio::process::Command::new("sh").args(["-c", cmd]).output().await.ok()?;
 
     if !output.status.success() {
         tracing::warn!("version probe for '{}' failed (exit {})", tool, output.status);

@@ -1,7 +1,10 @@
 //! CLI command dispatch — connects to daemon via UDS and executes user commands.
 
 use arshy_lib::config::Config;
-use arshy_lib::ipc::{self, QueryParams, Request, RunTaskParams, METHOD_LIST, METHOD_PRUNE, METHOD_RUN, METHOD_SHUTDOWN, METHOD_STATS, METHOD_STATUS};
+use arshy_lib::ipc::{
+    self, QueryParams, Request, RunTaskParams, METHOD_LIST, METHOD_PRUNE, METHOD_RUN,
+    METHOD_SHUTDOWN, METHOD_STATS, METHOD_STATUS,
+};
 use arshy_lib::Result;
 use std::path::PathBuf;
 
@@ -20,11 +23,10 @@ pub async fn dispatch(cli: Cli) -> Result<()> {
             list_tasks(config_path, log_level, status, limit).await
         }
         Some(CliCommand::Query { task_id, event_type, severity, code, file, limit }) => {
-            query_events(config_path, log_level, task_id, event_type, severity, code, file, limit).await
+            query_events(config_path, log_level, task_id, event_type, severity, code, file, limit)
+                .await
         }
-        Some(CliCommand::Kill { task_id }) => {
-            kill_task(config_path, log_level, &task_id).await
-        }
+        Some(CliCommand::Kill { task_id }) => kill_task(config_path, log_level, &task_id).await,
         Some(CliCommand::Tail { task_id, lines, format }) => {
             tail_task(config_path, log_level, &task_id, lines, &format).await
         }
@@ -50,12 +52,12 @@ pub async fn dispatch(cli: Cli) -> Result<()> {
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
-async fn connect(config_path: Option<PathBuf>, _log_level: Option<String>) -> Result<tokio::net::UnixStream> {
-    let cfg = Config::load(arshy_lib::config::CliOverrides {
-        config_path,
-        ..Default::default()
-    })
-    .unwrap_or_default();
+async fn connect(
+    config_path: Option<PathBuf>,
+    _log_level: Option<String>,
+) -> Result<tokio::net::UnixStream> {
+    let cfg = Config::load(arshy_lib::config::CliOverrides { config_path, ..Default::default() })
+        .unwrap_or_default();
     let socket_path = cfg.daemon.expanded_socket_path();
     ipc::connect(&socket_path).await
 }
@@ -120,15 +122,7 @@ async fn query_events(
     limit: usize,
 ) -> Result<()> {
     let mut daemon = connect(config_path, log_level).await?;
-    let params = QueryParams {
-        task_id,
-        event_type,
-        severity,
-        code,
-        file,
-        limit,
-        offset: 0,
-    };
+    let params = QueryParams { task_id, event_type, severity, code, file, limit, offset: 0 };
     let request = Request {
         jsonrpc: "2.0".into(),
         id: 1,
@@ -190,9 +184,8 @@ fn install() -> Result<()> {
     println!("Registering arshy as MCP server + permissions...");
 
     // Write MCP server to ~/.claude.json (Claude Code's actual config)
-    let claude_json_path = dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("~"))
-        .join(".claude.json");
+    let claude_json_path =
+        dirs::home_dir().unwrap_or_else(|| PathBuf::from("~")).join(".claude.json");
     install_mcp_in_claude_json(&claude_json_path)?;
 
     // Write permissions to ~/.claude/settings.json
@@ -261,7 +254,9 @@ fn install_mcp_in_claude_json(path: &std::path::Path) -> Result<()> {
 
     // Find the installed arshy binary (prefer installed over debug/current_exe)
     let arshy_bin = find_installed_binary("arshy")
-        .or_else(|| std::env::current_exe().ok().filter(|p| !p.to_string_lossy().contains("target")))
+        .or_else(|| {
+            std::env::current_exe().ok().filter(|p| !p.to_string_lossy().contains("target"))
+        })
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_else(|| "arshy".into());
 
@@ -273,12 +268,11 @@ fn install_mcp_in_claude_json(path: &std::path::Path) -> Result<()> {
     });
 
     if let Some(obj) = data.as_object_mut() {
-        let servers = obj
-            .entry("mcpServers")
-            .or_insert_with(|| serde_json::json!({}));
+        let servers = obj.entry("mcpServers").or_insert_with(|| serde_json::json!({}));
         if let Some(map) = servers.as_object_mut() {
             let changed = map.get("arshy").is_none()
-                || map.get("arshy").and_then(|v| v.get("command")) != Some(&serde_json::json!(arshy_bin.clone()));
+                || map.get("arshy").and_then(|v| v.get("command"))
+                    != Some(&serde_json::json!(arshy_bin.clone()));
             map.insert("arshy".into(), arshy_entry);
             if changed {
                 println!("  ✓ MCP server registered (user scope) in {}", path.display());
@@ -302,21 +296,14 @@ fn install_settings_permissions(path: &std::path::Path) -> Result<()> {
     };
 
     if let Some(obj) = settings.as_object_mut() {
-        let perms = obj
-            .entry("permissions")
-            .or_insert_with(|| serde_json::json!({}));
+        let perms = obj.entry("permissions").or_insert_with(|| serde_json::json!({}));
 
-        let allow = perms
-            .as_object_mut()
-            .unwrap()
-            .entry("allow")
-            .or_insert_with(|| serde_json::json!([]));
+        let allow =
+            perms.as_object_mut().unwrap().entry("allow").or_insert_with(|| serde_json::json!([]));
 
         if let Some(arr) = allow.as_array_mut() {
-            let existing: Vec<String> = arr
-                .iter()
-                .filter_map(|v| v.as_str().map(String::from))
-                .collect();
+            let existing: Vec<String> =
+                arr.iter().filter_map(|v| v.as_str().map(String::from)).collect();
             let mut added = 0;
             for perm in ARSHY_PERMISSIONS {
                 if !existing.contains(&perm.to_string()) {
@@ -401,25 +388,20 @@ async fn prune(
             params["older_than"] = serde_json::json!(d);
         }
     }
-    let request = Request {
-        jsonrpc: "2.0".into(),
-        id: 1,
-        method: METHOD_PRUNE.into(),
-        params,
-    };
+    let request = Request { jsonrpc: "2.0".into(), id: 1, method: METHOD_PRUNE.into(), params };
     let response = ipc::send_request(&mut daemon, &request).await?;
     println!("{}", serde_json::to_string_pretty(&response.result)?);
     Ok(())
 }
 
 fn config(action: ConfigAction, config_path: Option<PathBuf>) -> Result<()> {
-    let overrides = arshy_lib::config::CliOverrides {
-        config_path: config_path.clone(),
-        ..Default::default()
-    };
+    let overrides =
+        arshy_lib::config::CliOverrides { config_path: config_path.clone(), ..Default::default() };
     match action {
         ConfigAction::Get { key } => config_get(&key, &overrides),
-        ConfigAction::Set { key, value } => config_set(&key, &value, &overrides, config_path.as_deref()),
+        ConfigAction::Set { key, value } => {
+            config_set(&key, &value, &overrides, config_path.as_deref())
+        }
         ConfigAction::List => {
             let cfg = Config::load(overrides)?;
             println!("{}", toml::to_string_pretty(&cfg)?);
@@ -460,7 +442,12 @@ fn config_get(key: &str, overrides: &arshy_lib::config::CliOverrides) -> Result<
 }
 
 /// Set a config value by dot-separated key path, then write to file.
-fn config_set(key: &str, value: &str, overrides: &arshy_lib::config::CliOverrides, write_path: Option<&std::path::Path>) -> Result<()> {
+fn config_set(
+    key: &str,
+    value: &str,
+    overrides: &arshy_lib::config::CliOverrides,
+    write_path: Option<&std::path::Path>,
+) -> Result<()> {
     let mut cfg = Config::load(overrides.clone())?;
 
     let set_ok = set_config_field(&mut cfg, key, value);
@@ -493,16 +480,31 @@ fn navigate_json<'a>(value: &'a serde_json::Value, path: &str) -> Option<&'a ser
 }
 
 const VALID_KEYS: &[&str] = &[
-    "daemon.socket_path", "daemon.log_level", "daemon.log_format",
-    "daemon.auto_start", "daemon.max_task_duration_ms", "daemon.max_output_bytes",
-    "daemon.kill_graceful_ms", "daemon.kill_force_ms", "daemon.max_concurrent_tasks",
-    "store.db_path", "store.wal_mode", "store.integrity_check",
-    "store.auto_prune", "store.prune_keep", "store.prune_older_than_days",
-    "parser.dirs", "parser.hot_reload", "parser.fallback_to_raw",
-    "parser.default_priority", "parser.coverage_warning_threshold",
+    "daemon.socket_path",
+    "daemon.log_level",
+    "daemon.log_format",
+    "daemon.auto_start",
+    "daemon.max_task_duration_ms",
+    "daemon.max_output_bytes",
+    "daemon.kill_graceful_ms",
+    "daemon.kill_force_ms",
+    "daemon.max_concurrent_tasks",
+    "store.db_path",
+    "store.wal_mode",
+    "store.integrity_check",
+    "store.auto_prune",
+    "store.prune_keep",
+    "store.prune_older_than_days",
+    "parser.dirs",
+    "parser.hot_reload",
+    "parser.fallback_to_raw",
+    "parser.default_priority",
+    "parser.coverage_warning_threshold",
     "parser.version_cache_ttl_hours",
-    "notifications.enabled", "notifications.batch_interval_ms",
-    "notifications.max_batch_events", "notifications.min_severity",
+    "notifications.enabled",
+    "notifications.batch_interval_ms",
+    "notifications.max_batch_events",
+    "notifications.min_severity",
     "mcp.client_detection_order",
     "telemetry.enabled",
 ];
@@ -511,73 +513,135 @@ const SETTABLE_KEYS: &[&str] = VALID_KEYS;
 
 fn set_config_field(cfg: &mut Config, key: &str, value: &str) -> bool {
     match key {
-        "daemon.socket_path" => { cfg.daemon.socket_path = PathBuf::from(value); }
-        "daemon.log_level" => { cfg.daemon.log_level = value.to_string(); }
-        "daemon.log_format" => { cfg.daemon.log_format = value.to_string(); }
-        "daemon.auto_start" => { cfg.daemon.auto_start = parse_bool(value); }
+        "daemon.socket_path" => {
+            cfg.daemon.socket_path = PathBuf::from(value);
+        }
+        "daemon.log_level" => {
+            cfg.daemon.log_level = value.to_string();
+        }
+        "daemon.log_format" => {
+            cfg.daemon.log_format = value.to_string();
+        }
+        "daemon.auto_start" => {
+            cfg.daemon.auto_start = parse_bool(value);
+        }
         "daemon.max_task_duration_ms" => {
-            if let Ok(v) = value.parse() { cfg.daemon.max_task_duration_ms = v; }
-            else { return false; }
+            if let Ok(v) = value.parse() {
+                cfg.daemon.max_task_duration_ms = v;
+            } else {
+                return false;
+            }
         }
         "daemon.max_output_bytes" => {
-            if let Ok(v) = value.parse() { cfg.daemon.max_output_bytes = v; }
-            else { return false; }
+            if let Ok(v) = value.parse() {
+                cfg.daemon.max_output_bytes = v;
+            } else {
+                return false;
+            }
         }
         "daemon.kill_graceful_ms" => {
-            if let Ok(v) = value.parse() { cfg.daemon.kill_graceful_ms = v; }
-            else { return false; }
+            if let Ok(v) = value.parse() {
+                cfg.daemon.kill_graceful_ms = v;
+            } else {
+                return false;
+            }
         }
         "daemon.kill_force_ms" => {
-            if let Ok(v) = value.parse() { cfg.daemon.kill_force_ms = v; }
-            else { return false; }
+            if let Ok(v) = value.parse() {
+                cfg.daemon.kill_force_ms = v;
+            } else {
+                return false;
+            }
         }
         "daemon.max_concurrent_tasks" => {
-            if let Ok(v) = value.parse() { cfg.daemon.max_concurrent_tasks = v; }
-            else { return false; }
+            if let Ok(v) = value.parse() {
+                cfg.daemon.max_concurrent_tasks = v;
+            } else {
+                return false;
+            }
         }
-        "store.db_path" => { cfg.store.db_path = PathBuf::from(value); }
-        "store.wal_mode" => { cfg.store.wal_mode = parse_bool(value); }
-        "store.integrity_check" => { cfg.store.integrity_check = parse_bool(value); }
-        "store.auto_prune" => { cfg.store.auto_prune = parse_bool(value); }
+        "store.db_path" => {
+            cfg.store.db_path = PathBuf::from(value);
+        }
+        "store.wal_mode" => {
+            cfg.store.wal_mode = parse_bool(value);
+        }
+        "store.integrity_check" => {
+            cfg.store.integrity_check = parse_bool(value);
+        }
+        "store.auto_prune" => {
+            cfg.store.auto_prune = parse_bool(value);
+        }
         "store.prune_keep" => {
-            if let Ok(v) = value.parse() { cfg.store.prune_keep = v; }
-            else { return false; }
+            if let Ok(v) = value.parse() {
+                cfg.store.prune_keep = v;
+            } else {
+                return false;
+            }
         }
         "store.prune_older_than_days" => {
-            if let Ok(v) = value.parse() { cfg.store.prune_older_than_days = v; }
-            else { return false; }
+            if let Ok(v) = value.parse() {
+                cfg.store.prune_older_than_days = v;
+            } else {
+                return false;
+            }
         }
         "parser.dirs" => {
             cfg.parser.dirs = value.split(':').map(PathBuf::from).collect();
         }
-        "parser.hot_reload" => { cfg.parser.hot_reload = parse_bool(value); }
-        "parser.fallback_to_raw" => { cfg.parser.fallback_to_raw = parse_bool(value); }
+        "parser.hot_reload" => {
+            cfg.parser.hot_reload = parse_bool(value);
+        }
+        "parser.fallback_to_raw" => {
+            cfg.parser.fallback_to_raw = parse_bool(value);
+        }
         "parser.default_priority" => {
-            if let Ok(v) = value.parse() { cfg.parser.default_priority = v; }
-            else { return false; }
+            if let Ok(v) = value.parse() {
+                cfg.parser.default_priority = v;
+            } else {
+                return false;
+            }
         }
         "parser.coverage_warning_threshold" => {
-            if let Ok(v) = value.parse() { cfg.parser.coverage_warning_threshold = v; }
-            else { return false; }
+            if let Ok(v) = value.parse() {
+                cfg.parser.coverage_warning_threshold = v;
+            } else {
+                return false;
+            }
         }
         "parser.version_cache_ttl_hours" => {
-            if let Ok(v) = value.parse() { cfg.parser.version_cache_ttl_hours = v; }
-            else { return false; }
+            if let Ok(v) = value.parse() {
+                cfg.parser.version_cache_ttl_hours = v;
+            } else {
+                return false;
+            }
         }
-        "notifications.enabled" => { cfg.notifications.enabled = parse_bool(value); }
+        "notifications.enabled" => {
+            cfg.notifications.enabled = parse_bool(value);
+        }
         "notifications.batch_interval_ms" => {
-            if let Ok(v) = value.parse() { cfg.notifications.batch_interval_ms = v; }
-            else { return false; }
+            if let Ok(v) = value.parse() {
+                cfg.notifications.batch_interval_ms = v;
+            } else {
+                return false;
+            }
         }
         "notifications.max_batch_events" => {
-            if let Ok(v) = value.parse() { cfg.notifications.max_batch_events = v; }
-            else { return false; }
+            if let Ok(v) = value.parse() {
+                cfg.notifications.max_batch_events = v;
+            } else {
+                return false;
+            }
         }
-        "notifications.min_severity" => { cfg.notifications.min_severity = value.to_string(); }
+        "notifications.min_severity" => {
+            cfg.notifications.min_severity = value.to_string();
+        }
         "mcp.client_detection_order" => {
             cfg.mcp.client_detection_order = value.split(',').map(String::from).collect();
         }
-        "telemetry.enabled" => { cfg.telemetry.enabled = parse_bool(value); }
+        "telemetry.enabled" => {
+            cfg.telemetry.enabled = parse_bool(value);
+        }
         _ => return false,
     }
     true
@@ -631,10 +695,8 @@ async fn daemon_action(
 }
 
 async fn daemon_start(config_path: Option<PathBuf>) -> Result<()> {
-    let cfg = Config::load(arshy_lib::config::CliOverrides {
-        config_path,
-        ..Default::default()
-    }).unwrap_or_default();
+    let cfg = Config::load(arshy_lib::config::CliOverrides { config_path, ..Default::default() })
+        .unwrap_or_default();
     let socket_path = cfg.daemon.expanded_socket_path();
 
     if ipc::connect(&socket_path).await.is_ok() {
@@ -674,18 +736,15 @@ async fn daemon_stop(config_path: Option<PathBuf>, log_level: Option<String>) ->
 
 /// Install macOS launchd plist for daemon auto-start.
 fn install_launchd() -> Result<()> {
-    let plist_dir = dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("~"))
-        .join("Library")
-        .join("LaunchAgents");
+    let plist_dir =
+        dirs::home_dir().unwrap_or_else(|| PathBuf::from("~")).join("Library").join("LaunchAgents");
     let plist_path = plist_dir.join("com.arshy.daemon.plist");
 
     let arshyd_path = which_arshyd()
         .ok_or_else(|| arshy_lib::ArshyError::Other("arshyd not found in PATH".into()))?;
 
-    let data_dir = dirs::data_dir()
-        .unwrap_or_else(|| PathBuf::from("~/.local/share"))
-        .join("arshy");
+    let data_dir =
+        dirs::data_dir().unwrap_or_else(|| PathBuf::from("~/.local/share")).join("arshy");
     std::fs::create_dir_all(&data_dir)?;
 
     let plist_content = format!(
@@ -804,11 +863,9 @@ fn doctor(config_path: Option<PathBuf>, log_level: Option<String>) -> Result<()>
     // ── 1. Binary checks ──────────────────────────────────────────────────
     println!("1. Binaries");
     let arshy_path = which_arshy_path();
-    check!("arshy in PATH", arshy_path.is_some(),
-        "install with: cargo install arshy");
+    check!("arshy in PATH", arshy_path.is_some(), "install with: cargo install arshy");
     let arshyd_path = which_arshyd();
-    check!("arshyd in PATH", arshyd_path.is_some(),
-        "install with: cargo install arshy");
+    check!("arshyd in PATH", arshyd_path.is_some(), "install with: cargo install arshy");
 
     // ── 2. Daemon ─────────────────────────────────────────────────────────
     println!("\n2. Daemon");
@@ -816,12 +873,12 @@ fn doctor(config_path: Option<PathBuf>, log_level: Option<String>) -> Result<()>
         config_path,
         log_level,
         ..Default::default()
-    }).unwrap_or_default();
+    })
+    .unwrap_or_default();
     let socket_path = cfg.daemon.expanded_socket_path();
     // Check socket file exists (avoids tokio runtime conflict from within block_on)
     let daemon_running = socket_path.exists();
-    check!("daemon is running", daemon_running,
-        "start with: arshy daemon start");
+    check!("daemon is running", daemon_running, "start with: arshy daemon start");
     if !daemon_running {
         hint!("The daemon must be running for MCP calls to work.");
         hint!("Also try: arshy install-launchd  (auto-start on macOS)");
@@ -833,8 +890,7 @@ fn doctor(config_path: Option<PathBuf>, log_level: Option<String>) -> Result<()>
     let claude_dir = home.join(".claude");
     let claude_json_path = home.join(".claude.json");
     let mcp_ok = check_claude_json_mcp(&claude_json_path);
-    check!("arshy entry in ~/.claude.json", mcp_ok,
-        "run: arshy install");
+    check!("arshy entry in ~/.claude.json", mcp_ok, "run: arshy install");
     if !mcp_ok {
         hint!("The MCP server must be registered for Claude Code to see arshy tools.");
     }
@@ -898,9 +954,7 @@ fn check_claude_json_mcp(path: &std::path::Path) -> bool {
         Err(_) => return false,
     };
     // Check top-level mcpServers (user scope)
-    data.get("mcpServers")
-        .and_then(|s| s.get("arshy"))
-        .is_some()
+    data.get("mcpServers").and_then(|s| s.get("arshy")).is_some()
 }
 
 enum PermStatus {
@@ -926,11 +980,7 @@ fn check_permissions(path: &std::path::Path) -> PermStatus {
         .get("permissions")
         .and_then(|p| p.get("allow"))
         .and_then(|a| a.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str().map(String::from))
-                .collect()
-        })
+        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
         .unwrap_or_default();
 
     let missing: Vec<String> = ARSHY_PERMISSIONS

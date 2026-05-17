@@ -55,7 +55,7 @@ impl super::Store {
 
             CREATE INDEX IF NOT EXISTS idx_events_task ON events(task_id, seq);
             CREATE INDEX IF NOT EXISTS idx_events_type_sev ON events(task_id, type, severity);
-            "
+            ",
         )?;
 
         self.run_migrations()?;
@@ -73,7 +73,7 @@ impl super::Store {
             // v2: add index on tasks.started_at for efficient pruning
             conn.execute_batch(
                 "CREATE INDEX IF NOT EXISTS idx_tasks_started ON tasks(started_at);
-                 INSERT INTO schema_version (version) VALUES (2);"
+                 INSERT INTO schema_version (version) VALUES (2);",
             )?;
         }
 
@@ -87,19 +87,20 @@ impl super::Store {
     }
 
     /// Return aggregate stats about tasks and events.
-    pub fn get_stats(&self, db_path: Option<&std::path::Path>) -> Result<arshy_lib::ipc::StatsResponse> {
+    pub fn get_stats(
+        &self,
+        db_path: Option<&std::path::Path>,
+    ) -> Result<arshy_lib::ipc::StatsResponse> {
         use arshy_lib::ipc::StatusCounts;
         let conn = self.lock();
 
-        let total_tasks: u64 = conn
-            .query_row("SELECT COUNT(*) FROM tasks", [], |r| r.get(0))
-            .unwrap_or(0);
+        let total_tasks: u64 =
+            conn.query_row("SELECT COUNT(*) FROM tasks", [], |r| r.get(0)).unwrap_or(0);
 
         let mut counts = StatusCounts::default();
         let mut stmt = conn.prepare("SELECT status, COUNT(*) FROM tasks GROUP BY status")?;
-        let rows = stmt.query_map([], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, u64>(1)?))
-        })?;
+        let rows =
+            stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, u64>(1)?)))?;
         for row in rows {
             let (status, count) = row?;
             // Status is stored as JSON-quoted string (e.g. "\"completed\"")
@@ -114,9 +115,8 @@ impl super::Store {
             }
         }
 
-        let total_events: u64 = conn
-            .query_row("SELECT COUNT(*) FROM events", [], |r| r.get(0))
-            .unwrap_or(0);
+        let total_events: u64 =
+            conn.query_row("SELECT COUNT(*) FROM events", [], |r| r.get(0)).unwrap_or(0);
         let total_errors: u64 = conn
             .query_row("SELECT COUNT(*) FROM events WHERE severity = 'error'", [], |r| r.get(0))
             .unwrap_or(0);
@@ -124,13 +124,16 @@ impl super::Store {
         let avg_duration: Option<f64> = conn
             .query_row(
                 "SELECT AVG(duration_ms) FROM tasks WHERE duration_ms IS NOT NULL",
-                [], |r| r.get(0),
+                [],
+                |r| r.get(0),
             )
             .ok();
 
         // Percentiles via ordered list
         let durations: Vec<u64> = conn
-            .prepare("SELECT duration_ms FROM tasks WHERE duration_ms IS NOT NULL ORDER BY duration_ms")?
+            .prepare(
+                "SELECT duration_ms FROM tasks WHERE duration_ms IS NOT NULL ORDER BY duration_ms",
+            )?
             .query_map([], |r| r.get(0))?
             .filter_map(|r| r.ok())
             .collect();

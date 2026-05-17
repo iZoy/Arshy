@@ -25,10 +25,7 @@ impl Config {
         let mut cfg = Self::default();
 
         // 1. Config file
-        let config_path = overrides
-            .config_path
-            .clone()
-            .or_else(default_config_path);
+        let config_path = overrides.config_path.clone().or_else(default_config_path);
 
         if let Some(path) = &config_path {
             if path.exists() {
@@ -113,9 +110,12 @@ pub fn expand_path(path: &Path) -> PathBuf {
         .replace("${XDG_DATA_HOME}", &xdg_data_home())
         .replace("${XDG_CONFIG_HOME}", &xdg_config_home())
         .replace("${XDG_CACHE_HOME}", &xdg_cache_home())
-        .replace("${HOME}", &dirs::home_dir()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|| "~".into()));
+        .replace(
+            "${HOME}",
+            &dirs::home_dir()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_else(|| "~".into()),
+        );
     PathBuf::from(expanded)
 }
 
@@ -124,8 +124,7 @@ pub fn init_logging(level: &str, format: &str) {
     use tracing_subscriber::prelude::*;
     use tracing_subscriber::{fmt, EnvFilter};
 
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new(level));
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(level));
 
     if format == "json" {
         tracing_subscriber::registry()

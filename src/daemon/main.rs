@@ -10,7 +10,7 @@ mod security;
 mod store;
 mod telemetry;
 
-use arshy_lib::config::{Config, expand_path};
+use arshy_lib::config::{expand_path, Config};
 use arshy_lib::Result;
 use std::sync::Arc;
 use tokio::net::UnixListener;
@@ -99,11 +99,9 @@ async fn main() -> Result<()> {
         kill_graceful_ms: cfg.daemon.kill_graceful_ms,
         kill_force_ms: cfg.daemon.kill_force_ms,
     };
-    let mut executor = exec::Executor::new(
-        store.clone(),
-        parser_engine.clone(),
-        event_bus.clone(),
-    ).with_config(exec_config).with_security(&cfg.security);
+    let mut executor = exec::Executor::new(store.clone(), parser_engine.clone(), event_bus.clone())
+        .with_config(exec_config)
+        .with_security(&cfg.security);
 
     if let Some(ref audit_path) = cfg.security.audit_log {
         let expanded = expand_path(std::path::Path::new(audit_path));
@@ -187,9 +185,7 @@ async fn main() -> Result<()> {
     // Wait for running tasks to finish (with a grace period)
     let drain_deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
     loop {
-        let running = store.list_tasks(Some("running"), 10_000)
-            .map(|t| t.len())
-            .unwrap_or(0);
+        let running = store.list_tasks(Some("running"), 10_000).map(|t| t.len()).unwrap_or(0);
         if running == 0 {
             tracing::info!("all tasks completed, clean shutdown");
             break;

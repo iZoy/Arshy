@@ -64,7 +64,9 @@ impl ArshyError {
         match self {
             Self::TaskTimeout { .. } => true,
             Self::DaemonUnreachable(_) => true,
-            Self::Ipc(msg) if msg.contains("timed out") || msg.contains("connection closed") => true,
+            Self::Ipc(msg) if msg.contains("timed out") || msg.contains("connection closed") => {
+                true
+            }
             Self::Io(_) => true,
             _ => false,
         }

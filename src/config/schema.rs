@@ -5,39 +5,83 @@ use std::path::PathBuf;
 
 // ── Helper defaults ──────────────────────────────────────────────────────────
 
-fn default_socket() -> PathBuf { PathBuf::from("${XDG_DATA_HOME}/arshy/arshyd.sock") }
-fn default_db() -> PathBuf { PathBuf::from("${XDG_DATA_HOME}/arshy/arshy.db") }
-fn default_info() -> String { "info".into() }
-fn default_text() -> String { "text".into() }
-fn d_true() -> bool { true }
-fn d_3600s() -> u64 { 3_600_000 }
-fn d_10mb() -> u64 { 10_485_760 }
-fn d_3s() -> u64 { 3000 }
-fn d_2s() -> u64 { 2000 }
-fn d_4() -> u32 { 4 }
-fn d_1000() -> usize { 1000 }
-fn d_30() -> u32 { 30 }
-fn d_50() -> u32 { 50 }
-fn d_03() -> f64 { 0.3 }
-fn d_24() -> u64 { 24 }
-fn d_100() -> u64 { 100 }
-fn d_50e() -> usize { 50 }
-fn default_dirs() -> Vec<PathBuf> { vec![PathBuf::from("${HOME}/.arshy/parsers")] }
-fn default_clients() -> Vec<String> { vec!["claude-code".into(), "cursor".into(), "windsurf".into()] }
+fn default_socket() -> PathBuf {
+    PathBuf::from("${XDG_DATA_HOME}/arshy/arshyd.sock")
+}
+fn default_db() -> PathBuf {
+    PathBuf::from("${XDG_DATA_HOME}/arshy/arshy.db")
+}
+fn default_info() -> String {
+    "info".into()
+}
+fn default_text() -> String {
+    "text".into()
+}
+fn d_true() -> bool {
+    true
+}
+fn d_3600s() -> u64 {
+    3_600_000
+}
+fn d_10mb() -> u64 {
+    10_485_760
+}
+fn d_3s() -> u64 {
+    3000
+}
+fn d_2s() -> u64 {
+    2000
+}
+fn d_4() -> u32 {
+    4
+}
+fn d_1000() -> usize {
+    1000
+}
+fn d_30() -> u32 {
+    30
+}
+fn d_50() -> u32 {
+    50
+}
+fn d_03() -> f64 {
+    0.3
+}
+fn d_24() -> u64 {
+    24
+}
+fn d_100() -> u64 {
+    100
+}
+fn d_50e() -> usize {
+    50
+}
+fn default_dirs() -> Vec<PathBuf> {
+    vec![PathBuf::from("${HOME}/.arshy/parsers")]
+}
+fn default_clients() -> Vec<String> {
+    vec!["claude-code".into(), "cursor".into(), "windsurf".into()]
+}
 fn default_blocked_patterns() -> Vec<String> {
     vec![
-        r"rm\s+-rf\s+/".into(),        // root deletion
-        r"rm\s+-rf\s+~/".into(),        // home deletion
-        r"curl.*\|\s*sh".into(),        // remote code execution via curl
-        r"wget.*\|\s*sh".into(),        // remote code execution via wget
-        r"dd\s+if=".into(),             // disk overwrite
-        r"mkfs".into(),                 // filesystem format
+        r"rm\s+-rf\s+/".into(),           // root deletion
+        r"rm\s+-rf\s+~/".into(),          // home deletion
+        r"curl.*\|\s*sh".into(),          // remote code execution via curl
+        r"wget.*\|\s*sh".into(),          // remote code execution via wget
+        r"dd\s+if=".into(),               // disk overwrite
+        r"mkfs".into(),                   // filesystem format
         r":\(\)\{\s*:\|:&\s*\};:".into(), // fork bomb
     ]
 }
-fn default_access_level() -> String { "full".into() }
-fn default_sandbox_mode() -> String { "none".into() }
-fn default_backend() -> String { "sqlite".into() }
+fn default_access_level() -> String {
+    "full".into()
+}
+fn default_sandbox_mode() -> String {
+    "none".into()
+}
+fn default_backend() -> String {
+    "sqlite".into()
+}
 
 // ── Top-level ────────────────────────────────────────────────────────────────
 
@@ -57,7 +101,9 @@ pub struct Config {
     pub security: SecurityConfig,
 }
 
-fn default_config_version() -> u32 { 1 }
+fn default_config_version() -> u32 {
+    1
+}
 
 // ── Partial config (all optional — for file merge) ───────────────────────────
 
@@ -126,9 +172,7 @@ partial_section!(PartialMcpConfig {
     client_detection_order: Vec<String>,
 });
 
-partial_section!(PartialTelemetryConfig {
-    enabled: bool,
-});
+partial_section!(PartialTelemetryConfig { enabled: bool });
 
 partial_section!(PartialSecurityConfig {
     blocked_patterns: Vec<String>,

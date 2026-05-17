@@ -39,9 +39,9 @@ impl ParserWatcher {
         for dir in dirs {
             let expanded = arshy_lib::config::expand_path(dir);
             if expanded.is_dir() {
-                watcher
-                    .watch(&expanded, RecursiveMode::NonRecursive)
-                    .map_err(|e| arshy_lib::ArshyError::Config(format!("watch {:?}: {}", expanded, e)))?;
+                watcher.watch(&expanded, RecursiveMode::NonRecursive).map_err(|e| {
+                    arshy_lib::ArshyError::Config(format!("watch {:?}: {}", expanded, e))
+                })?;
                 tracing::debug!("watching parser dir: {}", expanded.display());
             }
         }
@@ -77,16 +77,10 @@ impl ParserWatcher {
 /// Check if a notify event involves parser files.
 fn is_parser_event(event: &Event) -> bool {
     match event.kind {
-        EventKind::Create(_)
-        | EventKind::Modify(_)
-        | EventKind::Remove(_) => {
-            event.paths.iter().any(|p| {
-                matches!(
-                    p.extension().and_then(|e| e.to_str()),
-                    Some("toml") | Some("rhai")
-                )
-            })
-        }
+        EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_) => event
+            .paths
+            .iter()
+            .any(|p| matches!(p.extension().and_then(|e| e.to_str()), Some("toml") | Some("rhai"))),
         _ => false,
     }
 }
@@ -108,7 +102,9 @@ mod tests {
     #[test]
     fn test_is_parser_event_rhai() {
         let event = Event {
-            kind: EventKind::Modify(notify::event::ModifyKind::Data(notify::event::DataChange::Content)),
+            kind: EventKind::Modify(notify::event::ModifyKind::Data(
+                notify::event::DataChange::Content,
+            )),
             paths: vec![PathBuf::from("/tmp/custom.rhai")],
             attrs: Default::default(),
         };
@@ -118,7 +114,9 @@ mod tests {
     #[test]
     fn test_is_parser_event_non_parser() {
         let event = Event {
-            kind: EventKind::Modify(notify::event::ModifyKind::Data(notify::event::DataChange::Content)),
+            kind: EventKind::Modify(notify::event::ModifyKind::Data(
+                notify::event::DataChange::Content,
+            )),
             paths: vec![PathBuf::from("/tmp/readme.md")],
             attrs: Default::default(),
         };
@@ -129,10 +127,7 @@ mod tests {
     fn test_is_parser_event_mixed_paths() {
         let event = Event {
             kind: EventKind::Create(notify::event::CreateKind::File),
-            paths: vec![
-                PathBuf::from("/tmp/data.txt"),
-                PathBuf::from("/tmp/parser.toml"),
-            ],
+            paths: vec![PathBuf::from("/tmp/data.txt"), PathBuf::from("/tmp/parser.toml")],
             attrs: Default::default(),
         };
         assert!(is_parser_event(&event));

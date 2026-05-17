@@ -17,11 +17,13 @@ impl super::Store {
 
         // Find the started_at cutoff: the oldest timestamp to keep
         // OFFSET is 0-indexed, so OFFSET (keep-1) selects the keep-th most recent
-        let cutoff: Option<String> = conn.query_row(
-            "SELECT started_at FROM tasks ORDER BY started_at DESC LIMIT 1 OFFSET ?1",
-            rusqlite::params![keep as i64 - 1],
-            |r| r.get(0),
-        ).ok();
+        let cutoff: Option<String> = conn
+            .query_row(
+                "SELECT started_at FROM tasks ORDER BY started_at DESC LIMIT 1 OFFSET ?1",
+                rusqlite::params![keep as i64 - 1],
+                |r| r.get(0),
+            )
+            .ok();
 
         if cutoff.is_none() {
             return Ok((0, 0));

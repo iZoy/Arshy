@@ -31,14 +31,8 @@ impl AuditLog {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let file = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(path)?;
-        Ok(Self {
-            path: path.to_path_buf(),
-            file: Mutex::new(file),
-        })
+        let file = std::fs::OpenOptions::new().create(true).append(true).open(path)?;
+        Ok(Self { path: path.to_path_buf(), file: Mutex::new(file) })
     }
 
     /// Append a single entry as a JSON line.

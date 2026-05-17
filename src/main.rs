@@ -127,9 +127,7 @@ fn main() -> arshy_lib::Result<()> {
     if cli.from_mcp {
         proxy::run(cli.config)
     } else {
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()?;
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
         rt.block_on(cli::dispatch(cli))
     }
 }

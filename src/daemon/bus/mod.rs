@@ -14,15 +14,32 @@ pub struct BusEvent {
 
 #[derive(Debug, Clone)]
 pub enum BusEventKind {
-    TaskUpdate { task_id: String, status: String, elapsed_ms: u64 },
-    TaskComplete { task_id: String, exit_code: i32, duration_ms: u64 },
-    Diagnostic { task_id: String, event: arshy_lib::ipc::TaskEvent },
+    TaskUpdate {
+        task_id: String,
+        status: String,
+        elapsed_ms: u64,
+    },
+    TaskComplete {
+        task_id: String,
+        exit_code: i32,
+        duration_ms: u64,
+    },
+    Diagnostic {
+        task_id: String,
+        event: arshy_lib::ipc::TaskEvent,
+    },
     #[allow(dead_code)] // future: graceful shutdown notification
-    DaemonShutdown { reason: String, grace_period_ms: u64 },
+    DaemonShutdown {
+        reason: String,
+        grace_period_ms: u64,
+    },
     /// Reserved: stream real-time output for `tail -f` / interactive PTY.
     /// Not currently produced by any code path.
     #[allow(dead_code)]
-    StreamOutput { task_id: String, data: String },
+    StreamOutput {
+        task_id: String,
+        data: String,
+    },
 }
 
 /// Multi-producer, multi-consumer event bus.

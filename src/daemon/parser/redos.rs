@@ -93,7 +93,9 @@ fn has_nested_quantifier(regex: &str) -> bool {
             b'[' => {
                 // Skip character class
                 while i < len && bytes[i] != b']' {
-                    if bytes[i] == b'\\' { i += 1; }
+                    if bytes[i] == b'\\' {
+                        i += 1;
+                    }
                     i += 1;
                 }
                 i += 1; // skip ']'
@@ -135,16 +137,15 @@ fn has_overlapping_alternation(regex: &str) -> bool {
                 group_end += 1;
             }
             let group_content = &regex[group_start..group_end];
-            let is_quantified = group_end + 1 < len
-                && matches!(bytes[group_end + 1], b'+' | b'*' | b'{');
+            let is_quantified =
+                group_end + 1 < len && matches!(bytes[group_end + 1], b'+' | b'*' | b'{');
 
             if is_quantified && group_content.contains('|') {
                 // Collect alternation branches
                 let branches: Vec<&str> = group_content.split('|').collect();
                 for j in 0..branches.len() {
                     for k in 0..branches.len() {
-                        if j != k && !branches[j].is_empty()
-                            && branches[k].starts_with(branches[j])
+                        if j != k && !branches[j].is_empty() && branches[k].starts_with(branches[j])
                         {
                             return true;
                         }

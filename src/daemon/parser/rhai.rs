@@ -35,16 +35,9 @@ use regex::Regex;
 /// created per call to keep `ParserSession` `Send`-compatible with tokio.
 pub enum StatefulParser {
     #[allow(private_interfaces)]
-    Patterns {
-        name: String,
-        patterns: Vec<StatefulPattern>,
-        state: std::sync::Mutex<ParserState>,
-    },
+    Patterns { name: String, patterns: Vec<StatefulPattern>, state: std::sync::Mutex<ParserState> },
     #[allow(private_interfaces)]
-    Script {
-        source: String,
-        state: std::sync::Mutex<ScriptState>,
-    },
+    Script { source: String, state: std::sync::Mutex<ScriptState> },
 }
 
 /// A regex pattern with state-machine transitions.
@@ -145,14 +138,10 @@ impl StatefulParser {
     pub fn with_script(script: &str) -> Result<Self, String> {
         // Validate syntax with a temporary engine.
         let engine = rhai::Engine::new();
-        engine
-            .compile(script)
-            .map_err(|e| format!("rhai compile error: {}", e))?;
+        engine.compile(script).map_err(|e| format!("rhai compile error: {}", e))?;
         Ok(Self::Script {
             source: script.to_string(),
-            state: std::sync::Mutex::new(ScriptState {
-                values: std::collections::HashMap::new(),
-            }),
+            state: std::sync::Mutex::new(ScriptState { values: std::collections::HashMap::new() }),
         })
     }
 
@@ -174,24 +163,16 @@ impl StatefulParser {
     /// Feed one line to the stateful parser. Returns any events generated.
     pub fn feed_line(&self, line: &str, seq: u64) -> Vec<TaskEvent> {
         match self {
-            Self::Patterns { patterns, state, .. } => {
-                feed_patterns(patterns, state, line, seq)
-            }
-            Self::Script { source, state, .. } => {
-                feed_script(source, state, line, seq)
-            }
+            Self::Patterns { patterns, state, .. } => feed_patterns(patterns, state, line, seq),
+            Self::Script { source, state, .. } => feed_script(source, state, line, seq),
         }
     }
 
     /// Called on command completion — emit final events.
     pub fn on_complete(&self, exit_code: i32, seq: u64) -> Vec<TaskEvent> {
         match self {
-            Self::Patterns { name, state, .. } => {
-                on_complete_patterns(name, state, exit_code, seq)
-            }
-            Self::Script { source, state, .. } => {
-                on_complete_script(source, state, exit_code, seq)
-            }
+            Self::Patterns { name, state, .. } => on_complete_patterns(name, state, exit_code, seq),
+            Self::Script { source, state, .. } => on_complete_script(source, state, exit_code, seq),
         }
     }
 
@@ -230,7 +211,8 @@ fn feed_patterns(
         }
 
         if let Some(caps) = pat.regex.captures(line) {
-            let message = pat.message_group
+            let message = pat
+                .message_group
                 .and_then(|i| caps.get(i))
                 .map(|m| m.as_str().trim().to_string())
                 .unwrap_or_else(|| line.to_string());
@@ -238,7 +220,8 @@ fn feed_patterns(
             let location = if let Some(fi) = pat.file_group {
                 caps.get(fi).map(|m| EventLocation {
                     file: m.as_str().to_string(),
-                    line: pat.line_group
+                    line: pat
+                        .line_group
                         .and_then(|li| caps.get(li))
                         .and_then(|m| m.as_str().parse().ok())
                         .unwrap_or(0),
@@ -321,23 +304,26 @@ fn register_ctx_api(engine: &mut rhai::Engine) {
         });
     });
 
-    engine.register_fn("emit", |ctx: &mut RhaiCtx, typ: &str, sev: &str, msg: &str, file: &str, line: i64| {
-        let mut evts = ctx.events.borrow_mut();
-        let seq = ctx.seq + evts.len() as u64;
-        evts.push(TaskEvent {
-            seq,
-            event_type: typ.to_string(),
-            severity: Some(sev.to_string()),
-            code: None,
-            message: msg.to_string(),
-            location: Some(EventLocation {
-                file: file.to_string(),
-                line: line as u64,
-                column: None,
-            }),
-            context: None,
-        });
-    });
+    engine.register_fn(
+        "emit",
+        |ctx: &mut RhaiCtx, typ: &str, sev: &str, msg: &str, file: &str, line: i64| {
+            let mut evts = ctx.events.borrow_mut();
+            let seq = ctx.seq + evts.len() as u64;
+            evts.push(TaskEvent {
+                seq,
+                event_type: typ.to_string(),
+                severity: Some(sev.to_string()),
+                code: None,
+                message: msg.to_string(),
+                location: Some(EventLocation {
+                    file: file.to_string(),
+                    line: line as u64,
+                    column: None,
+                }),
+                context: None,
+            });
+        },
+    );
 
     engine.register_fn("set", |ctx: &mut RhaiCtx, key: &str, value: rhai::Dynamic| {
         ctx.values.borrow_mut().insert(key.to_string(), SendValue::from_dynamic(&value));
@@ -370,11 +356,7 @@ fn feed_script(
         }
     }
 
-    let ctx = RhaiCtx {
-        events: events_rc.clone(),
-        values: values_rc.clone(),
-        seq,
-    };
+    let ctx = RhaiCtx { events: events_rc.clone(), values: values_rc.clone(), seq };
 
     let mut engine = rhai::Engine::new();
     register_ctx_api(&mut engine);
@@ -422,11 +404,7 @@ fn on_complete_script(
         }
     }
 
-    let ctx = RhaiCtx {
-        events: events_rc.clone(),
-        values: values_rc.clone(),
-        seq,
-    };
+    let ctx = RhaiCtx { events: events_rc.clone(), values: values_rc.clone(), seq };
 
     let mut engine = rhai::Engine::new();
     register_ctx_api(&mut engine);
@@ -440,7 +418,8 @@ fn on_complete_script(
     };
 
     let mut scope = rhai::Scope::new();
-    let result: Result<(), _> = engine.call_fn(&mut scope, &ast, "on_complete", (exit_code as i64, ctx));
+    let result: Result<(), _> =
+        engine.call_fn(&mut scope, &ast, "on_complete", (exit_code as i64, ctx));
     if let Err(e) = result {
         tracing::debug!("rhai on_complete error: {}", e);
     }
@@ -476,7 +455,8 @@ fn npm_stateful_patterns() -> Vec<StatefulPattern> {
             line_group: None,
             state_condition: None,
             state_transition: Some(("packages_added".into(), "done".into())),
-            deprecated: false, replaced_by: None,
+            deprecated: false,
+            replaced_by: None,
         },
         // npm ERR! code ERESOLVE
         StatefulPattern {
@@ -488,7 +468,8 @@ fn npm_stateful_patterns() -> Vec<StatefulPattern> {
             line_group: None,
             state_condition: None,
             state_transition: Some(("has_error".into(), "true".into())),
-            deprecated: false, replaced_by: None,
+            deprecated: false,
+            replaced_by: None,
         },
         // npm WARN deprecated ...
         StatefulPattern {
@@ -499,7 +480,9 @@ fn npm_stateful_patterns() -> Vec<StatefulPattern> {
             file_group: None,
             line_group: None,
             state_condition: None,
-            state_transition: None, deprecated: false, replaced_by: None,
+            state_transition: None,
+            deprecated: false,
+            replaced_by: None,
         },
         // up to date, audited X packages
         StatefulPattern {
@@ -510,7 +493,9 @@ fn npm_stateful_patterns() -> Vec<StatefulPattern> {
             file_group: None,
             line_group: None,
             state_condition: None,
-            state_transition: None, deprecated: false, replaced_by: None,
+            state_transition: None,
+            deprecated: false,
+            replaced_by: None,
         },
         // audited X packages in Ys
         StatefulPattern {
@@ -521,7 +506,9 @@ fn npm_stateful_patterns() -> Vec<StatefulPattern> {
             file_group: None,
             line_group: None,
             state_condition: None,
-            state_transition: None, deprecated: false, replaced_by: None,
+            state_transition: None,
+            deprecated: false,
+            replaced_by: None,
         },
     ]
 }
@@ -538,7 +525,8 @@ fn webpack_patterns() -> Vec<StatefulPattern> {
             line_group: None,
             state_condition: None,
             state_transition: Some(("has_error".into(), "true".into())),
-            deprecated: false, replaced_by: None,
+            deprecated: false,
+            replaced_by: None,
         },
         // WARNING in ./src/index.ts
         StatefulPattern {
@@ -549,7 +537,9 @@ fn webpack_patterns() -> Vec<StatefulPattern> {
             file_group: None,
             line_group: None,
             state_condition: None,
-            state_transition: None, deprecated: false, replaced_by: None,
+            state_transition: None,
+            deprecated: false,
+            replaced_by: None,
         },
     ]
 }

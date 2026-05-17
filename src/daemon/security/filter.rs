@@ -16,28 +16,19 @@ impl CommandFilter {
     pub fn from_config(config: &SecurityConfig) -> Result<Self> {
         let mut blocked_patterns = Vec::with_capacity(config.blocked_patterns.len());
         for p in &config.blocked_patterns {
-            blocked_patterns.push(
-                regex::Regex::new(p)
-                    .map_err(|e| ArshyError::Config(format!(
-                        "invalid blocked pattern '{}': {}", p, e
-                    )))?
-            );
+            blocked_patterns.push(regex::Regex::new(p).map_err(|e| {
+                ArshyError::Config(format!("invalid blocked pattern '{}': {}", p, e))
+            })?);
         }
 
         let allowed_commands = config.allowed_commands.clone();
 
-        Ok(Self {
-            blocked_patterns,
-            allowed_commands,
-        })
+        Ok(Self { blocked_patterns, allowed_commands })
     }
 
     /// Create a permissive filter (no blocked patterns, no whitelist).
     pub fn permissive() -> Self {
-        Self {
-            blocked_patterns: Vec::new(),
-            allowed_commands: None,
-        }
+        Self { blocked_patterns: Vec::new(), allowed_commands: None }
     }
 
     /// Check if a command is allowed. Returns `Ok(())` or `Err` with reason.
@@ -55,10 +46,7 @@ impl CommandFilter {
         // 2. Check whitelist (if enabled)
         if let Some(ref allowed) = self.allowed_commands {
             let first_word = command.split_whitespace().next().unwrap_or("");
-            let cmd_name = first_word
-                .rsplit('/')
-                .next()
-                .unwrap_or(first_word);
+            let cmd_name = first_word.rsplit('/').next().unwrap_or(first_word);
             if !allowed.iter().any(|a| a == cmd_name) {
                 return Err(ArshyError::Ipc(format!(
                     "command blocked: '{}' not in whitelist",
@@ -186,10 +174,8 @@ mod tests {
 
     #[test]
     fn whitelist_still_respects_blocked_patterns() {
-        let config = SecurityConfig {
-            allowed_commands: Some(vec!["rm".into()]),
-            ..Default::default()
-        };
+        let config =
+            SecurityConfig { allowed_commands: Some(vec!["rm".into()]), ..Default::default() };
         let filter = CommandFilter::from_config(&config).unwrap();
 
         // rm is whitelisted, but rm -rf / is still blocked
@@ -200,10 +186,8 @@ mod tests {
 
     #[test]
     fn whitelist_handles_path_prefix() {
-        let config = SecurityConfig {
-            allowed_commands: Some(vec!["cargo".into()]),
-            ..Default::default()
-        };
+        let config =
+            SecurityConfig { allowed_commands: Some(vec!["cargo".into()]), ..Default::default() };
         let filter = CommandFilter::from_config(&config).unwrap();
 
         // /usr/bin/cargo should match "cargo" after stripping path

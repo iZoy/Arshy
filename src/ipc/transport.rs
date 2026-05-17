@@ -111,7 +111,11 @@ impl DaemonConnection {
     /// Send a JSON-RPC request and wait for the response.
     ///
     /// Times out after 60 seconds if no response arrives.
-    pub async fn send_request(&mut self, method: &str, params: serde_json::Value) -> Result<Response> {
+    pub async fn send_request(
+        &mut self,
+        method: &str,
+        params: serde_json::Value,
+    ) -> Result<Response> {
         self.send_request_with_timeout(method, params, std::time::Duration::from_secs(60)).await
     }
 
@@ -135,7 +139,9 @@ impl DaemonConnection {
             "params": params,
         });
 
-        self.write_tx.send(request).await
+        self.write_tx
+            .send(request)
+            .await
             .map_err(|_| crate::ArshyError::Ipc("daemon connection closed".into()))?;
 
         match tokio::time::timeout(timeout, rx).await {
@@ -145,7 +151,9 @@ impl DaemonConnection {
                 // Clean up the pending entry on timeout
                 self.pending.lock().await.remove(&id);
                 Err(crate::ArshyError::Ipc(format!(
-                    "request '{}' timed out after {}s", method, timeout.as_secs()
+                    "request '{}' timed out after {}s",
+                    method,
+                    timeout.as_secs()
                 )))
             }
         }
@@ -161,7 +169,9 @@ impl DaemonConnection {
             match serde_json::to_vec(&json) {
                 Ok(mut bytes) => {
                     bytes.push(b'\n');
-                    if writer.write_all(&bytes).await.is_err() { break; }
+                    if writer.write_all(&bytes).await.is_err() {
+                        break;
+                    }
                     let _ = writer.flush().await;
                 }
                 Err(_) => continue,
@@ -181,8 +191,12 @@ impl DaemonConnection {
                 Ok(n) => n,
                 Err(_) => break,
             };
-            if n == 0 { break; }
-            if line.trim().is_empty() { continue; }
+            if n == 0 {
+                break;
+            }
+            if line.trim().is_empty() {
+                continue;
+            }
 
             let val: serde_json::Value = match serde_json::from_str(line.trim()) {
                 Ok(v) => v,
@@ -308,7 +322,8 @@ mod tests {
             write_line(&mut sw, &resp).await;
         });
 
-        let response = conn.send_request("task/run", serde_json::json!({"command": "echo hi"})).await.unwrap();
+        let response =
+            conn.send_request("task/run", serde_json::json!({"command": "echo hi"})).await.unwrap();
         assert_eq!(response.result["task_id"], "abc-123");
         assert_eq!(response.result["status"], "running");
         handle.await.unwrap();
@@ -327,11 +342,13 @@ mod tests {
             let _ = reader.read_line(&mut line).await;
         });
 
-        let result = conn.send_request_with_timeout(
-            "task/run",
-            serde_json::json!({}),
-            std::time::Duration::from_millis(100),
-        ).await;
+        let result = conn
+            .send_request_with_timeout(
+                "task/run",
+                serde_json::json!({}),
+                std::time::Duration::from_millis(100),
+            )
+            .await;
 
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
@@ -454,11 +471,13 @@ mod tests {
         let (mut conn, _notif_rx) = DaemonConnection::new(client);
         drop(server);
 
-        let result = conn.send_request_with_timeout(
-            "test",
-            serde_json::json!({}),
-            std::time::Duration::from_millis(500),
-        ).await;
+        let result = conn
+            .send_request_with_timeout(
+                "test",
+                serde_json::json!({}),
+                std::time::Duration::from_millis(500),
+            )
+            .await;
         assert!(result.is_err());
     }
 

@@ -46,10 +46,7 @@ impl Engine {
     /// Build the engine from config: load builtin + filesystem parsers.
     pub fn new(config: &ParserConfig) -> Result<Self> {
         let registry = ParserRegistry::load(config)?;
-        Ok(Self {
-            registry: Arc::new(RwLock::new(registry)),
-            config: config.clone(),
-        })
+        Ok(Self { registry: Arc::new(RwLock::new(registry)), config: config.clone() })
     }
 
     /// Start the filesystem watcher for hot-reload (if configured).
@@ -62,16 +59,14 @@ impl Engine {
         let config = self.config.clone();
         let watcher = loader::ParserWatcher::start(&self.config.dirs, move || {
             match ParserRegistry::load(&config) {
-                Ok(new_registry) => {
-                    match registry.write() {
-                        Ok(mut reg) => {
-                            let audit = reg.diff(&new_registry);
-                            tracing::info!("parser hot-reload: {}", audit);
-                            *reg = new_registry;
-                        }
-                        Err(e) => tracing::error!("registry lock poisoned: {}", e),
+                Ok(new_registry) => match registry.write() {
+                    Ok(mut reg) => {
+                        let audit = reg.diff(&new_registry);
+                        tracing::info!("parser hot-reload: {}", audit);
+                        *reg = new_registry;
                     }
-                }
+                    Err(e) => tracing::error!("registry lock poisoned: {}", e),
+                },
                 Err(e) => tracing::error!("parser reload failed: {}", e),
             }
         })?;
@@ -82,7 +77,9 @@ impl Engine {
     #[allow(dead_code)]
     pub fn reload(&self) -> Result<()> {
         let new_registry = ParserRegistry::load(&self.config)?;
-        let mut reg = self.registry.write()
+        let mut reg = self
+            .registry
+            .write()
             .map_err(|_| arshy_lib::ArshyError::Other("registry lock poisoned".into()))?;
         let audit = reg.diff(&new_registry);
         tracing::info!("parser reload: {}", audit);
@@ -139,12 +136,15 @@ impl Engine {
                     if entry.deprecated_count > 0 {
                         tracing::warn!(
                             "parser '{}' has {} deprecated pattern(s); consider updating",
-                            entry.name, entry.deprecated_count
+                            entry.name,
+                            entry.deprecated_count
                         );
                     }
 
                     // Filter line patterns: skip deprecated patterns that have a replacement
-                    let line_patterns: Vec<toml::LinePattern> = entry.line_patterns.iter()
+                    let line_patterns: Vec<toml::LinePattern> = entry
+                        .line_patterns
+                        .iter()
                         .filter(|p| {
                             if p.deprecated {
                                 if p.replaced_by.is_some() {
@@ -179,10 +179,7 @@ impl Engine {
                         .collect();
 
                     let stateful = if !stateful_patterns.is_empty() {
-                        Some(rhai::StatefulParser::with_patterns(
-                            &entry.name,
-                            stateful_patterns,
-                        ))
+                        Some(rhai::StatefulParser::with_patterns(&entry.name, stateful_patterns))
                     } else if let Some(ref script) = entry.rhai_script {
                         match rhai::StatefulParser::with_script(script) {
                             Ok(p) => Some(p),
@@ -245,10 +242,7 @@ pub struct ParserSession {
 
 impl ParserSession {
     fn raw() -> Self {
-        Self {
-            toml_parser: None,
-            stateful: None,
-        }
+        Self { toml_parser: None, stateful: None }
     }
 
     /// Parse one line of output.
@@ -322,12 +316,15 @@ mod harness_tests {
         line_ok: usize,
     }
 
-    fn run_fixture(parser_name: &str, txt_path: &std::path::Path, json_path: &std::path::Path) -> (usize, usize, FieldStats) {
+    fn run_fixture(
+        parser_name: &str,
+        txt_path: &std::path::Path,
+        json_path: &std::path::Path,
+    ) -> (usize, usize, FieldStats) {
         let config = ParserConfig::default();
         let engine = Engine::new(&config).unwrap();
         // Try direct name lookup first (parser name != command name for multi-word tools)
-        let tool = engine.get_by_name(parser_name)
-            .or_else(|| engine.detect(parser_name));
+        let tool = engine.get_by_name(parser_name).or_else(|| engine.detect(parser_name));
         let session = engine.create_session(tool.as_ref());
 
         let txt = std::fs::read_to_string(txt_path).unwrap();
@@ -340,37 +337,61 @@ mod harness_tests {
 
         // ── Bless mode: write actual output as expected JSON ──────────────
         if std::env::var("ARSHY_BLESS").is_ok() {
-            let events_json: Vec<serde_json::Value> = all_events.iter().map(|e| {
-                let mut obj = serde_json::json!({
-                    "type": e.event_type,
-                    "severity": e.severity,
-                });
-                if let Some(ref code) = e.code { obj["code"] = serde_json::json!(code); }
-                obj["message"] = serde_json::json!(e.message);
-                if let Some(ref loc) = e.location {
-                    obj["file"] = serde_json::json!(loc.file);
-                    obj["line"] = serde_json::json!(loc.line);
-                }
-                obj
-            }).collect();
+            let events_json: Vec<serde_json::Value> = all_events
+                .iter()
+                .map(|e| {
+                    let mut obj = serde_json::json!({
+                        "type": e.event_type,
+                        "severity": e.severity,
+                    });
+                    if let Some(ref code) = e.code {
+                        obj["code"] = serde_json::json!(code);
+                    }
+                    obj["message"] = serde_json::json!(e.message);
+                    if let Some(ref loc) = e.location {
+                        obj["file"] = serde_json::json!(loc.file);
+                        obj["line"] = serde_json::json!(loc.line);
+                    }
+                    obj
+                })
+                .collect();
             let json_out = serde_json::to_string_pretty(&events_json).unwrap();
             std::fs::write(json_path, json_out + "\n").unwrap();
             eprintln!("BLESSED: {} ({} events)", json_path.display(), all_events.len());
-            return (0, 0, FieldStats { total: 0, type_ok: 0, severity_ok: 0, code_ok: 0, file_ok: 0, line_ok: 0 });
+            return (
+                0,
+                0,
+                FieldStats {
+                    total: 0,
+                    type_ok: 0,
+                    severity_ok: 0,
+                    code_ok: 0,
+                    file_ok: 0,
+                    line_ok: 0,
+                },
+            );
         }
 
         let json = std::fs::read_to_string(json_path).unwrap();
         let expected: Vec<serde_json::Value> = serde_json::from_str(&json).unwrap();
 
         let mut matched = 0;
-        let mut stats = FieldStats { total: expected.len(), type_ok: 0, severity_ok: 0, code_ok: 0, file_ok: 0, line_ok: 0 };
+        let mut stats = FieldStats {
+            total: expected.len(),
+            type_ok: 0,
+            severity_ok: 0,
+            code_ok: 0,
+            file_ok: 0,
+            line_ok: 0,
+        };
         for (i, exp) in expected.iter().enumerate() {
             if i >= all_events.len() {
                 break;
             }
             let event = &all_events[i];
             let type_ok = exp.get("type").is_none_or(|v| v.as_str() == Some(&event.event_type));
-            let sev_ok = exp.get("severity").is_none_or(|v| v.as_str() == event.severity.as_deref());
+            let sev_ok =
+                exp.get("severity").is_none_or(|v| v.as_str() == event.severity.as_deref());
             let code_ok = exp.get("code").is_none_or(|v| v.as_str() == event.code.as_deref());
             let file_ok = exp.get("file").is_none_or(|v| {
                 event.location.as_ref().is_some_and(|loc| v.as_str() == Some(&loc.file))
@@ -379,11 +400,21 @@ mod harness_tests {
                 event.location.as_ref().is_some_and(|loc| v.as_u64() == Some(loc.line))
             });
 
-            if type_ok { stats.type_ok += 1; }
-            if sev_ok { stats.severity_ok += 1; }
-            if code_ok { stats.code_ok += 1; }
-            if file_ok { stats.file_ok += 1; }
-            if line_ok { stats.line_ok += 1; }
+            if type_ok {
+                stats.type_ok += 1;
+            }
+            if sev_ok {
+                stats.severity_ok += 1;
+            }
+            if code_ok {
+                stats.code_ok += 1;
+            }
+            if file_ok {
+                stats.file_ok += 1;
+            }
+            if line_ok {
+                stats.line_ok += 1;
+            }
 
             if type_ok && sev_ok && code_ok && file_ok && line_ok {
                 matched += 1;
@@ -394,7 +425,9 @@ mod harness_tests {
 
     /// Format per-field match rates for assertion messages.
     fn field_scores(stats: &FieldStats) -> String {
-        if stats.total == 0 { return String::new(); }
+        if stats.total == 0 {
+            return String::new();
+        }
         format!(
             "type={:.0}% sev={:.0}% code={:.0}% file={:.0}% line={:.0}%",
             stats.type_ok as f64 / stats.total as f64 * 100.0,
@@ -430,70 +463,113 @@ mod harness_tests {
                 "parser '{}' fixture '{}': {:.0}% ({} / {}) [{}]",
                 parser_name,
                 txt_path.file_stem().unwrap().to_str().unwrap(),
-                score * 100.0, matched, total, per_field
+                score * 100.0,
+                matched,
+                total,
+                per_field
             );
         }
     }
 
     #[test]
-    fn fixture_tsc() { run_parser_fixtures("tsc"); }
+    fn fixture_tsc() {
+        run_parser_fixtures("tsc");
+    }
 
     #[test]
-    fn fixture_cargo() { run_parser_fixtures("cargo"); }
+    fn fixture_cargo() {
+        run_parser_fixtures("cargo");
+    }
 
     #[test]
-    fn fixture_jest() { run_parser_fixtures("jest"); }
+    fn fixture_jest() {
+        run_parser_fixtures("jest");
+    }
 
     #[test]
-    fn fixture_eslint() { run_parser_fixtures("eslint"); }
+    fn fixture_eslint() {
+        run_parser_fixtures("eslint");
+    }
 
     #[test]
-    fn fixture_go() { run_parser_fixtures("go"); }
+    fn fixture_go() {
+        run_parser_fixtures("go");
+    }
 
     #[test]
-    fn fixture_python() { run_parser_fixtures("python"); }
+    fn fixture_python() {
+        run_parser_fixtures("python");
+    }
 
     #[test]
-    fn fixture_webpack() { run_parser_fixtures("webpack"); }
+    fn fixture_webpack() {
+        run_parser_fixtures("webpack");
+    }
 
     #[test]
-    fn fixture_cargo_test() { run_parser_fixtures("cargo-test"); }
+    fn fixture_cargo_test() {
+        run_parser_fixtures("cargo-test");
+    }
 
     #[test]
-    fn fixture_cc() { run_parser_fixtures("cc"); }
+    fn fixture_cc() {
+        run_parser_fixtures("cc");
+    }
 
     #[test]
-    fn fixture_clippy() { run_parser_fixtures("clippy"); }
+    fn fixture_clippy() {
+        run_parser_fixtures("clippy");
+    }
 
     #[test]
-    fn fixture_esbuild() { run_parser_fixtures("esbuild"); }
+    fn fixture_esbuild() {
+        run_parser_fixtures("esbuild");
+    }
 
     #[test]
-    fn fixture_gradle() { run_parser_fixtures("gradle"); }
+    fn fixture_gradle() {
+        run_parser_fixtures("gradle");
+    }
 
     #[test]
-    fn fixture_make() { run_parser_fixtures("make"); }
+    fn fixture_make() {
+        run_parser_fixtures("make");
+    }
 
     #[test]
-    fn fixture_mocha() { run_parser_fixtures("mocha"); }
+    fn fixture_mocha() {
+        run_parser_fixtures("mocha");
+    }
 
     #[test]
-    fn fixture_npm() { run_parser_fixtures("npm"); }
+    fn fixture_npm() {
+        run_parser_fixtures("npm");
+    }
 
     #[test]
-    fn fixture_pip() { run_parser_fixtures("pip"); }
+    fn fixture_pip() {
+        run_parser_fixtures("pip");
+    }
 
     #[test]
-    fn fixture_pnpm() { run_parser_fixtures("pnpm"); }
+    fn fixture_pnpm() {
+        run_parser_fixtures("pnpm");
+    }
 
     #[test]
-    fn fixture_prettier() { run_parser_fixtures("prettier"); }
+    fn fixture_prettier() {
+        run_parser_fixtures("prettier");
+    }
 
     #[test]
-    fn fixture_swc() { run_parser_fixtures("swc"); }
+    fn fixture_swc() {
+        run_parser_fixtures("swc");
+    }
 
     #[test]
-    fn fixture_vite() { run_parser_fixtures("vite"); }
+    fn fixture_vite() {
+        run_parser_fixtures("vite");
+    }
 
     #[test]
     fn all_20_parsers_load() {
@@ -501,9 +577,26 @@ mod harness_tests {
         let engine = Engine::new(&config).unwrap();
 
         let parsers = [
-            "tsc", "cargo", "jest", "vite", "eslint", "go", "python", "cc",
-            "npm", "webpack", "prettier", "swc", "esbuild", "clippy", "make",
-            "gradle", "cargo-test", "mocha", "pip", "pnpm",
+            "tsc",
+            "cargo",
+            "jest",
+            "vite",
+            "eslint",
+            "go",
+            "python",
+            "cc",
+            "npm",
+            "webpack",
+            "prettier",
+            "swc",
+            "esbuild",
+            "clippy",
+            "make",
+            "gradle",
+            "cargo-test",
+            "mocha",
+            "pip",
+            "pnpm",
         ];
 
         for name in &parsers {

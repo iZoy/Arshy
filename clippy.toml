@@ -1,0 +1,4 @@
+# Clippy configuration for arshy
+
+# Allow these lints (project-specific decisions)
+allow-unwrap-in-tests = true

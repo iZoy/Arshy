@@ -46,21 +46,26 @@ impl TomlParser {
         for pat in &self.patterns {
             if let Some(caps) = pat.regex.captures(line) {
                 let file = pat.file_group.and_then(|i| caps.get(i)).map(|m| m.as_str().to_string());
-                let line_no = pat.line_group
+                let line_no = pat
+                    .line_group
                     .and_then(|i| caps.get(i))
                     .and_then(|m| m.as_str().parse::<u64>().ok());
-                let col = pat.col_group
+                let col = pat
+                    .col_group
                     .and_then(|i| caps.get(i))
                     .and_then(|m| m.as_str().parse::<u64>().ok());
-                let code = pat.code_group
-                    .and_then(|i| caps.get(i))
-                    .map(|m| m.as_str().to_string());
-                let message = pat.message_group
+                let code = pat.code_group.and_then(|i| caps.get(i)).map(|m| m.as_str().to_string());
+                let message = pat
+                    .message_group
                     .and_then(|i| caps.get(i))
                     .map(|m| m.as_str().trim().to_string())
                     .unwrap_or_else(|| line.to_string());
 
-                let location = file.map(|f| EventLocation { file: f, line: line_no.unwrap_or(0), column: col });
+                let location = file.map(|f| EventLocation {
+                    file: f,
+                    line: line_no.unwrap_or(0),
+                    column: col,
+                });
 
                 return Some(TaskEvent {
                     seq: 0, // caller sets seq
@@ -202,9 +207,7 @@ mod tests {
 
     #[test]
     fn test_no_match_returns_none() {
-        let parser = TomlParser::new(vec![
-            make_pattern(r"^error: (.+)$", "diagnostic", "error"),
-        ]);
+        let parser = TomlParser::new(vec![make_pattern(r"^error: (.+)$", "diagnostic", "error")]);
         assert!(parser.parse_line("all good").is_none());
     }
 
@@ -293,12 +296,9 @@ mod tests {
 
     #[test]
     fn test_raw_info_for_neutral_text() {
-        for line in &[
-            "building module",
-            "compilation successful",
-            "12 tests passed",
-            "installed packages",
-        ] {
+        for line in
+            &["building module", "compilation successful", "12 tests passed", "installed packages"]
+        {
             let event = raw_event(line, 0);
             assert_eq!(event.severity, Some("info".into()), "line: {}", line);
         }

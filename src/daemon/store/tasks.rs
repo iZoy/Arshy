@@ -10,10 +10,16 @@ impl super::Store {
              started_at, events_count, error_count)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             rusqlite::params![
-                task.task_id, task.command, task.cwd,
+                task.task_id,
+                task.command,
+                task.cwd,
                 serde_json::to_string(&task.status).unwrap_or_default(),
-                task.exit_code, task.pid, task.parser_name,
-                task.started_at, task.events_count, task.error_count,
+                task.exit_code,
+                task.pid,
+                task.parser_name,
+                task.started_at,
+                task.events_count,
+                task.error_count,
             ],
         )?;
         Ok(())
@@ -26,7 +32,7 @@ impl super::Store {
             let mut stmt = conn.prepare(
                 "SELECT task_id, command, cwd, status, exit_code, pid, parser_name,
                  started_at, finished_at, duration_ms, events_count, error_count
-                 FROM tasks WHERE status=?1 ORDER BY started_at DESC LIMIT ?2"
+                 FROM tasks WHERE status=?1 ORDER BY started_at DESC LIMIT ?2",
             )?;
             let rows = stmt.query_map(rusqlite::params![s, limit as i64], map_task)?;
             rows.collect::<std::result::Result<Vec<_>, _>>()?
@@ -34,7 +40,7 @@ impl super::Store {
             let mut stmt = conn.prepare(
                 "SELECT task_id, command, cwd, status, exit_code, pid, parser_name,
                  started_at, finished_at, duration_ms, events_count, error_count
-                 FROM tasks ORDER BY started_at DESC LIMIT ?1"
+                 FROM tasks ORDER BY started_at DESC LIMIT ?1",
             )?;
             let rows = stmt.query_map(rusqlite::params![limit as i64], map_task)?;
             rows.collect::<std::result::Result<Vec<_>, _>>()?
@@ -49,7 +55,7 @@ impl super::Store {
         let mut stmt = conn.prepare(
             "SELECT task_id, command, cwd, status, exit_code, pid, parser_name,
              started_at, finished_at, duration_ms, events_count, error_count
-             FROM tasks WHERE task_id=?1"
+             FROM tasks WHERE task_id=?1",
         )?;
         let mut rows = stmt.query_map(rusqlite::params![task_id], map_task)?;
         match rows.next() {
@@ -73,7 +79,8 @@ impl super::Store {
              WHERE task_id=?5",
             rusqlite::params![
                 serde_json::to_string(status).unwrap_or_default(),
-                exit_code, duration_ms,
+                exit_code,
+                duration_ms,
                 chrono::Utc::now().to_rfc3339(),
                 task_id,
             ],
@@ -84,10 +91,7 @@ impl super::Store {
     /// Update task PID (called after process spawn).
     pub fn update_task_pid(&self, task_id: &str, pid: u32) -> Result<()> {
         let conn = self.lock();
-        conn.execute(
-            "UPDATE tasks SET pid=?1 WHERE task_id=?2",
-            rusqlite::params![pid, task_id],
-        )?;
+        conn.execute("UPDATE tasks SET pid=?1 WHERE task_id=?2", rusqlite::params![pid, task_id])?;
         Ok(())
     }
 }

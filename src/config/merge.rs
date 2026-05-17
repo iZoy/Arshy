@@ -1,57 +1,125 @@
 //! Config merge — partial overwrite, env vars, CLI overrides.
 
-use super::{Config, PartialConfig, CliOverrides};
+use super::{CliOverrides, Config, PartialConfig};
 use std::path::PathBuf;
 
 /// Merge PartialConfig (from file) into Config. Only Some fields overwrite.
 pub fn merge_partial(mut cfg: Config, partial: PartialConfig) -> Config {
     if let Some(d) = partial.daemon {
-        if let Some(v) = d.socket_path { cfg.daemon.socket_path = v; }
-        if let Some(v) = d.log_level { cfg.daemon.log_level = v; }
-        if let Some(v) = d.log_format { cfg.daemon.log_format = v; }
-        if let Some(v) = d.auto_start { cfg.daemon.auto_start = v; }
-        if let Some(v) = d.max_task_duration_ms { cfg.daemon.max_task_duration_ms = v; }
-        if let Some(v) = d.max_output_bytes { cfg.daemon.max_output_bytes = v; }
-        if let Some(v) = d.kill_graceful_ms { cfg.daemon.kill_graceful_ms = v; }
-        if let Some(v) = d.kill_force_ms { cfg.daemon.kill_force_ms = v; }
-        if let Some(v) = d.max_concurrent_tasks { cfg.daemon.max_concurrent_tasks = v; }
-        if let Some(v) = d.sandbox_mode { cfg.daemon.sandbox_mode = v; }
+        if let Some(v) = d.socket_path {
+            cfg.daemon.socket_path = v;
+        }
+        if let Some(v) = d.log_level {
+            cfg.daemon.log_level = v;
+        }
+        if let Some(v) = d.log_format {
+            cfg.daemon.log_format = v;
+        }
+        if let Some(v) = d.auto_start {
+            cfg.daemon.auto_start = v;
+        }
+        if let Some(v) = d.max_task_duration_ms {
+            cfg.daemon.max_task_duration_ms = v;
+        }
+        if let Some(v) = d.max_output_bytes {
+            cfg.daemon.max_output_bytes = v;
+        }
+        if let Some(v) = d.kill_graceful_ms {
+            cfg.daemon.kill_graceful_ms = v;
+        }
+        if let Some(v) = d.kill_force_ms {
+            cfg.daemon.kill_force_ms = v;
+        }
+        if let Some(v) = d.max_concurrent_tasks {
+            cfg.daemon.max_concurrent_tasks = v;
+        }
+        if let Some(v) = d.sandbox_mode {
+            cfg.daemon.sandbox_mode = v;
+        }
     }
     if let Some(s) = partial.store {
-        if let Some(v) = s.db_path { cfg.store.db_path = v; }
-        if let Some(v) = s.wal_mode { cfg.store.wal_mode = v; }
-        if let Some(v) = s.integrity_check { cfg.store.integrity_check = v; }
-        if let Some(v) = s.auto_prune { cfg.store.auto_prune = v; }
-        if let Some(v) = s.prune_keep { cfg.store.prune_keep = v; }
-        if let Some(v) = s.prune_older_than_days { cfg.store.prune_older_than_days = v; }
-        if let Some(v) = s.backend { cfg.store.backend = v; }
+        if let Some(v) = s.db_path {
+            cfg.store.db_path = v;
+        }
+        if let Some(v) = s.wal_mode {
+            cfg.store.wal_mode = v;
+        }
+        if let Some(v) = s.integrity_check {
+            cfg.store.integrity_check = v;
+        }
+        if let Some(v) = s.auto_prune {
+            cfg.store.auto_prune = v;
+        }
+        if let Some(v) = s.prune_keep {
+            cfg.store.prune_keep = v;
+        }
+        if let Some(v) = s.prune_older_than_days {
+            cfg.store.prune_older_than_days = v;
+        }
+        if let Some(v) = s.backend {
+            cfg.store.backend = v;
+        }
     }
     if let Some(p) = partial.parser {
-        if let Some(v) = p.dirs { cfg.parser.dirs = v; }
-        if let Some(v) = p.hot_reload { cfg.parser.hot_reload = v; }
-        if let Some(v) = p.fallback_to_raw { cfg.parser.fallback_to_raw = v; }
-        if let Some(v) = p.default_priority { cfg.parser.default_priority = v; }
-        if let Some(v) = p.coverage_warning_threshold { cfg.parser.coverage_warning_threshold = v; }
-        if let Some(v) = p.version_cache_ttl_hours { cfg.parser.version_cache_ttl_hours = v; }
+        if let Some(v) = p.dirs {
+            cfg.parser.dirs = v;
+        }
+        if let Some(v) = p.hot_reload {
+            cfg.parser.hot_reload = v;
+        }
+        if let Some(v) = p.fallback_to_raw {
+            cfg.parser.fallback_to_raw = v;
+        }
+        if let Some(v) = p.default_priority {
+            cfg.parser.default_priority = v;
+        }
+        if let Some(v) = p.coverage_warning_threshold {
+            cfg.parser.coverage_warning_threshold = v;
+        }
+        if let Some(v) = p.version_cache_ttl_hours {
+            cfg.parser.version_cache_ttl_hours = v;
+        }
     }
     if let Some(n) = partial.notifications {
-        if let Some(v) = n.enabled { cfg.notifications.enabled = v; }
-        if let Some(v) = n.batch_interval_ms { cfg.notifications.batch_interval_ms = v; }
-        if let Some(v) = n.max_batch_events { cfg.notifications.max_batch_events = v; }
-        if let Some(v) = n.min_severity { cfg.notifications.min_severity = v; }
+        if let Some(v) = n.enabled {
+            cfg.notifications.enabled = v;
+        }
+        if let Some(v) = n.batch_interval_ms {
+            cfg.notifications.batch_interval_ms = v;
+        }
+        if let Some(v) = n.max_batch_events {
+            cfg.notifications.max_batch_events = v;
+        }
+        if let Some(v) = n.min_severity {
+            cfg.notifications.min_severity = v;
+        }
     }
     if let Some(m) = partial.mcp {
-        if let Some(v) = m.client_detection_order { cfg.mcp.client_detection_order = v; }
+        if let Some(v) = m.client_detection_order {
+            cfg.mcp.client_detection_order = v;
+        }
     }
     if let Some(t) = partial.telemetry {
-        if let Some(v) = t.enabled { cfg.telemetry.enabled = v; }
+        if let Some(v) = t.enabled {
+            cfg.telemetry.enabled = v;
+        }
     }
     if let Some(s) = partial.security {
-        if let Some(v) = s.blocked_patterns { cfg.security.blocked_patterns = v; }
-        if let Some(v) = s.allowed_commands { cfg.security.allowed_commands = Some(v); }
-        if let Some(v) = s.sandbox_paths { cfg.security.sandbox_paths = v; }
-        if let Some(v) = s.access_level { cfg.security.access_level = v; }
-        if let Some(v) = s.audit_log { cfg.security.audit_log = Some(v); }
+        if let Some(v) = s.blocked_patterns {
+            cfg.security.blocked_patterns = v;
+        }
+        if let Some(v) = s.allowed_commands {
+            cfg.security.allowed_commands = Some(v);
+        }
+        if let Some(v) = s.sandbox_paths {
+            cfg.security.sandbox_paths = v;
+        }
+        if let Some(v) = s.access_level {
+            cfg.security.access_level = v;
+        }
+        if let Some(v) = s.audit_log {
+            cfg.security.audit_log = Some(v);
+        }
     }
     cfg
 }
@@ -72,7 +140,9 @@ pub fn apply_env(cfg: &mut Config) {
         cfg.daemon.auto_start = parse_bool(&v);
     }
     if let Ok(v) = std::env::var("ARSHY_DAEMON_MAX_CONCURRENT_TASKS") {
-        if let Ok(n) = v.parse() { cfg.daemon.max_concurrent_tasks = n; }
+        if let Ok(n) = v.parse() {
+            cfg.daemon.max_concurrent_tasks = n;
+        }
     }
     // Store
     if let Ok(v) = std::env::var("ARSHY_STORE_DB_PATH") {
@@ -82,7 +152,9 @@ pub fn apply_env(cfg: &mut Config) {
         cfg.store.wal_mode = parse_bool(&v);
     }
     if let Ok(v) = std::env::var("ARSHY_STORE_PRUNE_KEEP") {
-        if let Ok(n) = v.parse() { cfg.store.prune_keep = n; }
+        if let Ok(n) = v.parse() {
+            cfg.store.prune_keep = n;
+        }
     }
     // Parser
     if let Ok(v) = std::env::var("ARSHY_PARSER_HOT_RELOAD") {
@@ -123,8 +195,8 @@ fn parse_bool(s: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::*;
+    use super::*;
 
     // ── merge_partial tests ─────────────────────────────────────────────────
 
@@ -262,10 +334,7 @@ mod tests {
     fn apply_cli_partial_overrides() {
         let mut cfg = Config::default();
         let original_socket = cfg.daemon.socket_path.clone();
-        let cli = CliOverrides {
-            log_level: Some("debug".into()),
-            ..Default::default()
-        };
+        let cli = CliOverrides { log_level: Some("debug".into()), ..Default::default() };
         apply_cli(&mut cfg, &cli);
         assert_eq!(cfg.daemon.log_level, "debug");
         assert_eq!(cfg.daemon.socket_path, original_socket);

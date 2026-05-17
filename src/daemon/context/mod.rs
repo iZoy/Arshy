@@ -25,20 +25,12 @@ fn parse_context(content: &str, line: u64) -> Option<EventContext> {
         return None;
     }
 
-    let before: Vec<String> = lines[idx.saturating_sub(3)..idx]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-    let after: Vec<String> = lines[idx + 1..(idx + 4).min(lines.len())]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
+    let before: Vec<String> =
+        lines[idx.saturating_sub(3)..idx].iter().map(|s| s.to_string()).collect();
+    let after: Vec<String> =
+        lines[idx + 1..(idx + 4).min(lines.len())].iter().map(|s| s.to_string()).collect();
 
-    Some(EventContext {
-        before,
-        line: lines[idx].to_string(),
-        after,
-    })
+    Some(EventContext { before, line: lines[idx].to_string(), after })
 }
 
 #[cfg(test)]

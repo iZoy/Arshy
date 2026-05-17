@@ -63,9 +63,8 @@ mod integration_tests {
         let (socket_path, mut child, _tmp) = spawn_daemon();
 
         // Connect via Unix stream
-        let stream =
-            std::os::unix::net::UnixStream::connect(&socket_path)
-                .expect("failed to connect to daemon");
+        let stream = std::os::unix::net::UnixStream::connect(&socket_path)
+            .expect("failed to connect to daemon");
 
         // Send a health check
         use std::io::{BufRead, BufReader, Write};
@@ -112,9 +111,8 @@ mod integration_tests {
     fn run_echo_and_get_result() {
         let (socket_path, mut child, _tmp) = spawn_daemon();
 
-        let stream =
-            std::os::unix::net::UnixStream::connect(&socket_path)
-                .expect("failed to connect to daemon");
+        let stream = std::os::unix::net::UnixStream::connect(&socket_path)
+            .expect("failed to connect to daemon");
 
         use std::io::{BufRead, BufReader, Write};
         let mut reader = BufReader::new(stream.try_clone().unwrap());
@@ -163,9 +161,8 @@ mod integration_tests {
     fn run_command_with_parser() {
         let (socket_path, mut child, _tmp) = spawn_daemon();
 
-        let stream =
-            std::os::unix::net::UnixStream::connect(&socket_path)
-                .expect("failed to connect to daemon");
+        let stream = std::os::unix::net::UnixStream::connect(&socket_path)
+            .expect("failed to connect to daemon");
 
         use std::io::{BufRead, BufReader, Write};
         let mut reader = BufReader::new(stream.try_clone().unwrap());

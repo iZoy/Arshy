@@ -2,8 +2,8 @@
 //!
 //! Kill strategy: SIGINT → wait grace_ms → SIGTERM → wait force_ms → SIGKILL.
 
-use arshy_lib::Result;
 use super::pty::ProcessHandle;
+use arshy_lib::Result;
 
 /// Gracefully terminate a process with escalating signals.
 ///

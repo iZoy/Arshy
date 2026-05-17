@@ -22,21 +22,15 @@ pub fn try_parse_crash(line: &str) -> Option<TaskEvent> {
                 .map(|m| m.as_str().trim().to_string())
                 .unwrap_or_else(|| line.to_string());
 
-            let file = pattern
-                .file_group
-                .and_then(|i| caps.get(i))
-                .map(|m| m.as_str().to_string());
+            let file = pattern.file_group.and_then(|i| caps.get(i)).map(|m| m.as_str().to_string());
 
             let line_no = pattern
                 .line_group
                 .and_then(|i| caps.get(i))
                 .and_then(|m| m.as_str().parse::<u64>().ok());
 
-            let location = file.map(|f| EventLocation {
-                file: f,
-                line: line_no.unwrap_or(0),
-                column: None,
-            });
+            let location =
+                file.map(|f| EventLocation { file: f, line: line_no.unwrap_or(0), column: None });
 
             return Some(TaskEvent {
                 seq: 0,
@@ -159,7 +153,9 @@ mod tests {
 
     #[test]
     fn test_rust_panic() {
-        let event = try_parse_crash("thread 'main' panicked at 'index out of bounds', src/main.rs:42:5").unwrap();
+        let event =
+            try_parse_crash("thread 'main' panicked at 'index out of bounds', src/main.rs:42:5")
+                .unwrap();
         assert_eq!(event.code, Some("rust".into()));
         let loc = event.location.unwrap();
         assert_eq!(loc.file, "src/main.rs");

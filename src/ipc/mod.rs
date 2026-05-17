@@ -181,7 +181,9 @@ pub struct RunTaskParams {
     pub env: Option<HashMap<String, String>>,
 }
 
-fn default_mode() -> String { "auto".into() }
+fn default_mode() -> String {
+    "auto".into()
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunTaskResponse {
@@ -207,7 +209,9 @@ pub struct QueryParams {
     pub offset: usize,
 }
 
-fn default_limit() -> usize { 20 }
+fn default_limit() -> usize {
+    20
+}
 
 // ── Stats response ──────────────────────────────────────────────────────────
 

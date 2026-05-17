@@ -58,17 +58,15 @@ pub fn try_parse(output: &str) -> Option<Vec<TaskEvent>> {
                 context: None,
             }])
         }
-        _ => {
-            Some(vec![TaskEvent {
-                seq: 0,
-                event_type: "data".into(),
-                severity: Some("info".into()),
-                code: None,
-                message: serde_json::to_string(&value).unwrap_or_else(|_| trimmed.to_string()),
-                location: None,
-                context: None,
-            }])
-        }
+        _ => Some(vec![TaskEvent {
+            seq: 0,
+            event_type: "data".into(),
+            severity: Some("info".into()),
+            code: None,
+            message: serde_json::to_string(&value).unwrap_or_else(|_| trimmed.to_string()),
+            location: None,
+            context: None,
+        }]),
     }
 }
 

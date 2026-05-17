@@ -105,10 +105,7 @@ impl ParserRegistry {
         }
 
         // Sort: higher priority first, user beats builtin on tie
-        entries.sort_by(|a, b| {
-            b.priority.cmp(&a.priority)
-                .then_with(|| a.source.cmp(&b.source))
-        });
+        entries.sort_by(|a, b| b.priority.cmp(&a.priority).then_with(|| a.source.cmp(&b.source)));
 
         // Dedup by name — first occurrence wins (higher priority / user source)
         let mut seen = std::collections::HashSet::new();
@@ -139,9 +136,8 @@ impl ParserRegistry {
         }
 
         // Pass 2: chained command — split on &&, ||, ; and retry each segment
-        let has_chain = cmd_lower.contains("&&")
-            || cmd_lower.contains("||")
-            || cmd_lower.contains(';');
+        let has_chain =
+            cmd_lower.contains("&&") || cmd_lower.contains("||") || cmd_lower.contains(';');
         if has_chain {
             let segments: Vec<&str> = cmd_lower
                 .split("&&")
@@ -214,14 +210,20 @@ impl ParserRegistry {
         // Added parsers
         let added: Vec<_> = new_names.difference(&old_names).collect();
         if !added.is_empty() {
-            lines.push(format!("+{} parsers: {}", added.len(),
-                added.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(", ")));
+            lines.push(format!(
+                "+{} parsers: {}",
+                added.len(),
+                added.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(", ")
+            ));
         }
         // Removed parsers
         let removed: Vec<_> = old_names.difference(&new_names).collect();
         if !removed.is_empty() {
-            lines.push(format!("-{} parsers: {}", removed.len(),
-                removed.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(", ")));
+            lines.push(format!(
+                "-{} parsers: {}",
+                removed.len(),
+                removed.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(", ")
+            ));
         }
         // Pattern count changes per parser
         for name in old_names.intersection(&new_names) {
@@ -232,18 +234,25 @@ impl ParserRegistry {
             if old_count != new_count {
                 let delta = new_count as i64 - old_count as i64;
                 lines.push(format!(
-                    "  {}: {} → {} patterns ({:+})", name, old_count, new_count, delta
+                    "  {}: {} → {} patterns ({:+})",
+                    name, old_count, new_count, delta
                 ));
             }
             if old_entry.deprecated_count != new_entry.deprecated_count {
                 lines.push(format!(
                     "  {}: {} → {} deprecated ({:+})",
-                    name, old_entry.deprecated_count, new_entry.deprecated_count,
+                    name,
+                    old_entry.deprecated_count,
+                    new_entry.deprecated_count,
                     new_entry.deprecated_count as i64 - old_entry.deprecated_count as i64
                 ));
             }
         }
-        if lines.is_empty() { "no changes".into() } else { lines.join("\n") }
+        if lines.is_empty() {
+            "no changes".into()
+        } else {
+            lines.join("\n")
+        }
     }
 }
 

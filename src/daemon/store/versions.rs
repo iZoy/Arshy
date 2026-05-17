@@ -5,9 +5,10 @@ impl super::Store {
     pub fn get_cached_version(&self, tool_name: &str) -> Result<Option<String>> {
         let conn = self.lock();
         let mut stmt = conn.prepare(
-            "SELECT version FROM tool_versions WHERE tool_name=?1 AND expires_at > datetime('now')"
+            "SELECT version FROM tool_versions WHERE tool_name=?1 AND expires_at > datetime('now')",
         )?;
-        let mut rows = stmt.query_map(rusqlite::params![tool_name], |row| row.get::<_, String>(0))?;
+        let mut rows =
+            stmt.query_map(rusqlite::params![tool_name], |row| row.get::<_, String>(0))?;
         match rows.next() {
             Some(Ok(v)) => Ok(Some(v)),
             _ => Ok(None),

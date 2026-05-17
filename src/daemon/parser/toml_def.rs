@@ -31,9 +31,9 @@ use std::collections::HashMap;
 
 use serde::Deserialize;
 
+use super::redos;
 use super::rhai::StatefulPattern;
 use super::toml::LinePattern;
-use super::redos;
 
 // ── TOML schema types ────────────────────────────────────────────────────────
 
@@ -69,7 +69,9 @@ pub struct MetaDef {
     pub since_version: Option<String>,
 }
 
-fn default_schema_version() -> String { "1.0".into() }
+fn default_schema_version() -> String {
+    "1.0".into()
+}
 
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
@@ -105,11 +107,7 @@ pub struct PatternDef {
 impl Default for TomlParserDef {
     fn default() -> Self {
         Self {
-            meta: MetaDef {
-                parser_type: "toml".into(),
-                priority: 50,
-                ..Default::default()
-            },
+            meta: MetaDef { parser_type: "toml".into(), priority: 50, ..Default::default() },
             patterns: Vec::new(),
         }
     }
@@ -136,7 +134,12 @@ impl TomlParserDef {
             .filter_map(|p| match p.to_line_pattern() {
                 Ok(pat) => Some(pat),
                 Err(e) => {
-                    tracing::warn!("parser '{}': skipping pattern '{}': {}", self.meta.name, p.name, e);
+                    tracing::warn!(
+                        "parser '{}': skipping pattern '{}': {}",
+                        self.meta.name,
+                        p.name,
+                        e
+                    );
                     None
                 }
             })
@@ -151,7 +154,12 @@ impl TomlParserDef {
             .filter_map(|p| match p.to_stateful_pattern() {
                 Ok(pat) => Some(pat),
                 Err(e) => {
-                    tracing::warn!("parser '{}': skipping stateful pattern '{}': {}", self.meta.name, p.name, e);
+                    tracing::warn!(
+                        "parser '{}': skipping stateful pattern '{}': {}",
+                        self.meta.name,
+                        p.name,
+                        e
+                    );
                     None
                 }
             })
@@ -324,7 +332,10 @@ mod tests {
     #[test]
     fn parse_key_value_works() {
         assert_eq!(parse_key_value("key=value"), Some(("key".into(), "value".into())));
-        assert_eq!(parse_key_value("packages_added=done"), Some(("packages_added".into(), "done".into())));
+        assert_eq!(
+            parse_key_value("packages_added=done"),
+            Some(("packages_added".into(), "done".into()))
+        );
         assert_eq!(parse_key_value(""), None);
         assert_eq!(parse_key_value("novalue"), None);
         assert_eq!(parse_key_value("=empty_key"), None);
