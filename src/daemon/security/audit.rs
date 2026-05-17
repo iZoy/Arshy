@@ -44,7 +44,7 @@ impl AuditLog {
             arshy_lib::ArshyError::Other("audit log mutex poisoned".into())
         })?;
         file.write_all(line.as_bytes())
-            .map_err(|e| arshy_lib::ArshyError::Io(e))
+            .map_err(arshy_lib::ArshyError::Io)
     }
 
     /// Path to the audit log file. Reserved for audit log tooling.
