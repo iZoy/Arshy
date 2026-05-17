@@ -77,6 +77,14 @@ impl super::Store {
             )?;
         }
 
+        if current < 3 {
+            // v3: add index on tasks.status for fast status-filtered listing
+            conn.execute_batch(
+                "CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+                 INSERT INTO schema_version (version) VALUES (3);",
+            )?;
+        }
+
         Ok(())
     }
 

@@ -22,6 +22,26 @@ async fn main() -> Result<()> {
 
     arshy_lib::config::init_logging(&cfg.daemon.log_level, &cfg.daemon.log_format);
 
+    // Panic hook — log the panic message with backtrace before the process exits
+    std::panic::set_hook(Box::new(|info| {
+        let location = info.location().map(|l| format!("{}:{}", l.file(), l.line())).unwrap_or_default();
+        let payload = info.payload();
+        let msg = if let Some(s) = payload.downcast_ref::<&str>() {
+            *s
+        } else if let Some(s) = payload.downcast_ref::<String>() {
+            s.as_str()
+        } else {
+            "(non-string panic payload)"
+        };
+        tracing::error!(
+            location = location,
+            panic.message = msg,
+            "daemon panicked — collecting diagnostics before exit"
+        );
+        // Flush logs before the process aborts
+        eprintln!("FATAL: arshyd panicked at {}: {}", location, msg);
+    }));
+
     tracing::info!("arshyd v{} starting", env!("CARGO_PKG_VERSION"));
 
     // ── Lifecycle: PID + stale socket ───────────────────────────────────────
@@ -121,6 +141,12 @@ async fn main() -> Result<()> {
     // ── Accept loop ────────────────────────────────────────────────────────
     let _ = tokio::fs::remove_file(&socket_path).await;
     let listener = UnixListener::bind(&socket_path)?;
+    // Restrict socket to owner-only — prevents unauthorized local access
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&socket_path, std::fs::Permissions::from_mode(0o600))?;
+    }
     tracing::info!("listening on {}", socket_path.display());
 
     let mut conn_id: u64 = 0;
