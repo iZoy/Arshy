@@ -61,6 +61,15 @@ async fn proxy_main(config_path: Option<PathBuf>) -> Result<()> {
     let mut batch_deadline: Option<tokio::time::Instant> = None;
     let mut request_tasks: HashMap<u64, String> = HashMap::new();
 
+    // Idle timeout: shut down daemon after 5 min of inactivity.
+    // Override with ARSHY_IDLE_TIMEOUT_SECS.
+    let idle_timeout_secs: u64 = std::env::var("ARSHY_IDLE_TIMEOUT_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(300);
+    let idle_timeout = tokio::time::Duration::from_secs(idle_timeout_secs);
+    let mut last_activity = tokio::time::Instant::now();
+
     // Periodic health check tracking — ensures checks happen even under
     // continuous activity (the select! health branch only fires when idle).
     let mut last_health_check = tokio::time::Instant::now();
@@ -143,7 +152,7 @@ async fn proxy_main(config_path: Option<PathBuf>) -> Result<()> {
                                 }
                             }
                             "tools/call" => {
-                                match handle_tool_call(&mut daemon, &mut stdout, &request, id).await {
+                                let result = match handle_tool_call(&mut daemon, &mut stdout, &request, id).await {
                                     Ok(maybe_task_id) => {
                                         if let Some(tid) = maybe_task_id {
                                             request_tasks.insert(id, tid);
@@ -179,7 +188,9 @@ async fn proxy_main(config_path: Option<PathBuf>) -> Result<()> {
                                         write_structured_error(&mut stdout, id, arshy_lib::ArshyError::Ipc(
                                             format!("daemon error: {}", e))).await
                                     }
-                                }
+                                };
+                                last_activity = tokio::time::Instant::now();
+                                result
                             }
                             "notifications/initialized" => Ok(()),
                             "notifications/cancelled" => {
@@ -246,6 +257,20 @@ async fn proxy_main(config_path: Option<PathBuf>) -> Result<()> {
                     }
                     None => break, // daemon channel closed
                 }
+            }
+
+            // ── Idle timeout branch ─────────────────────────────────────
+            // After 5 min of no tool calls, shut down the daemon to save resources.
+            // The proxy stays alive; the next tool call will auto-restart the daemon.
+            _ = tokio::time::sleep_until(last_activity + idle_timeout) => {
+                tracing::info!(
+                    "daemon idle for {}s, sending shutdown",
+                    idle_timeout_secs
+                );
+                let _ = daemon.send_request(ipc::METHOD_SHUTDOWN, serde_json::json!({})).await;
+                // Reset timer so we don't immediately fire again in a spin loop.
+                last_activity = tokio::time::Instant::now();
+                continue;
             }
 
             // ── Health check branch ─────────────────────────────────────
