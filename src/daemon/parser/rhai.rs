@@ -63,6 +63,10 @@ pub struct StatefulPattern {
     pub state_condition: Option<(String, String)>,
     /// If set, transitions to this state after matching.
     pub state_transition: Option<(String, String)>,
+    /// When true, this pattern is deprecated.
+    pub deprecated: bool,
+    /// Name of the replacement pattern, if any.
+    pub replaced_by: Option<String>,
 }
 
 #[derive(Default)]
@@ -472,6 +476,7 @@ fn npm_stateful_patterns() -> Vec<StatefulPattern> {
             line_group: None,
             state_condition: None,
             state_transition: Some(("packages_added".into(), "done".into())),
+            deprecated: false, replaced_by: None,
         },
         // npm ERR! code ERESOLVE
         StatefulPattern {
@@ -483,6 +488,7 @@ fn npm_stateful_patterns() -> Vec<StatefulPattern> {
             line_group: None,
             state_condition: None,
             state_transition: Some(("has_error".into(), "true".into())),
+            deprecated: false, replaced_by: None,
         },
         // npm WARN deprecated ...
         StatefulPattern {
@@ -493,7 +499,7 @@ fn npm_stateful_patterns() -> Vec<StatefulPattern> {
             file_group: None,
             line_group: None,
             state_condition: None,
-            state_transition: None,
+            state_transition: None, deprecated: false, replaced_by: None,
         },
         // up to date, audited X packages
         StatefulPattern {
@@ -504,7 +510,7 @@ fn npm_stateful_patterns() -> Vec<StatefulPattern> {
             file_group: None,
             line_group: None,
             state_condition: None,
-            state_transition: None,
+            state_transition: None, deprecated: false, replaced_by: None,
         },
         // audited X packages in Ys
         StatefulPattern {
@@ -515,7 +521,7 @@ fn npm_stateful_patterns() -> Vec<StatefulPattern> {
             file_group: None,
             line_group: None,
             state_condition: None,
-            state_transition: None,
+            state_transition: None, deprecated: false, replaced_by: None,
         },
     ]
 }
@@ -532,6 +538,7 @@ fn webpack_patterns() -> Vec<StatefulPattern> {
             line_group: None,
             state_condition: None,
             state_transition: Some(("has_error".into(), "true".into())),
+            deprecated: false, replaced_by: None,
         },
         // WARNING in ./src/index.ts
         StatefulPattern {
@@ -542,7 +549,7 @@ fn webpack_patterns() -> Vec<StatefulPattern> {
             file_group: None,
             line_group: None,
             state_condition: None,
-            state_transition: None,
+            state_transition: None, deprecated: false, replaced_by: None,
         },
     ]
 }

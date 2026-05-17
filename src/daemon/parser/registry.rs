@@ -37,6 +37,14 @@ pub struct ParserEntry {
     pub min_version: Option<String>,
     /// Maximum tool version supported (semver, inclusive). None = no maximum.
     pub max_version: Option<String>,
+    /// Schema version this parser was written against.
+    #[allow(dead_code)]
+    pub schema_version: String,
+    /// Version of the tool when this parser was introduced.
+    #[allow(dead_code)]
+    pub since_version: Option<String>,
+    /// Number of deprecated patterns in this parser (for audit).
+    pub deprecated_count: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Ord, PartialOrd, Eq)]
@@ -76,6 +84,9 @@ impl ParserRegistry {
             rhai_script: None,
             min_version: None,
             max_version: None,
+            schema_version: "1.0".into(),
+            since_version: None,
+            deprecated_count: 0,
         });
 
         // 2. Load user parsers from filesystem directories
@@ -190,11 +201,56 @@ impl ParserRegistry {
     pub fn get(&self, name: &str) -> Option<&ParserEntry> {
         self.entries.iter().find(|e| e.name == name)
     }
+
+    /// Compare against another registry and return a human-readable change summary.
+    /// Used for audit logging on parser reload.
+    pub fn diff(&self, other: &Self) -> String {
+        let mut lines = Vec::new();
+        let old_names: std::collections::HashSet<&str> =
+            self.entries.iter().map(|e| e.name.as_str()).collect();
+        let new_names: std::collections::HashSet<&str> =
+            other.entries.iter().map(|e| e.name.as_str()).collect();
+
+        // Added parsers
+        let added: Vec<_> = new_names.difference(&old_names).collect();
+        if !added.is_empty() {
+            lines.push(format!("+{} parsers: {}", added.len(),
+                added.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(", ")));
+        }
+        // Removed parsers
+        let removed: Vec<_> = old_names.difference(&new_names).collect();
+        if !removed.is_empty() {
+            lines.push(format!("-{} parsers: {}", removed.len(),
+                removed.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(", ")));
+        }
+        // Pattern count changes per parser
+        for name in old_names.intersection(&new_names) {
+            let old_entry = self.get(name).unwrap();
+            let new_entry = other.get(name).unwrap();
+            let old_count = old_entry.line_patterns.len() + old_entry.stateful_patterns.len();
+            let new_count = new_entry.line_patterns.len() + new_entry.stateful_patterns.len();
+            if old_count != new_count {
+                let delta = new_count as i64 - old_count as i64;
+                lines.push(format!(
+                    "  {}: {} → {} patterns ({:+})", name, old_count, new_count, delta
+                ));
+            }
+            if old_entry.deprecated_count != new_entry.deprecated_count {
+                lines.push(format!(
+                    "  {}: {} → {} deprecated ({:+})",
+                    name, old_entry.deprecated_count, new_entry.deprecated_count,
+                    new_entry.deprecated_count as i64 - old_entry.deprecated_count as i64
+                ));
+            }
+        }
+        if lines.is_empty() { "no changes".into() } else { lines.join("\n") }
+    }
 }
 
 /// Convert a parsed TOML definition into a registry entry.
 fn def_to_entry(def: toml_def::TomlParserDef, source: ParserSource) -> ParserEntry {
     let is_stateful = def.is_stateful();
+    let deprecated_count = def.patterns.iter().filter(|p| p.deprecated).count();
 
     ParserEntry {
         name: def.meta.name.clone(),
@@ -209,6 +265,9 @@ fn def_to_entry(def: toml_def::TomlParserDef, source: ParserSource) -> ParserEnt
         rhai_script: None,
         min_version: def.meta.min_version.clone(),
         max_version: def.meta.max_version.clone(),
+        schema_version: def.meta.schema_version.clone(),
+        since_version: def.meta.since_version.clone(),
+        deprecated_count,
     }
 }
 
@@ -255,6 +314,9 @@ fn load_user_parser(path: &std::path::Path) -> Option<ParserEntry> {
                 rhai_script: Some(content),
                 min_version: None,
                 max_version: None,
+                schema_version: "1.0".into(),
+                since_version: None,
+                deprecated_count: 0,
             })
         }
         _ => None,

@@ -1,0 +1,38 @@
+[
+  {
+    "message": "unused variable: `x`",
+    "severity": "warning",
+    "type": "diagnostic"
+  },
+  {
+    "file": "src/lib.rs",
+    "line": 22,
+    "message": "  --> src/lib.rs:22:9",
+    "severity": "info",
+    "type": "location"
+  },
+  {
+    "message": "dead code",
+    "severity": "warning",
+    "type": "diagnostic"
+  },
+  {
+    "file": "src/module.rs",
+    "line": 15,
+    "message": "  --> src/module.rs:15:1",
+    "severity": "info",
+    "type": "location"
+  },
+  {
+    "message": "deprecated function `old_api` used",
+    "severity": "warning",
+    "type": "diagnostic"
+  },
+  {
+    "file": "src/main.rs",
+    "line": 8,
+    "message": "  --> src/main.rs:8:5",
+    "severity": "info",
+    "type": "location"
+  }
+]

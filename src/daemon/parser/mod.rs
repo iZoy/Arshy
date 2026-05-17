@@ -15,6 +15,7 @@ mod crash;
 mod detect;
 mod json;
 mod loader;
+mod redos;
 mod registry;
 pub mod rhai;
 pub mod toml;
@@ -64,8 +65,9 @@ impl Engine {
                 Ok(new_registry) => {
                     match registry.write() {
                         Ok(mut reg) => {
+                            let audit = reg.diff(&new_registry);
+                            tracing::info!("parser hot-reload: {}", audit);
                             *reg = new_registry;
-                            tracing::info!("parsers reloaded");
                         }
                         Err(e) => tracing::error!("registry lock poisoned: {}", e),
                     }
@@ -82,8 +84,9 @@ impl Engine {
         let new_registry = ParserRegistry::load(&self.config)?;
         let mut reg = self.registry.write()
             .map_err(|_| arshy_lib::ArshyError::Other("registry lock poisoned".into()))?;
+        let audit = reg.diff(&new_registry);
+        tracing::info!("parser reload: {}", audit);
         *reg = new_registry;
-        tracing::info!("parsers reloaded (manual)");
         Ok(())
     }
 
@@ -132,10 +135,53 @@ impl Engine {
         match tool {
             Some(t) => {
                 if let Some(entry) = reg.get(&t.parser_name) {
-                    let stateful = if !entry.stateful_patterns.is_empty() {
+                    // Audit: warn on deprecated patterns
+                    if entry.deprecated_count > 0 {
+                        tracing::warn!(
+                            "parser '{}' has {} deprecated pattern(s); consider updating",
+                            entry.name, entry.deprecated_count
+                        );
+                    }
+
+                    // Filter line patterns: skip deprecated patterns that have a replacement
+                    let line_patterns: Vec<toml::LinePattern> = entry.line_patterns.iter()
+                        .filter(|p| {
+                            if p.deprecated {
+                                if p.replaced_by.is_some() {
+                                    return false; // replacement exists, skip deprecated
+                                }
+                                tracing::warn!(
+                                    "parser '{}': pattern '{}' is deprecated with no replacement",
+                                    entry.name,
+                                    p.regex.as_str()
+                                );
+                            }
+                            true
+                        })
+                        .cloned()
+                        .collect();
+
+                    // Filter stateful patterns similarly
+                    let stateful_patterns: Vec<rhai::StatefulPattern> = entry.stateful_patterns.iter()
+                        .filter(|p| {
+                            if p.deprecated {
+                                if p.replaced_by.is_some() {
+                                    return false;
+                                }
+                                tracing::warn!(
+                                    "parser '{}': stateful pattern is deprecated with no replacement",
+                                    entry.name
+                                );
+                            }
+                            true
+                        })
+                        .cloned()
+                        .collect();
+
+                    let stateful = if !stateful_patterns.is_empty() {
                         Some(rhai::StatefulParser::with_patterns(
                             &entry.name,
-                            entry.stateful_patterns.clone(),
+                            stateful_patterns,
                         ))
                     } else if let Some(ref script) = entry.rhai_script {
                         match rhai::StatefulParser::with_script(script) {
@@ -150,10 +196,10 @@ impl Engine {
                     };
 
                     return ParserSession {
-                        toml_parser: if entry.line_patterns.is_empty() {
+                        toml_parser: if line_patterns.is_empty() {
                             None
                         } else {
-                            Some(toml::TomlParser::new(entry.line_patterns.clone()))
+                            Some(toml::TomlParser::new(line_patterns))
                         },
                         stateful,
                     };
@@ -266,7 +312,17 @@ pub enum ParserType {
 mod harness_tests {
     use super::*;
 
-    fn run_fixture(parser_name: &str, txt_path: &std::path::Path, json_path: &std::path::Path) -> (usize, usize) {
+    /// Per-field match statistics for parser quality measurement.
+    struct FieldStats {
+        total: usize,
+        type_ok: usize,
+        severity_ok: usize,
+        code_ok: usize,
+        file_ok: usize,
+        line_ok: usize,
+    }
+
+    fn run_fixture(parser_name: &str, txt_path: &std::path::Path, json_path: &std::path::Path) -> (usize, usize, FieldStats) {
         let config = ParserConfig::default();
         let engine = Engine::new(&config).unwrap();
         // Try direct name lookup first (parser name != command name for multi-word tools)
@@ -275,8 +331,6 @@ mod harness_tests {
         let session = engine.create_session(tool.as_ref());
 
         let txt = std::fs::read_to_string(txt_path).unwrap();
-        let json = std::fs::read_to_string(json_path).unwrap();
-        let expected: Vec<serde_json::Value> = serde_json::from_str(&json).unwrap();
 
         let lines: Vec<&str> = txt.lines().filter(|l| !l.trim().is_empty()).collect();
         let mut all_events: Vec<TaskEvent> = Vec::new();
@@ -284,7 +338,32 @@ mod harness_tests {
             all_events.extend(session.parse_line(line, 0, tool.as_ref()));
         }
 
+        // ── Bless mode: write actual output as expected JSON ──────────────
+        if std::env::var("ARSHY_BLESS").is_ok() {
+            let events_json: Vec<serde_json::Value> = all_events.iter().map(|e| {
+                let mut obj = serde_json::json!({
+                    "type": e.event_type,
+                    "severity": e.severity,
+                });
+                if let Some(ref code) = e.code { obj["code"] = serde_json::json!(code); }
+                obj["message"] = serde_json::json!(e.message);
+                if let Some(ref loc) = e.location {
+                    obj["file"] = serde_json::json!(loc.file);
+                    obj["line"] = serde_json::json!(loc.line);
+                }
+                obj
+            }).collect();
+            let json_out = serde_json::to_string_pretty(&events_json).unwrap();
+            std::fs::write(json_path, json_out + "\n").unwrap();
+            eprintln!("BLESSED: {} ({} events)", json_path.display(), all_events.len());
+            return (0, 0, FieldStats { total: 0, type_ok: 0, severity_ok: 0, code_ok: 0, file_ok: 0, line_ok: 0 });
+        }
+
+        let json = std::fs::read_to_string(json_path).unwrap();
+        let expected: Vec<serde_json::Value> = serde_json::from_str(&json).unwrap();
+
         let mut matched = 0;
+        let mut stats = FieldStats { total: expected.len(), type_ok: 0, severity_ok: 0, code_ok: 0, file_ok: 0, line_ok: 0 };
         for (i, exp) in expected.iter().enumerate() {
             if i >= all_events.len() {
                 break;
@@ -300,11 +379,30 @@ mod harness_tests {
                 event.location.as_ref().is_some_and(|loc| v.as_u64() == Some(loc.line))
             });
 
+            if type_ok { stats.type_ok += 1; }
+            if sev_ok { stats.severity_ok += 1; }
+            if code_ok { stats.code_ok += 1; }
+            if file_ok { stats.file_ok += 1; }
+            if line_ok { stats.line_ok += 1; }
+
             if type_ok && sev_ok && code_ok && file_ok && line_ok {
                 matched += 1;
             }
         }
-        (expected.len(), matched)
+        (expected.len(), matched, stats)
+    }
+
+    /// Format per-field match rates for assertion messages.
+    fn field_scores(stats: &FieldStats) -> String {
+        if stats.total == 0 { return String::new(); }
+        format!(
+            "type={:.0}% sev={:.0}% code={:.0}% file={:.0}% line={:.0}%",
+            stats.type_ok as f64 / stats.total as f64 * 100.0,
+            stats.severity_ok as f64 / stats.total as f64 * 100.0,
+            stats.code_ok as f64 / stats.total as f64 * 100.0,
+            stats.file_ok as f64 / stats.total as f64 * 100.0,
+            stats.line_ok as f64 / stats.total as f64 * 100.0,
+        )
     }
 
     fn run_parser_fixtures(parser_name: &str) {
@@ -324,16 +422,15 @@ mod harness_tests {
         for entry in &txt_files {
             let txt_path = entry.path();
             let json_path = txt_path.with_extension("json");
-            let (total, matched) = run_fixture(parser_name, &txt_path, &json_path);
+            let (total, matched, stats) = run_fixture(parser_name, &txt_path, &json_path);
             let score = matched as f64 / total as f64;
+            let per_field = field_scores(&stats);
             assert!(
                 score >= 0.95,
-                "parser '{}' fixture '{}': {:.0}% ({} / {})",
+                "parser '{}' fixture '{}': {:.0}% ({} / {}) [{}]",
                 parser_name,
                 txt_path.file_stem().unwrap().to_str().unwrap(),
-                score * 100.0,
-                matched,
-                total,
+                score * 100.0, matched, total, per_field
             );
         }
     }

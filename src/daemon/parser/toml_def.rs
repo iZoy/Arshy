@@ -10,6 +10,7 @@
 //! detect = ["tsc"]
 //! parser_type = "toml"        # "toml" (default) or "stateful"
 //! priority = 50
+//! schema_version = "1.0"
 //!
 //! [[pattern]]
 //! name = "ts-error"
@@ -17,6 +18,10 @@
 //! event_type = "diagnostic"
 //! severity = "error"
 //! fields = { file = 1, line = 2, message = 3 }
+//! # Lifecycle fields (optional):
+//! # deprecated = false
+//! # replaced_by = "ts-error-v2"
+//! # since_version = "1.0"
 //! # stateful-only fields:
 //! state_condition = "state=value"   # optional
 //! state_transition = "key=value"    # optional
@@ -28,6 +33,7 @@ use serde::Deserialize;
 
 use super::rhai::StatefulPattern;
 use super::toml::LinePattern;
+use super::redos;
 
 // ── TOML schema types ────────────────────────────────────────────────────────
 
@@ -55,7 +61,15 @@ pub struct MetaDef {
     pub priority: u32,
     pub min_version: Option<String>,
     pub max_version: Option<String>,
+    /// Schema version this parser was written against.
+    #[serde(default = "default_schema_version")]
+    pub schema_version: String,
+    /// Version of the tool when this parser was first added.
+    #[serde(default)]
+    pub since_version: Option<String>,
 }
+
+fn default_schema_version() -> String { "1.0".into() }
 
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
@@ -74,6 +88,16 @@ pub struct PatternDef {
     /// Stateful-only: state transition after matching.
     /// Format: "key=value" — sets state key to value.
     pub state_transition: Option<String>,
+    /// When true, this pattern is deprecated and will emit a warning.
+    #[serde(default)]
+    pub deprecated: bool,
+    /// Name of the replacement pattern (must exist in the same parser).
+    #[serde(default)]
+    pub replaced_by: Option<String>,
+    /// Parser version when this pattern was introduced.
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub since_version: Option<String>,
 }
 
 // ── Defaults ─────────────────────────────────────────────────────────────────
@@ -138,6 +162,9 @@ impl TomlParserDef {
 impl PatternDef {
     /// Convert to a `LinePattern` (stateless, line-by-line matching).
     fn to_line_pattern(&self) -> Result<LinePattern, String> {
+        // Safety check: reject regexes with ReDoS patterns
+        redos::check_safe(&self.regex)?;
+
         let regex = regex::Regex::new(&self.regex)
             .map_err(|e| format!("invalid regex '{}': {}", self.regex, e))?;
 
@@ -150,11 +177,16 @@ impl PatternDef {
             col_group: self.fields.get("column").copied(),
             code_group: self.fields.get("code").copied(),
             message_group: self.fields.get("message").copied(),
+            deprecated: self.deprecated,
+            replaced_by: self.replaced_by.clone(),
         })
     }
 
     /// Convert to a `StatefulPattern` (cross-line state machine matching).
     fn to_stateful_pattern(&self) -> Result<StatefulPattern, String> {
+        // Safety check: reject regexes with ReDoS patterns
+        redos::check_safe(&self.regex)?;
+
         let regex = regex::Regex::new(&self.regex)
             .map_err(|e| format!("invalid regex '{}': {}", self.regex, e))?;
 
@@ -170,6 +202,8 @@ impl PatternDef {
             line_group: self.fields.get("line").copied(),
             state_condition,
             state_transition,
+            deprecated: self.deprecated,
+            replaced_by: self.replaced_by.clone(),
         })
     }
 }

@@ -21,6 +21,10 @@ pub struct LinePattern {
     pub col_group: Option<usize>,
     pub code_group: Option<usize>,
     pub message_group: Option<usize>,
+    /// When true, this pattern is deprecated and may be removed in a future version.
+    pub deprecated: bool,
+    /// Name of the replacement pattern, if any.
+    pub replaced_by: Option<String>,
 }
 
 /// A stateless line-matching parser.
@@ -170,6 +174,8 @@ mod tests {
             col_group: None,
             code_group: None,
             message_group: None,
+            deprecated: false,
+            replaced_by: None,
         }
     }
 
@@ -184,6 +190,8 @@ mod tests {
             col_group: None,
             code_group: None,
             message_group: Some(1),
+            deprecated: false,
+            replaced_by: None,
         }]);
         let event = parser.parse_line("error: something broke");
         assert!(event.is_some());
@@ -217,6 +225,8 @@ mod tests {
             col_group: None,
             code_group: None,
             message_group: Some(3),
+            deprecated: false,
+            replaced_by: None,
         }]);
         let event = parser.parse_line("main.rs:42: error: undefined").unwrap();
         let loc = event.location.unwrap();
