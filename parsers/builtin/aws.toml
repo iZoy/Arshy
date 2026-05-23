@@ -1,0 +1,38 @@
+[meta]
+name = "aws"
+description = "AWS CLI"
+detect = ["aws"]
+priority = 50
+
+[[pattern]]
+name = "aws-error"
+regex = '^(An error occurred \(.+\)) (.+)$'
+event_type = "diagnostic"
+severity = "error"
+fields = { code = 1, message = 2 }
+
+[[pattern]]
+name = "aws-error-simple"
+regex = '^(Error|error): (.+)$'
+event_type = "diagnostic"
+severity = "error"
+fields = { message = 2 }
+
+[[pattern]]
+name = "aws-usage-error"
+regex = '^(usage|Usage):'
+event_type = "diagnostic"
+severity = "warning"
+
+[[pattern]]
+name = "aws-s3-error"
+regex = '^(upload|download|copy|move) failed.+to .+ (.+)$'
+event_type = "diagnostic"
+severity = "error"
+fields = { message = 0 }
+
+[[pattern]]
+name = "aws-stack-status"
+regex = '^\|\s+\w+\s+\|\s+(CREATE_COMPLETE|CREATE_FAILED|UPDATE_COMPLETE|UPDATE_FAILED|ROLLBACK_COMPLETE|ROLLBACK_FAILED)\s+\|'
+event_type = "summary"
+severity = "info"

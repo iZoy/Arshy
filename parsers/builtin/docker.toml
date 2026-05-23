@@ -1,0 +1,39 @@
+[meta]
+name = "docker-cli"
+description = "Docker CLI (run, build, exec)"
+detect = ["docker"]
+priority = 50
+
+[[pattern]]
+name = "docker-build-error"
+regex = '^(ERROR|error)\[.+\]: (.+)$'
+event_type = "diagnostic"
+severity = "error"
+fields = { message = 2 }
+
+[[pattern]]
+name = "docker-build-location"
+regex = '^\s*--> (.+?):(\d+)$'
+event_type = "location"
+severity = "info"
+fields = { file = 1, line = 2 }
+
+[[pattern]]
+name = "docker-error"
+regex = '^(Error|error): (.+)$'
+event_type = "diagnostic"
+severity = "error"
+fields = { message = 2 }
+
+[[pattern]]
+name = "docker-warning"
+regex = '^(WARNING|warning): (.+)$'
+event_type = "diagnostic"
+severity = "warning"
+fields = { message = 2 }
+
+[[pattern]]
+name = "docker-status"
+regex = '^\[.+\] (DONE|ERROR|CACHED)\s'
+event_type = "summary"
+severity = "info"

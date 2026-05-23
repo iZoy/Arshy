@@ -253,6 +253,12 @@ pub const BUILTIN_TOML: &[(&str, &str)] = &[
     ("mocha.toml", include_str!("../../../parsers/builtin/mocha.toml")),
     ("pip.toml", include_str!("../../../parsers/builtin/pip.toml")),
     ("pnpm.toml", include_str!("../../../parsers/builtin/pnpm.toml")),
+    // Tier 3: Infrastructure & cloud tools
+    ("terraform.toml", include_str!("../../../parsers/builtin/terraform.toml")),
+    ("kubectl.toml", include_str!("../../../parsers/builtin/kubectl.toml")),
+    ("helm.toml", include_str!("../../../parsers/builtin/helm.toml")),
+    ("aws.toml", include_str!("../../../parsers/builtin/aws.toml")),
+    ("docker-cli.toml", include_str!("../../../parsers/builtin/docker.toml")),
 ];
 
 /// Load all builtin parser definitions.
@@ -321,7 +327,7 @@ mod tests {
     #[test]
     fn parse_all_builtins() {
         let builtins = load_builtins();
-        assert_eq!(builtins.len(), 20, "expected 20 builtin parsers");
+        assert_eq!(builtins.len(), 25, "expected 25 builtin parsers");
 
         for (name, def) in &builtins {
             assert!(!def.meta.name.is_empty(), "parser '{}' has empty name", name);

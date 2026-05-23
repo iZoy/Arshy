@@ -1,0 +1,39 @@
+[meta]
+name = "kubectl"
+description = "Kubernetes kubectl CLI"
+detect = ["kubectl"]
+priority = 50
+
+[[pattern]]
+name = "kubectl-error"
+regex = '^error: (.+)$'
+event_type = "diagnostic"
+severity = "error"
+fields = { message = 1 }
+
+[[pattern]]
+name = "kubectl-warning"
+regex = '^Warning: (.+)$'
+event_type = "diagnostic"
+severity = "warning"
+fields = { message = 1 }
+
+[[pattern]]
+name = "kubectl-not-found"
+regex = '^Error from server \(NotFound\): (.+)$'
+event_type = "diagnostic"
+severity = "error"
+fields = { message = 1 }
+
+[[pattern]]
+name = "kubectl-describe-events"
+regex = '^\s+(\d+[smhd])\s+(Normal|Warning)\s+(.+)$'
+event_type = "diagnostic"
+severity = "info"
+fields = { code = 2, message = 3 }
+
+[[pattern]]
+name = "kubectl-status"
+regex = '^(NAME|STATUS|READY|RESTARTS|AGE)'
+event_type = "summary"
+severity = "info"

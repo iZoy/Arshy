@@ -572,7 +572,7 @@ mod harness_tests {
     }
 
     #[test]
-    fn all_20_parsers_load() {
+    fn all_parsers_load() {
         let config = ParserConfig::default();
         let engine = Engine::new(&config).unwrap();
 
@@ -597,6 +597,11 @@ mod harness_tests {
             "mocha",
             "pip",
             "pnpm",
+            "terraform",
+            "kubectl",
+            "helm",
+            "aws",
+            "docker",
         ];
 
         for name in &parsers {
