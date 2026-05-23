@@ -246,8 +246,21 @@ impl ParserSession {
     }
 
     /// Parse one line of output.
+    ///
+    /// Pipeline order:
+    /// 1. Format detection (JSON line) — highest priority for structured data
+    /// 2. Stateful parser (Rhai/state-machine)
+    /// 3. TOML parser (regex patterns)
+    /// 4. Crash parser (universal crash detection)
+    /// 5. Raw fallback
     pub fn parse_line(&self, line: &str, seq: u64, _tool: Option<&ParsedTool>) -> Vec<TaskEvent> {
-        // 1. Stateful parser (if it matched, return; otherwise fall through)
+        // 1. Format detection — try JSON first for structured output
+        if let Some(mut event) = json::try_parse_line(line) {
+            event.seq = seq;
+            return vec![event];
+        }
+
+        // 2. Stateful parser (if it matched, return; otherwise fall through)
         if let Some(ref stateful) = self.stateful {
             let events = stateful.feed_line(line, seq);
             if !events.is_empty() {
@@ -256,7 +269,7 @@ impl ParserSession {
             // Stateful parser didn't match — fall through to crash/raw
         }
 
-        // 2. TOML parser (pre-built at session creation, no per-line clone)
+        // 3. TOML parser (pre-built at session creation, no per-line clone)
         if let Some(ref parser) = self.toml_parser {
             if let Some(mut event) = parser.parse_line(line) {
                 event.seq = seq;
@@ -264,13 +277,13 @@ impl ParserSession {
             }
         }
 
-        // 3. Crash parser (universal, no tool dependency)
+        // 4. Crash parser (universal, no tool dependency)
         if let Some(mut event) = crash::try_parse_crash(line) {
             event.seq = seq;
             return vec![event];
         }
 
-        // 4. Raw fallback
+        // 5. Raw fallback
         vec![toml::raw_event(line, seq)]
     }
 

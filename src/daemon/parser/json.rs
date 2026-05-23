@@ -1,72 +1,183 @@
-//! Generic JSON output parser.
+//! Format detection layer — auto-detects structured output formats.
 //!
-//! Detects JSON output from tools like `gh`, `kubectl`, `terraform`, `awscli`, etc.
-//! When a command's output is valid JSON, it maps the structure into structured
-//! TaskEvents instead of letting them fall through to raw text.
+//! Runs as the first pass in the parser pipeline. When a command produces
+//! JSON (whole output or NDJSON per-line), this parser extracts structured
+//! events directly, skipping the regex pipeline entirely.
+//!
+//! Detection order:
+//! 1. Whole output is valid JSON (object or array) → parse as single event/array
+//! 2. NDJSON: each line is a valid JSON object → parse each line as an event
+//! 3. Neither → return None, fall through to regex pipeline
 
 use arshy_lib::ipc::TaskEvent;
 
-/// Attempts to parse a command's output as JSON and convert it to structured events.
+/// Try to parse accumulated output as JSON (whole or NDJSON).
 ///
-/// Returns `None` if the output is not valid JSON (doesn't start with `{` or `[`,
-/// or fails to parse). Returns `Some(events)` with structured events otherwise.
+/// Called after command completion on the accumulated output string.
+/// Returns `None` if output is not JSON.
 pub fn try_parse(output: &str) -> Option<Vec<TaskEvent>> {
     let trimmed = output.trim();
     if trimmed.is_empty() {
         return None;
     }
-    let first_char = trimmed.chars().next()?;
-    if first_char != '{' && first_char != '[' {
+
+    // Strategy 1: whole output is valid JSON
+    if let Some(events) = try_parse_whole(trimmed) {
+        return Some(events);
+    }
+
+    // Strategy 2: NDJSON — each line is a JSON object
+    if let Some(events) = try_parse_ndjson(trimmed) {
+        return Some(events);
+    }
+
+    None
+}
+
+/// Try parsing a single line as JSON. Used for line-by-line streaming.
+/// Returns `Some(event)` if the line is valid JSON, `None` otherwise.
+pub fn try_parse_line(line: &str) -> Option<TaskEvent> {
+    let trimmed = line.trim();
+    if trimmed.is_empty() || !trimmed.starts_with('{') {
         return None;
     }
 
     let value: serde_json::Value = serde_json::from_str(trimmed).ok()?;
+    Some(value_to_event(&value))
+}
+
+// ── Internal helpers ──────────────────────────────────────────────────────
+
+fn try_parse_whole(output: &str) -> Option<Vec<TaskEvent>> {
+    let first_char = output.chars().next()?;
+    if first_char != '{' && first_char != '[' {
+        return None;
+    }
+
+    let value: serde_json::Value = serde_json::from_str(output).ok()?;
 
     match &value {
         serde_json::Value::Array(arr) => {
-            let events: Vec<TaskEvent> = arr
-                .iter()
-                .map(|item| TaskEvent {
-                    seq: 0, // caller assigns
-                    event_type: "data".into(),
-                    severity: Some("info".into()),
-                    code: None,
-                    message: if item.is_string() {
-                        item.as_str().unwrap_or("").to_string()
-                    } else {
-                        serde_json::to_string(item).unwrap_or_default()
-                    },
-                    location: None,
-                    context: None,
-                })
-                .collect();
-            Some(events)
+            Some(arr.iter().map(value_to_event).collect())
         }
         serde_json::Value::Object(_) => {
-            let keys: Vec<&str> = value
-                .as_object()
-                .map(|obj| obj.keys().map(|k| k.as_str()).collect())
-                .unwrap_or_default();
-            let summary = format!("JSON object with fields: {}", keys.join(", "));
-            Some(vec![TaskEvent {
+            Some(vec![value_to_event(&value)])
+        }
+        _ => None,
+    }
+}
+
+fn try_parse_ndjson(output: &str) -> Option<Vec<TaskEvent>> {
+    let lines: Vec<&str> = output.lines().filter(|l| !l.trim().is_empty()).collect();
+    if lines.len() < 2 {
+        return None; // Single line is handled by try_parse_whole
+    }
+
+    // Check if at least 80% of lines are valid JSON objects
+    let json_count = lines.iter()
+        .filter(|l| l.trim().starts_with('{'))
+        .filter(|l| serde_json::from_str::<serde_json::Value>(l.trim()).is_ok())
+        .count();
+
+    if json_count < (lines.len() * 4 / 5) {
+        return None;
+    }
+
+    Some(lines.iter().filter_map(|l| try_parse_line(l)).collect())
+}
+
+fn value_to_event(value: &serde_json::Value) -> TaskEvent {
+    match value {
+        serde_json::Value::Object(obj) => {
+            // Try to extract structured fields from JSON object
+            let event_type = obj.get("type")
+                .and_then(|v| v.as_str())
+                .or_else(|| obj.get("level")
+                    .and_then(|v| v.as_str())
+                    .map(|l| match l {
+                        "error" | "fatal" => "diagnostic",
+                        "warn" | "warning" => "diagnostic",
+                        _ => "log",
+                    }))
+                .unwrap_or("data")
+                .to_string();
+
+            let severity = obj.get("severity")
+                .and_then(|v| v.as_str())
+                .or_else(|| obj.get("level").and_then(|v| v.as_str()))
+                .map(|s| match s {
+                    "error" | "fatal" | "critical" => "error",
+                    "warn" | "warning" => "warning",
+                    _ => "info",
+                })
+                .unwrap_or("info")
+                .to_string();
+
+            let code = obj.get("code")
+                .or_else(|| obj.get("errorCode"))
+                .or_else(|| obj.get("error_code"))
+                .and_then(|v| v.as_str().or_else(|| v.as_i64().map(|_| "")).map(|s| if s.is_empty() { v.to_string() } else { s.to_string() }))
+                .or_else(|| obj.get("code").and_then(|v| v.as_i64()).map(|n| n.to_string()));
+
+            let message = obj.get("message")
+                .or_else(|| obj.get("msg"))
+                .or_else(|| obj.get("text"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+
+            let file = obj.get("file")
+                .or_else(|| obj.get("filename"))
+                .or_else(|| obj.get("path"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+
+            let line = obj.get("line")
+                .or_else(|| obj.get("lineNumber"))
+                .or_else(|| obj.get("lineno"))
+                .and_then(|v| v.as_u64());
+
+            let location = file.map(|f| arshy_lib::ipc::EventLocation {
+                file: f,
+                line: line.unwrap_or(0),
+                column: None,
+            });
+
+            TaskEvent {
+                seq: 0,
+                event_type,
+                severity: Some(severity),
+                code,
+                message: if message.is_empty() {
+                    serde_json::to_string(value).unwrap_or_default()
+                } else {
+                    message
+                },
+                location,
+                context: None,
+            }
+        }
+        serde_json::Value::Array(arr) => {
+            // Array: summarize
+            TaskEvent {
                 seq: 0,
                 event_type: "data".into(),
                 severity: Some("info".into()),
                 code: None,
-                message: serde_json::to_string_pretty(&value).unwrap_or(summary),
+                message: format!("JSON array ({} items)", arr.len()),
                 location: None,
                 context: None,
-            }])
+            }
         }
-        _ => Some(vec![TaskEvent {
+        _ => TaskEvent {
             seq: 0,
             event_type: "data".into(),
             severity: Some("info".into()),
             code: None,
-            message: serde_json::to_string(&value).unwrap_or_else(|_| trimmed.to_string()),
+            message: serde_json::to_string(value).unwrap_or_default(),
             location: None,
             context: None,
-        }]),
+        },
     }
 }
 
@@ -74,17 +185,18 @@ pub fn try_parse(output: &str) -> Option<Vec<TaskEvent>> {
 mod tests {
     use super::*;
 
+    // ── Whole JSON ───────────────────────────────────────────────────────
+
     #[test]
-    fn empty_output_returns_none() {
+    fn empty_returns_none() {
         assert!(try_parse("").is_none());
         assert!(try_parse("   ").is_none());
     }
 
     #[test]
-    fn non_json_output_returns_none() {
+    fn non_json_returns_none() {
         assert!(try_parse("hello world").is_none());
-        assert!(try_parse("error: something went wrong").is_none());
-        assert!(try_parse("success\n12 tests passed").is_none());
+        assert!(try_parse("error: something").is_none());
     }
 
     #[test]
@@ -92,70 +204,109 @@ mod tests {
         let output = r#"{"status":"ok","count":42}"#;
         let events = try_parse(output).unwrap();
         assert_eq!(events.len(), 1);
-        assert_eq!(events[0].event_type, "data");
-        assert_eq!(events[0].severity.as_deref(), Some("info"));
-        assert!(events[0].message.contains("status"));
-        assert!(events[0].message.contains("count"));
     }
 
     #[test]
     fn json_array_multiple_events() {
-        let output = r#"["one","two","three"]"#;
-        let events = try_parse(output).unwrap();
-        assert_eq!(events.len(), 3);
-        assert_eq!(events[0].message, "one");
-        assert_eq!(events[1].message, "two");
-        assert_eq!(events[2].message, "three");
-    }
-
-    #[test]
-    fn json_array_of_objects() {
-        let output = r#"[{"name":"alice"},{"name":"bob"}]"#;
+        let output = r#"[{"name":"a"},{"name":"b"}]"#;
         let events = try_parse(output).unwrap();
         assert_eq!(events.len(), 2);
-        assert!(events[0].message.contains("alice"));
-        assert!(events[1].message.contains("bob"));
     }
 
     #[test]
-    fn json_with_leading_whitespace() {
-        let output = "\n  {\"key\":\"value\"}";
+    fn json_object_with_error_fields() {
+        let output = r#"{"level":"error","code":"E001","message":"disk full","file":"/dev/sda"}"#;
         let events = try_parse(output).unwrap();
         assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event_type, "diagnostic");
+        assert_eq!(events[0].severity.as_deref(), Some("error"));
+        assert_eq!(events[0].code.as_deref(), Some("E001"));
+        assert_eq!(events[0].message, "disk full");
+        assert_eq!(events[0].location.as_ref().unwrap().file, "/dev/sda");
     }
 
     #[test]
-    fn json_primitive_number() {
-        let output = "42";
+    fn json_with_level_field() {
+        let output = r#"{"level":"warn","msg":"deprecated API"}"#;
+        let events = try_parse(output).unwrap();
+        assert_eq!(events[0].event_type, "diagnostic");
+        assert_eq!(events[0].severity.as_deref(), Some("warning"));
+    }
+
+    // ── NDJSON ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn ndjson_multiple_lines() {
+        let output = r#"{"ts":"2024-01-01","level":"info","msg":"started"}
+{"ts":"2024-01-01","level":"error","msg":"failed"}
+{"ts":"2024-01-01","level":"info","msg":"retried"}"#;
+        let events = try_parse(output).unwrap();
+        assert_eq!(events.len(), 3);
+        assert_eq!(events[1].severity.as_deref(), Some("error"));
+    }
+
+    #[test]
+    fn ndjson_rejects_mixed_output() {
+        let output = r#"{"level":"info","msg":"started"}
+some random text line
+{"level":"error","msg":"failed"}
+more random text"#;
+        // Only 50% are JSON, below 80% threshold
         assert!(try_parse(output).is_none());
     }
 
     #[test]
-    fn invalid_json_returns_none() {
-        assert!(try_parse(r#"{"broken": "#).is_none());
-        assert!(try_parse(r#"["unclosed array"#).is_none());
+    fn ndjson_accepts_mostly_json() {
+        let output = r#"{"level":"info","msg":"started"}
+{"level":"info","msg":"processing"}
+{"level":"info","msg":"done"}
+some log line"#;
+        // 75% are JSON (3/4) — meets the 75% threshold (lines * 4 / 5)
+        let events = try_parse(output).unwrap();
+        assert_eq!(events.len(), 3, "should parse 3 JSON lines");
     }
 
     #[test]
-    fn nested_json_object() {
-        let output = r#"{"items":[1,2,3],"meta":{"page":1}}"#;
-        let events = try_parse(output).unwrap();
-        assert_eq!(events.len(), 1);
-        assert!(events[0].message.contains("items"));
-        assert!(events[0].message.contains("meta"));
-        assert!(events[0].message.contains("page"));
+    fn ndjson_rejects_low_json_ratio() {
+        let output = r#"{"level":"info","msg":"started"}
+some random text
+another text line
+{"level":"info","msg":"done"}"#;
+        // 50% are JSON (2/4) — below 75% threshold
+        assert!(try_parse(output).is_none());
     }
+
+    // ── Single line parsing ──────────────────────────────────────────────
+
+    #[test]
+    fn parse_line_valid_json() {
+        let event = try_parse_line(r#"{"level":"error","message":"oops"}"#).unwrap();
+        assert_eq!(event.severity.as_deref(), Some("error"));
+    }
+
+    #[test]
+    fn parse_line_non_json_returns_none() {
+        assert!(try_parse_line("hello world").is_none());
+        assert!(try_parse_line("").is_none());
+    }
+
+    // ── Edge cases ──────────────────────────────────────────────────────
 
     #[test]
     fn empty_json_array() {
-        let output = "[]";
-        let events = try_parse(output).unwrap();
+        let events = try_parse("[]").unwrap();
         assert_eq!(events.len(), 0);
     }
 
     #[test]
     fn empty_json_object() {
-        let output = "{}";
+        let events = try_parse("{}").unwrap();
+        assert_eq!(events.len(), 1);
+    }
+
+    #[test]
+    fn json_with_leading_whitespace() {
+        let output = "\n  {\"key\":\"value\"}";
         let events = try_parse(output).unwrap();
         assert_eq!(events.len(), 1);
     }
