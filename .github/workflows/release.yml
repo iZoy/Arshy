@@ -36,6 +36,12 @@ jobs:
       - name: Build release binary
         run: cargo build --release --target ${{ matrix.target }}
 
+      - name: Code sign (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          codesign -s - target/${{ matrix.target }}/release/arshy
+          codesign -s - target/${{ matrix.target }}/release/arshyd
+
       - name: Package artifacts
         run: |
           VERSION=${GITHUB_REF#refs/tags/}
