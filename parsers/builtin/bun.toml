@@ -1,0 +1,40 @@
+[meta]
+name = "bun"
+description = "Bun JavaScript runtime"
+detect = ["bun"]
+priority = 50
+
+[[pattern]]
+name = "bun-error"
+regex = '^(error|Error): (.+)$'
+event_type = "diagnostic"
+severity = "error"
+fields = { message = 2 }
+
+[[pattern]]
+name = "bun-ts-error"
+regex = '^(.+?):(\d+):(\d+) - error TS(\d+): (.+)$'
+event_type = "diagnostic"
+severity = "error"
+fields = { file = 1, line = 2, column = 3, code = 4, message = 5 }
+
+[[pattern]]
+name = "bun-test-result"
+regex = '^\s*(✓|✗|○)\s+(.+?)(?:\s+\((\d+)ms\))?$'
+event_type = "test_result"
+severity = "info"
+fields = { code = 1, message = 2 }
+
+[[pattern]]
+name = "bun-test-summary"
+regex = '^\s*(\d+) pass'
+event_type = "summary"
+severity = "info"
+fields = { message = 0 }
+
+[[pattern]]
+name = "bun-install"
+regex = '^(installed|added|removed|updated) (\d+) packages?'
+event_type = "summary"
+severity = "info"
+fields = { message = 0 }

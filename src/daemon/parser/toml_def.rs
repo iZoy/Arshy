@@ -259,6 +259,13 @@ pub const BUILTIN_TOML: &[(&str, &str)] = &[
     ("helm.toml", include_str!("../../../parsers/builtin/helm.toml")),
     ("aws.toml", include_str!("../../../parsers/builtin/aws.toml")),
     ("docker-cli.toml", include_str!("../../../parsers/builtin/docker.toml")),
+    // Tier 4: Modern JS/Python ecosystem
+    ("uv.toml", include_str!("../../../parsers/builtin/uv.toml")),
+    ("ruff.toml", include_str!("../../../parsers/builtin/ruff.toml")),
+    ("turbo.toml", include_str!("../../../parsers/builtin/turbo.toml")),
+    ("nx.toml", include_str!("../../../parsers/builtin/nx.toml")),
+    ("deno.toml", include_str!("../../../parsers/builtin/deno.toml")),
+    ("bun.toml", include_str!("../../../parsers/builtin/bun.toml")),
 ];
 
 /// Load all builtin parser definitions.
@@ -327,7 +334,7 @@ mod tests {
     #[test]
     fn parse_all_builtins() {
         let builtins = load_builtins();
-        assert_eq!(builtins.len(), 25, "expected 25 builtin parsers");
+        assert_eq!(builtins.len(), 31, "expected 31 builtin parsers");
 
         for (name, def) in &builtins {
             assert!(!def.meta.name.is_empty(), "parser '{}' has empty name", name);

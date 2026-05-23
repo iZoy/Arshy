@@ -1,0 +1,40 @@
+[meta]
+name = "deno"
+description = "Deno JavaScript/TypeScript runtime"
+detect = ["deno"]
+priority = 50
+
+[[pattern]]
+name = "deno-error"
+regex = '^(error|Error): (.+)$'
+event_type = "diagnostic"
+severity = "error"
+fields = { message = 2 }
+
+[[pattern]]
+name = "deno-ts-error"
+regex = '^\[(.+?)\] (.+?):(\d+):(\d+) - error TS(\d+): (.+)$'
+event_type = "diagnostic"
+severity = "error"
+fields = { code = 1, file = 2, line = 3, column = 4, message = 6 }
+
+[[pattern]]
+name = "deno-location"
+regex = '^\s+at (.+?):(\d+):(\d+)$'
+event_type = "location"
+severity = "info"
+fields = { file = 1, line = 2, column = 3 }
+
+[[pattern]]
+name = "deno-test-result"
+regex = '^(PASS|FAIL)\s+(.+)$'
+event_type = "test_result"
+severity = "info"
+fields = { code = 1, message = 2 }
+
+[[pattern]]
+name = "deno-test-summary"
+regex = '^ok \| (\d+) passed \| (\d+) failed'
+event_type = "summary"
+severity = "info"
+fields = { message = 0 }

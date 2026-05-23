@@ -615,6 +615,12 @@ mod harness_tests {
             "helm",
             "aws",
             "docker",
+            "uv",
+            "ruff",
+            "turbo",
+            "nx",
+            "deno",
+            "bun",
         ];
 
         for name in &parsers {
