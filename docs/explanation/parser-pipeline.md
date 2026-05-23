@@ -2,17 +2,30 @@
 
 ## 概述
 
-Parser 管道是 Arshy 的核心：将命令的原始文本输出转化为结构化事件。设计目标覆盖率为 TOML 70%、Stateful 25%、Crash 3%、Raw 2%。
+Parser 管道是 Arshy 的核心：将命令的原始文本输出转化为结构化事件。
 
-## 四级匹配
+## 五级匹配
 
 每行输出按优先级依次尝试，命中即停止：
 
 ```
-行 → Stateful Parser → Line Patterns (TOML) → Crash Parser → Raw
+行 → 格式检测(JSON/NDJSON/YAML/CSV) → Stateful(Rhai) → TOML(regex) → Crash(通用) → Raw
 ```
 
-### 1. Stateful Parser（Rhai 引擎）
+### 1. 格式检测（新增）
+
+自动识别结构化输出格式，跳过 regex 管道：
+
+| 格式 | 检测方式 | 典型命令 |
+|------|----------|----------|
+| JSON | 整体输出是合法 JSON | `kubectl get pods -o json` |
+| NDJSON | 逐行 JSON 对象（≥75% 行匹配） | `docker logs --format json` |
+| YAML | `---` 开头或 `key: value` 模式 | `kubectl get pods -o yaml` |
+| CSV/TSV | 一致的分隔符模式 | `docker ps`、`aws s3 ls` |
+
+实现：`json.rs` 中的 `try_parse_line()` 作为第一级，`try_parse()` 作为全量输出检测。
+
+### 2. Stateful Parser（Rhai 引擎）
 
 跨行有状态匹配。适用场景：
 - npm install 的多行错误块
@@ -21,13 +34,13 @@ Parser 管道是 Arshy 的核心：将命令的原始文本输出转化为结构
 
 实现：`StatefulPattern` 含 `state_condition`/`state_transition`，跨行保持状态。Rhai 脚本模式支持 `on_line()` / `on_complete()` 回调。
 
-### 2. Line Patterns（TOML 无状态）
+### 3. Line Patterns（TOML 无状态）
 
-逐行正则匹配。覆盖 80% 场景。31 个 pattern 分布在 20 个 parser 中。
+逐行正则匹配。覆盖 80% 场景。31 个 builtin parser。
 
 实现：`TomlParser::parse_line()` 按顺序尝试 pattern，第一个匹配的捕获组提取 file/line/column/code/message/severity。所有正则经过 ReDoS 静态校验。
 
-### 3. Crash Parser
+### 4. Crash Parser
 
 通用崩溃/堆栈检测。**不依赖 parser 选择**，始终生效。覆盖 5 种语言：
 
@@ -39,9 +52,19 @@ Parser 管道是 Arshy 的核心：将命令的原始文本输出转化为结构
 | Node.js | `Error: ...` + `at func (file.js:42:10)` |
 | Shell | `Segmentation fault` / `Bus error` / `Killed` |
 
-### 4. Raw Fallback
+### 5. Raw Fallback
 
 所有未匹配行归类为 `log` 事件。`classify_severity()` 通过关键词（error/fatal/failed/panic/warning/deprecated）自动判断严重度。stderr 行额外经过 `stderr_looks_like_error()` 修正。
+
+## 智能输出
+
+命令完成后，自动计算：
+
+| 字段 | 说明 | 用途 |
+|------|------|------|
+| **summary** | 按 type/severity 分组统计 | Agent 直接读 `summary.by_severity.error == 0` |
+| **root_cause** | 第一个 error 级别事件 | Agent 直接读 `root_cause.message` |
+| **project_context** | 失败时附加 git diff | Agent 直接看 `project_context.git_diff_stat` |
 
 ## 工具检测
 
@@ -62,31 +85,18 @@ Parser 管道是 Arshy 的核心：将命令的原始文本输出转化为结构
   └─ 构建 StatefulParser（如适用）
        │
 逐行 feed ──→ parse_line(line, seq)
+       │         ├─ 格式检测（JSON line）
        │         ├─ StatefulParser::feed_line()
        │         ├─ TomlParser::parse_line()
        │         ├─ crash::try_parse_crash()
        │         └─ raw_event()
        │
 完成 ──→ on_complete(exit_code, seq)
-            └─ StatefulParser::on_complete()
+            ├─ StatefulParser::on_complete()
+            ├─ compute_summary()
+            ├─ extract_root_cause()
+            └─ compute_project_context()
 ```
-
-## 热重载
-
-`ParserWatcher` 使用 notify v7 监听 `~/.arshy/parsers/` 目录。文件变更时：
-1. 重新加载 parser registry
-2. 对比新旧 registry（`ParserRegistry::diff()`）
-3. 记录审计日志：新增/删除 parser、pattern 数量变化、弃用数量变化
-4. 原子替换 `RwLock` 中的 registry（写锁短暂持有）
-
-## ReDoS 安全校验
-
-所有正则编译时经过 `redos::check_safe()`：
-
-- **嵌套量词**：`(a+)+`、`(a*)*`、`(.+)+`、`(a{1,5}){2,10}` → 拒绝
-- **重叠交替**：`(a|ab)+b` → 拒绝
-
-校验失败的 pattern 被跳过并记录 warn 日志，不影响其他 pattern。
 
 ## 测试体系
 
