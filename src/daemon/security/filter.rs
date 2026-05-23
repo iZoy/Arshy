@@ -144,6 +144,43 @@ mod tests {
         assert!(filter.check("curl -o file.txt http://example.com").is_ok());
     }
 
+    #[test]
+    fn safe_dd_without_if() {
+        let filter = default_filter();
+        // dd without if= is safe (e.g., dd status=progress)
+        assert!(filter.check("dd status=progress").is_ok());
+    }
+
+    // ── Edge cases ─────────────────────────────────────────────────────
+
+    #[test]
+    fn edge_empty_command() {
+        let filter = default_filter();
+        assert!(filter.check("").is_ok());
+        assert!(filter.check("   ").is_ok());
+    }
+
+    #[test]
+    fn edge_special_characters() {
+        let filter = default_filter();
+        assert!(filter.check("echo 'a]b[c{d}e(f)g*h?i$j!k'").is_ok());
+        assert!(filter.check("echo \"hello world\"").is_ok());
+    }
+
+    #[test]
+    fn edge_pipe_commands() {
+        let filter = default_filter();
+        assert!(filter.check("cat file.txt | grep error").is_ok());
+        assert!(filter.check("ls -la | wc -l").is_ok());
+    }
+
+    #[test]
+    fn edge_redirect_commands() {
+        let filter = default_filter();
+        assert!(filter.check("echo hello > /tmp/test.txt").is_ok());
+        assert!(filter.check("cat file.txt >> output.txt").is_ok());
+    }
+
     // ── Whitelist ─────────────────────────────────────────────────────────
 
     #[test]

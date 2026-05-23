@@ -209,4 +209,57 @@ mod tests {
         // We just verify it didn't wait the full 60 seconds
         assert!(exit.is_some() || exit.is_none()); // process terminated
     }
+
+    #[tokio::test]
+    async fn test_spawn_empty_echo() {
+        let mut handle = spawn_command("echo ''", None, None).await.unwrap();
+        let mut lines = Vec::new();
+        while let Some((_, line)) = handle.output_rx.recv().await {
+            lines.push(line);
+        }
+        // Empty echo produces empty line
+        assert!(lines.is_empty() || lines == vec![""]);
+        handle.wait().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_spawn_special_characters() {
+        let mut handle = spawn_command("echo 'a]b[c{d}e(f)g*h?i$j!k'", None, None).await.unwrap();
+        let mut lines = Vec::new();
+        while let Some((_, line)) = handle.output_rx.recv().await {
+            lines.push(line);
+        }
+        assert_eq!(lines, vec!["a]b[c{d}e(f)g*h?i$j!k"]);
+        handle.wait().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_spawn_pipe() {
+        let mut handle = spawn_command("echo 'hello world' | wc -w", None, None).await.unwrap();
+        let mut lines = Vec::new();
+        while let Some((_, line)) = handle.output_rx.recv().await {
+            lines.push(line);
+        }
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].trim().parse::<i32>().is_ok()); // should be a number
+        handle.wait().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_spawn_stderr_redirect() {
+        let mut handle = spawn_command("echo error >&2 && echo ok", None, None).await.unwrap();
+        let mut stdout_lines = Vec::new();
+        let mut stderr_lines = Vec::new();
+
+        while let Some((source, line)) = handle.output_rx.recv().await {
+            if source == "stdout" {
+                stdout_lines.push(line);
+            } else {
+                stderr_lines.push(line);
+            }
+        }
+        assert_eq!(stdout_lines, vec!["ok"]);
+        assert_eq!(stderr_lines, vec!["error"]);
+        handle.wait().await.unwrap();
+    }
 }
