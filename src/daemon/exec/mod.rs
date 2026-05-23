@@ -264,7 +264,8 @@ impl Executor {
     /// - **sync**: Wait for completion, full structured path.
     /// - **async**: Return immediately with task_id, events stream via notifications.
     /// - **auto**: Smart — short commands get zero-overhead sync path (raw stdout),
-    ///   long commands get async + structured path.
+    ///   long commands get sync with 30s timeout (structured result in 1 call).
+    ///   If command exceeds 30s, degrades to async (returns task_id).
     pub async fn run(
         &self,
         command: &str,
@@ -331,8 +332,17 @@ impl Executor {
         };
         self.store.insert_task(&task)?;
 
-        // Auto → async for long commands; explicit sync/async → as-is
-        let is_sync = is_explicit_sync;
+        // Auto + non-short → sync (wait for completion, with 30s timeout)
+        // Explicit sync/async → as-is
+        let is_sync = is_explicit_sync || (is_auto && !is_short);
+
+        // Auto mode uses a bounded wait; if command exceeds 30s, degrade to async.
+        // Explicit sync waits indefinitely (caller chose to block).
+        let auto_sync_timeout = if is_auto && !is_short {
+            Some(std::time::Duration::from_secs(30))
+        } else {
+            None
+        };
 
         // Spawn background execution task
         let store = self.store.clone();
@@ -379,7 +389,7 @@ impl Executor {
             kill_registry.lock().await.remove(&task_id_cleanup);
         });
 
-        // Async mode: return immediately
+        // Async mode: return immediately (explicit async, or auto timeout fallback)
         if !is_sync {
             return Ok(RunResult {
                 task_id,
@@ -391,35 +401,85 @@ impl Executor {
                 error_count: None,
                 raw_output: None,
                 short_command: false,
+                events: None,
             });
         }
 
-        // Sync mode: wait for completion
+        // Sync mode: wait for completion (with optional auto timeout)
         match done_rx {
-            Some(rx) => match rx.await {
-                Ok(info) => Ok(RunResult {
-                    task_id,
-                    status: info.status,
-                    pid: info.pid,
-                    exit_code: Some(info.exit_code),
-                    duration_ms: Some(info.duration_ms),
-                    event_count: Some(info.event_count),
-                    error_count: Some(info.error_count),
-                    raw_output: None,
-                    short_command: false,
-                }),
-                Err(_) => Ok(RunResult {
-                    task_id,
-                    status: TaskStatus::Failed,
-                    pid: None,
-                    exit_code: Some(-1),
-                    duration_ms: None,
-                    event_count: None,
-                    error_count: None,
-                    raw_output: None,
-                    short_command: false,
-                }),
-            },
+            Some(rx) => {
+                let completion = if let Some(timeout) = auto_sync_timeout {
+                    match tokio::time::timeout(timeout, rx).await {
+                        Ok(Ok(info)) => Ok(info),
+                        Ok(Err(_)) => Err(()),
+                        Err(_) => {
+                            // Auto mode timeout — degrade to async: task is still running,
+                            // agent can query later or subscribe if needed.
+                            tracing::debug!("auto sync timeout for task {}, degrading to async", task_id);
+                            return Ok(RunResult {
+                                task_id,
+                                status: TaskStatus::Running,
+                                pid: None,
+                                exit_code: None,
+                                duration_ms: None,
+                                event_count: None,
+                                error_count: None,
+                                raw_output: None,
+                                short_command: false,
+                                events: None,
+                            });
+                        }
+                    }
+                } else {
+                    rx.await.map_err(|_| ())
+                };
+
+                match completion {
+                    Ok(info) => {
+                        // Query events from store and attach to result for agent convenience
+                        let events_json: Option<Vec<serde_json::Value>> = {
+                            let params = arshy_lib::ipc::QueryParams {
+                                task_id: task_id.clone(),
+                                event_type: None,
+                                severity: None,
+                                code: None,
+                                file: None,
+                                limit: 200,
+                                offset: 0,
+                            };
+                            self.store.query_events(&params).ok()
+                                .map(|(evts, _total)| evts.into_iter()
+                                    .map(|e| serde_json::to_value(&e).unwrap_or_default())
+                                    .collect())
+                        };
+
+                        Ok(RunResult {
+                            task_id,
+                            status: info.status,
+                            pid: info.pid,
+                            exit_code: Some(info.exit_code),
+                            duration_ms: Some(info.duration_ms),
+                            event_count: Some(info.event_count),
+                            error_count: Some(info.error_count),
+                            raw_output: None,
+                            short_command: false,
+                            events: events_json,
+                        })
+                    }
+                    Err(_) => Ok(RunResult {
+                        task_id,
+                        status: TaskStatus::Failed,
+                        pid: None,
+                        exit_code: Some(-1),
+                        duration_ms: None,
+                        event_count: None,
+                        error_count: None,
+                        raw_output: None,
+                        short_command: false,
+                        events: None,
+                    }),
+                }
+            }
             None => unreachable!(),
         }
     }
@@ -500,6 +560,7 @@ impl Executor {
             error_count: None,
             raw_output: Some(raw_output),
             short_command: true,
+            events: None,
         })
     }
 
@@ -1121,9 +1182,10 @@ mod tests {
         assert!(result.duration_ms.is_some());
     }
 
-    /// Auto mode with a long non-inspection command takes the async path.
+    /// Auto mode with a long non-inspection command now uses smart sync.
+    /// The command completes quickly (invalid path), so it returns a structured result.
     #[tokio::test]
-    async fn auto_long_takes_async_path() {
+    async fn auto_long_uses_smart_sync() {
         let (store, parser, bus, _tmp) = setup();
         let executor = Executor::new(store.clone(), parser, bus);
 
@@ -1132,11 +1194,9 @@ mod tests {
             None, None, "auto", None, None,
         ).await.unwrap();
         assert!(!result.short_command, "long build command should not be short_command");
-        assert_eq!(result.status, TaskStatus::Running);
-        assert!(result.raw_output.is_none(), "async path should not populate raw_output");
-
-        // Cleanup: kill the spawned cargo build
-        executor.kill(&result.task_id).await.ok();
+        assert_eq!(result.status, TaskStatus::Failed, "invalid path should fail");
+        assert!(result.exit_code.is_some(), "should have exit code");
+        assert!(result.events.is_some(), "smart sync attaches events");
     }
 
     /// Inspection tools over 80 chars still take the short path — raw text beats log events.

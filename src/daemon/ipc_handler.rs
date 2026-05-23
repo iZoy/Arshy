@@ -47,6 +47,10 @@ pub struct RunResult {
     pub raw_output: Option<String>,
     #[serde(default)]
     pub short_command: bool,
+    /// Structured events from the completed task (sync paths only).
+    /// Allows agent to get full result + events in a single MCP call.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub events: Option<Vec<serde_json::Value>>,
 }
 
 // ── Main handler entry ──────────────────────────────────────────────────────

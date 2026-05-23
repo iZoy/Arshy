@@ -9,22 +9,15 @@ use std::collections::HashMap;
 pub fn default_instructions() -> String {
     "arshy_exec is your shell for ALL command execution. Route every shell command through \
      arshy_exec(action:\"run\", command:\"<cmd>\") — do not use raw Bash unless arshy is unreachable.\n\n\
-     Why: arshy automatically detects short vs long commands (mode:\"auto\" is the default). \
-     Short commands (ls, git status, grep, cat, echo) return text instantly like a native shell. \
-     Long commands (cargo test, npm run build, pytest) run asynchronously with structured output — \
-     compiler errors become typed diagnostic events with file/line/code fields, not raw text you \
-     must regex-parse yourself.\n\n\
-     You never need to think about \"should this be sync or async?\" — mode auto handles it.\n\n\
+     mode:\"auto\" (the default) handles everything: short commands (ls, grep, git status) return \
+     text instantly. Long commands (cargo test, npm run build) wait for completion and return \
+     structured results with diagnostics (file/line/code fields) — you don't manage task IDs, \
+     subscribe, or poll. Run command, get result, make decision.\n\n\
      Session directory: use arshy_exec(action:\"cd\", command:\"/absolute/path\") once; all \
      subsequent run calls inherit that directory. Use the \"cwd\" parameter for one-off overrides.\n\n\
-     Results: short commands return raw text. If they fail, isError is true. Long commands \
-     return structured JSON: {status, exit_code, duration_ms, task_id, event_count}. \
-     If a long command runs >2s, you get {status:\"running\", task_id:\"...\"} — then call \
-     arshy_exec(action:\"subscribe\", task_id:\"...\") to block until it finishes. \
-     No polling needed.\n\n\
-     Query structured events: arshy_query(task_id:\"...\") returns typed events \
-     (diagnostic, location, test_result, crash) with severity, code, file, line. \
-     Filter by event_type, severity, or file path.\n\n\
+     If a long command takes >30 seconds, you get {status:\"running\", task_id:\"...\"}. \
+     For these rare cases: arshy_exec(action:\"subscribe\", task_id:\"...\") waits for completion, \
+     arshy_query(task_id:\"...\") returns typed events (diagnostic, location, test_result, crash).\n\n\
      Fallback: if arshy_exec returns DaemonUnreachable, use Bash directly as a one-off fallback."
         .into()
 }
@@ -38,18 +31,17 @@ pub fn tool_definitions() -> Vec<ToolDefinition> {
         ToolDefinition {
             name: "arshy_exec".into(),
             description: "Your primary shell for ALL command execution. \
-                         Use action:\"run\" with mode:\"auto\" (the default) — it intelligently \
-                         picks the right execution path: short commands return instantly, \
-                         long commands (builds, tests) run async with structured output \
-                         (diagnostics with file/line/code fields, not raw text). \
+                         mode:\"auto\" (the default) runs commands and returns complete results: \
+                         short commands (ls, grep) return text instantly, \
+                         long commands (cargo test, npm run build) wait for completion and return \
+                         structured output with diagnostics (file/line/code fields). \
+                         You don't manage task IDs or subscribe — just run and get results.\n\n\
                          Other actions: \"cd\" sets session working directory, \"kill\" stops \
-                         a running task, \"list\" shows recent tasks, \"tail\" views task output, \
-                         \"subscribe\" blocks until a task completes.\n\n\
+                         a running task, \"list\" shows recent tasks, \"tail\" views task output.\n\n\
                          Examples:\n\
                          - arshy_exec(action:\"run\", command:\"cargo test\")\n\
                          - arshy_exec(action:\"run\", command:\"grep -rn foo src/\")\n\
-                         - arshy_exec(action:\"cd\", command:\"/path/to/project\")\n\
-                         - arshy_exec(action:\"subscribe\", task_id:\"abc-123\")"
+                         - arshy_exec(action:\"cd\", command:\"/path/to/project\")"
                 .into(),
             input_schema: serde_json::json!({
                 "type": "object",
