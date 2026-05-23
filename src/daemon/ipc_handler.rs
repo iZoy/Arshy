@@ -67,6 +67,10 @@ pub struct RunResult {
     /// Agent can use this to immediately identify the root cause of failure.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub root_cause: Option<serde_json::Value>,
+    /// Project context: recent git changes, related files, etc.
+    /// Helps agent understand what changed before the command ran.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_context: Option<serde_json::Value>,
 }
 
 // ── Main handler entry ──────────────────────────────────────────────────────

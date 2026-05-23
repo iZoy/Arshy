@@ -404,6 +404,7 @@ impl Executor {
                 events: None,
                 summary: None,
                 root_cause: None,
+                project_context: None,
             });
         }
 
@@ -431,6 +432,7 @@ impl Executor {
                                 events: None,
                                 summary: None,
                                 root_cause: None,
+                                project_context: None,
                             });
                         }
                     }
@@ -459,7 +461,7 @@ impl Executor {
 
                         Ok(RunResult {
                             task_id,
-                            status: info.status,
+                            status: info.status.clone(),
                             pid: info.pid,
                             exit_code: Some(info.exit_code),
                             duration_ms: Some(info.duration_ms),
@@ -469,6 +471,7 @@ impl Executor {
                             short_command: false,
                             summary: compute_summary(&events_json),
                             root_cause: extract_root_cause(&events_json),
+                            project_context: compute_project_context(&info.status),
                             events: events_json,
                         })
                     }
@@ -485,6 +488,7 @@ impl Executor {
                         events: None,
                         summary: None,
                         root_cause: None,
+                        project_context: None,
                     }),
                 }
             }
@@ -571,6 +575,7 @@ impl Executor {
             events: None,
             summary: None,
             root_cause: None,
+            project_context: None,
         })
     }
 
@@ -637,6 +642,34 @@ fn extract_root_cause(events: &Option<Vec<serde_json::Value>>) -> Option<serde_j
     evts.iter().find(|e| {
         e.get("severity").and_then(|v| v.as_str()) == Some("error")
     }).cloned()
+}
+
+/// Compute project context for failed commands.
+/// Runs `git diff --stat` to show recent changes.
+fn compute_project_context(status: &TaskStatus) -> Option<serde_json::Value> {
+    // Only add context for failed commands
+    if *status != TaskStatus::Failed {
+        return None;
+    }
+
+    // Try to get git diff stat
+    let output = std::process::Command::new("git")
+        .args(["diff", "--stat", "HEAD~1"])
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let diff_stat = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if diff_stat.is_empty() {
+        return None;
+    }
+
+    Some(serde_json::json!({
+        "git_diff_stat": diff_stat,
+    }))
 }
 
 /// Completion info sent through the oneshot channel for sync mode.
