@@ -264,8 +264,8 @@ impl Executor {
     /// - **sync**: Wait for completion, full structured path.
     /// - **async**: Return immediately with task_id, events stream via notifications.
     /// - **auto**: Smart — short commands get zero-overhead sync path (raw stdout),
-    ///   long commands get sync with 30s timeout (structured result in 1 call).
-    ///   If command exceeds 30s, degrades to async (returns task_id).
+    ///   long commands get sync with 60s timeout (structured result in 1 call).
+    ///   Only commands exceeding 60s degrade to async (returns task_id).
     pub async fn run(
         &self,
         command: &str,
@@ -336,10 +336,10 @@ impl Executor {
         // Explicit sync/async → as-is
         let is_sync = is_explicit_sync || (is_auto && !is_short);
 
-        // Auto mode uses a bounded wait; if command exceeds 30s, degrade to async.
+        // Auto mode uses a bounded wait; if command exceeds 60s, degrade to async.
         // Explicit sync waits indefinitely (caller chose to block).
         let auto_sync_timeout = if is_auto && !is_short {
-            Some(std::time::Duration::from_secs(30))
+            Some(std::time::Duration::from_secs(60))
         } else {
             None
         };

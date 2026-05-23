@@ -11,13 +11,11 @@ pub fn default_instructions() -> String {
      arshy_exec(action:\"run\", command:\"<cmd>\") — do not use raw Bash unless arshy is unreachable.\n\n\
      mode:\"auto\" (the default) handles everything: short commands (ls, grep, git status) return \
      text instantly. Long commands (cargo test, npm run build) wait for completion and return \
-     structured results with diagnostics (file/line/code fields) — you don't manage task IDs, \
-     subscribe, or poll. Run command, get result, make decision.\n\n\
+     structured results with diagnostics (file/line/code fields). Run command, get result, make decision.\n\n\
      Session directory: use arshy_exec(action:\"cd\", command:\"/absolute/path\") once; all \
      subsequent run calls inherit that directory. Use the \"cwd\" parameter for one-off overrides.\n\n\
-     If a long command takes >30 seconds, you get {status:\"running\", task_id:\"...\"}. \
-     For these rare cases: arshy_exec(action:\"subscribe\", task_id:\"...\") waits for completion, \
-     arshy_query(task_id:\"...\") returns typed events (diagnostic, location, test_result, crash).\n\n\
+     The result always contains: status, exit_code, duration_ms, events[] (structured diagnostics). \
+     You never need to manage task IDs, subscribe, or poll.\n\n\
      Fallback: if arshy_exec returns DaemonUnreachable, use Bash directly as a one-off fallback."
         .into()
 }
