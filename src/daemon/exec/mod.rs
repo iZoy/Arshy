@@ -402,6 +402,8 @@ impl Executor {
                 raw_output: None,
                 short_command: false,
                 events: None,
+                summary: None,
+                root_cause: None,
             });
         }
 
@@ -427,6 +429,8 @@ impl Executor {
                                 raw_output: None,
                                 short_command: false,
                                 events: None,
+                                summary: None,
+                                root_cause: None,
                             });
                         }
                     }
@@ -463,6 +467,8 @@ impl Executor {
                             error_count: Some(info.error_count),
                             raw_output: None,
                             short_command: false,
+                            summary: compute_summary(&events_json),
+                            root_cause: extract_root_cause(&events_json),
                             events: events_json,
                         })
                     }
@@ -477,6 +483,8 @@ impl Executor {
                         raw_output: None,
                         short_command: false,
                         events: None,
+                        summary: None,
+                        root_cause: None,
                     }),
                 }
             }
@@ -561,6 +569,8 @@ impl Executor {
             raw_output: Some(raw_output),
             short_command: true,
             events: None,
+            summary: None,
+            root_cause: None,
         })
     }
 
@@ -597,6 +607,36 @@ impl Executor {
         let (events, _total) = self.store.query_events(&params)?;
         Ok(events.into_iter().map(|e| e.message).collect())
     }
+}
+
+/// Compute event statistics from a list of serialized events.
+/// Returns counts by event_type and severity.
+fn compute_summary(events: &Option<Vec<serde_json::Value>>) -> Option<super::ipc_handler::ResultSummary> {
+    let evts = events.as_ref()?;
+    if evts.is_empty() {
+        return None;
+    }
+    let mut by_type: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+    let mut by_severity: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+
+    for evt in evts {
+        if let Some(t) = evt.get("type").and_then(|v| v.as_str()) {
+            *by_type.entry(t.to_string()).or_insert(0) += 1;
+        }
+        if let Some(s) = evt.get("severity").and_then(|v| v.as_str()) {
+            *by_severity.entry(s.to_string()).or_insert(0) += 1;
+        }
+    }
+
+    Some(super::ipc_handler::ResultSummary { by_type, by_severity })
+}
+
+/// Extract the first error-level event as the root cause of failure.
+fn extract_root_cause(events: &Option<Vec<serde_json::Value>>) -> Option<serde_json::Value> {
+    let evts = events.as_ref()?;
+    evts.iter().find(|e| {
+        e.get("severity").and_then(|v| v.as_str()) == Some("error")
+    }).cloned()
 }
 
 /// Completion info sent through the oneshot channel for sync mode.

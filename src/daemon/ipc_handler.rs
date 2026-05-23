@@ -11,7 +11,7 @@ use arshy_lib::ipc::{
     METHOD_SHUTDOWN, METHOD_STATS, METHOD_STATUS, METHOD_STDIN, METHOD_SUBSCRIBE, METHOD_TAIL,
 };
 use arshy_lib::Result;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, BufReader, BufWriter};
 use tokio::net::UnixStream;
@@ -30,6 +30,14 @@ enum Outbound {
 }
 
 /// Result returned from the executor after scheduling a task.
+/// Summary statistics for completed task events.
+/// Helps agents understand results without reading every event.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResultSummary {
+    pub by_type: std::collections::HashMap<String, u64>,
+    pub by_severity: std::collections::HashMap<String, u64>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct RunResult {
     pub task_id: String,
@@ -51,6 +59,14 @@ pub struct RunResult {
     /// Allows agent to get full result + events in a single MCP call.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub events: Option<Vec<serde_json::Value>>,
+    /// Event statistics: counts by type and severity.
+    /// Agent can use summary.by_severity.error to judge success without reading all events.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub summary: Option<ResultSummary>,
+    /// The first error-level diagnostic event (if any).
+    /// Agent can use this to immediately identify the root cause of failure.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub root_cause: Option<serde_json::Value>,
 }
 
 // ── Main handler entry ──────────────────────────────────────────────────────
