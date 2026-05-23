@@ -1,20 +1,22 @@
 //! Format detection layer — auto-detects structured output formats.
 //!
 //! Runs as the first pass in the parser pipeline. When a command produces
-//! JSON (whole output or NDJSON per-line), this parser extracts structured
-//! events directly, skipping the regex pipeline entirely.
+//! structured output (JSON, NDJSON, YAML, CSV), this parser extracts
+//! structured events directly, skipping the regex pipeline entirely.
 //!
 //! Detection order:
 //! 1. Whole output is valid JSON (object or array) → parse as single event/array
 //! 2. NDJSON: each line is a valid JSON object → parse each line as an event
-//! 3. Neither → return None, fall through to regex pipeline
+//! 3. YAML: output starts with `---` or has key: value patterns
+//! 4. CSV/TSV: consistent delimiter patterns across lines
+//! 5. Neither → return None, fall through to regex pipeline
 
 use arshy_lib::ipc::TaskEvent;
 
-/// Try to parse accumulated output as JSON (whole or NDJSON).
+/// Try to parse accumulated output as structured data (JSON/NDJSON/YAML/CSV).
 ///
 /// Called after command completion on the accumulated output string.
-/// Returns `None` if output is not JSON.
+/// Returns `None` if output is not structured.
 pub fn try_parse(output: &str) -> Option<Vec<TaskEvent>> {
     let trimmed = output.trim();
     if trimmed.is_empty() {
@@ -28,6 +30,16 @@ pub fn try_parse(output: &str) -> Option<Vec<TaskEvent>> {
 
     // Strategy 2: NDJSON — each line is a JSON object
     if let Some(events) = try_parse_ndjson(trimmed) {
+        return Some(events);
+    }
+
+    // Strategy 3: YAML — starts with --- or has key: value patterns
+    if let Some(events) = try_parse_yaml(trimmed) {
+        return Some(events);
+    }
+
+    // Strategy 4: CSV/TSV — consistent delimiter patterns
+    if let Some(events) = try_parse_csv(trimmed) {
         return Some(events);
     }
 
@@ -181,6 +193,110 @@ fn value_to_event(value: &serde_json::Value) -> TaskEvent {
     }
 }
 
+// ── YAML detection ──────────────────────────────────────────────────────
+
+/// Try parsing output as YAML.
+/// Detection: starts with `---` or contains key: value patterns.
+fn try_parse_yaml(output: &str) -> Option<Vec<TaskEvent>> {
+    let lines: Vec<&str> = output.lines().collect();
+    if lines.is_empty() {
+        return None;
+    }
+
+    // Check if output looks like YAML
+    let is_yaml = lines[0].trim() == "---"
+        || (lines.len() >= 2 && lines.iter().take(5).all(|l| {
+            let trimmed = l.trim();
+            trimmed.is_empty() || trimmed.starts_with('#') || trimmed.contains(": ")
+        }));
+
+    if !is_yaml {
+        return None;
+    }
+
+    // Parse YAML-like key: value pairs
+    let mut events = Vec::new();
+    for line in lines {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') || trimmed == "---" || trimmed == "..." {
+            continue;
+        }
+
+        if let Some((key, value)) = trimmed.split_once(": ") {
+            events.push(TaskEvent {
+                seq: 0,
+                event_type: "data".into(),
+                severity: Some("info".into()),
+                code: Some(key.to_string()),
+                message: value.to_string(),
+                location: None,
+                context: None,
+            });
+        }
+    }
+
+    if events.is_empty() {
+        None
+    } else {
+        Some(events)
+    }
+}
+
+// ── CSV/TSV detection ──────────────────────────────────────────────────
+
+/// Try parsing output as CSV/TSV.
+/// Detection: consistent delimiter patterns across lines.
+fn try_parse_csv(output: &str) -> Option<Vec<TaskEvent>> {
+    let lines: Vec<&str> = output.lines().filter(|l| !l.trim().is_empty()).collect();
+    if lines.len() < 2 {
+        return None;
+    }
+
+    // Detect delimiter: tab, comma, or pipe
+    let delimiter = if lines[0].contains('\t') {
+        '\t'
+    } else if lines[0].contains(',') {
+        ','
+    } else if lines[0].contains('|') {
+        '|'
+    } else {
+        return None;
+    };
+
+    // Check if all lines have consistent column count
+    let col_count = lines[0].split(delimiter).count();
+    if col_count < 2 {
+        return None;
+    }
+
+    let consistent = lines.iter().all(|l| l.split(delimiter).count() == col_count);
+    if !consistent {
+        return None;
+    }
+
+    // Parse as CSV/TSV
+    let mut events = Vec::new();
+    for line in lines {
+        let cols: Vec<&str> = line.split(delimiter).collect();
+        let message = cols.join(", ");
+        events.push(TaskEvent {
+            seq: 0,
+            event_type: "data".into(),
+            severity: Some("info".into()),
+            code: None,
+            message,
+            location: None,
+            context: None,
+        });
+    }
+
+    if events.is_empty() {
+        None
+    } else {
+        Some(events)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -309,5 +425,61 @@ another text line
         let output = "\n  {\"key\":\"value\"}";
         let events = try_parse(output).unwrap();
         assert_eq!(events.len(), 1);
+    }
+
+    // ── YAML detection ──────────────────────────────────────────────────
+
+    #[test]
+    fn yaml_document_separator() {
+        let output = "---\nname: test\nstatus: ok\ncount: 42";
+        let events = try_parse(output).unwrap();
+        assert_eq!(events.len(), 3);
+        assert_eq!(events[0].code.as_deref(), Some("name"));
+        assert_eq!(events[0].message, "test");
+    }
+
+    #[test]
+    fn yaml_key_value_pairs() {
+        let output = "name: test\nstatus: ok\ncount: 42";
+        let events = try_parse(output).unwrap();
+        assert_eq!(events.len(), 3);
+    }
+
+    #[test]
+    fn yaml_with_comments() {
+        let output = "# Config file\nname: test\n# Status\nstatus: ok";
+        let events = try_parse(output).unwrap();
+        assert_eq!(events.len(), 2);
+    }
+
+    // ── CSV/TSV detection ──────────────────────────────────────────────
+
+    #[test]
+    fn tsv_detection() {
+        let output = "name\tage\tcity\nAlice\t30\tNYC\nBob\t25\tLA";
+        let events = try_parse(output).unwrap();
+        assert_eq!(events.len(), 3);
+        assert!(events[1].message.contains("Alice"));
+    }
+
+    #[test]
+    fn csv_detection() {
+        let output = "name,age,city\nAlice,30,NYC\nBob,25,LA";
+        let events = try_parse(output).unwrap();
+        assert_eq!(events.len(), 3);
+    }
+
+    #[test]
+    fn pipe_delimited() {
+        let output = "name|status|count\nok|pass|42\nerror|fail|1";
+        let events = try_parse(output).unwrap();
+        assert_eq!(events.len(), 3);
+    }
+
+    #[test]
+    fn inconsistent_columns_rejected() {
+        let output = "a,b,c\n1,2\n3,4,5";
+        // Inconsistent column count — should not be parsed as CSV
+        assert!(try_parse(output).is_none());
     }
 }
