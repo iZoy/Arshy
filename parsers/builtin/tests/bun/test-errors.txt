@@ -1,0 +1,9 @@
+error: Cannot find module './config' from 'src/index.ts'
+src/app.ts:15:5 - error TS2322: Type 'string' is not assignable to type 'number'.
+src/utils.ts:42:10 - error TS2339: Property 'fnd' does not exist on type 'Array<any>'.
+  ✓ should add two numbers (2ms)
+  ✓ should handle zero (1ms)
+  ✗ should divide by zero (15ms)
+3 pass
+1 fail
+installed 35 packages

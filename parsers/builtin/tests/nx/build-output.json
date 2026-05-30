@@ -1,0 +1,36 @@
+[
+  {
+    "code": "frontend:build:",
+    "message": "error TS2322: Type 'string' is not assignable to type 'number'.",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "code": " ",
+    "message": "FAIL tests/api.test.ts",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "code": "backend:test:",
+    "message": "expect(received).toBe(expected)",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": "in src/app.tsx:10:5",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "frontend:lint:",
+    "message": "warning: missing return type",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": "Successfully ran target build for 2 projects",
+    "severity": "info",
+    "type": "summary"
+  }
+]

@@ -1,0 +1,5 @@
+Resolved 45 packages in 230ms
+Installed 12 packages in 1.2s
+warning: Package `requests` has a known vulnerability CVE-2023-12345
+error: No solution found when resolving dependencies:
+  Because package-a requires package-b>=2.0 and package-b<2.0 is available, no solution found.

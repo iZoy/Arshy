@@ -1,0 +1,60 @@
+[
+  {
+    "message": "Module not found \"https://deno.land/std/path.ts\"",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "deno-ts",
+    "file": "src/main.ts",
+    "line": 10,
+    "message": "Type 'string' is not assignable to type 'number'.",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "deno-ts",
+    "file": "src/utils.ts",
+    "line": 42,
+    "message": "Property 'fnd' does not exist on type 'Array<any>'.",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "file": "file:///Users/dev/project/src/main.ts",
+    "line": 10,
+    "message": "   at file:///Users/dev/project/src/main.ts:10:5",
+    "severity": "info",
+    "type": "location"
+  },
+  {
+    "file": "file:///Users/dev/project/src/utils.ts",
+    "line": 42,
+    "message": "   at file:///Users/dev/project/src/utils.ts:42:10",
+    "severity": "info",
+    "type": "location"
+  },
+  {
+    "code": "PASS",
+    "message": "should add two numbers",
+    "severity": "info",
+    "type": "test_result"
+  },
+  {
+    "code": "PASS",
+    "message": "should handle zero",
+    "severity": "info",
+    "type": "test_result"
+  },
+  {
+    "code": "FAIL",
+    "message": "should divide by zero",
+    "severity": "info",
+    "type": "test_result"
+  },
+  {
+    "message": "ok | 2 passed | 1 failed",
+    "severity": "info",
+    "type": "summary"
+  }
+]

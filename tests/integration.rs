@@ -2,6 +2,13 @@
 //!
 //! These tests require the `arshyd` binary to be built (`cargo build --bin arshyd`).
 //! They use temporary directories for socket and database files.
+//!
+//! Daemon-spawning tests are marked `#[ignore]` because they:
+//! - Require Unix socket creation (blocked by macOS sandbox-exec)
+//! - Are flaky when run in parallel (daemon instances interfere via shared /tmp paths)
+//! - Duplicate coverage already in `ipc_handler.rs` UnixStream::pair tests
+//!
+//! Run explicitly: `cargo test --test integration -- --ignored`
 
 #[cfg(test)]
 mod integration_tests {
@@ -57,16 +64,20 @@ mod integration_tests {
         (socket_path, child, tmp)
     }
 
+    // ── Daemon binary end-to-end tests ──────────────────────────────────────
+    //
+    // Marked #[ignore]: require real daemon subprocess + Unix socket.
+    // Run with: cargo test --test integration -- --ignored
+    // Core IPC coverage is in ipc_handler.rs pair-stream tests.
+
     #[test]
-    #[ignore = "requires no existing arshyd daemon running"]
+    #[ignore]
     fn daemon_starts_and_responds_to_health() {
         let (socket_path, mut child, _tmp) = spawn_daemon();
 
-        // Connect via Unix stream
         let stream = std::os::unix::net::UnixStream::connect(&socket_path)
             .expect("failed to connect to daemon");
 
-        // Send a health check
         use std::io::{BufRead, BufReader, Write};
         let mut reader = BufReader::new(stream.try_clone().unwrap());
         let mut writer = stream;
@@ -85,15 +96,12 @@ mod integration_tests {
         let resp: serde_json::Value =
             serde_json::from_str(&response).expect("invalid JSON response");
 
-        // Verify the response structure
         assert_eq!(resp["id"], 1);
         assert_eq!(resp["result"]["status"], "ok");
         assert!(resp["result"]["store_ok"].as_bool().unwrap());
         assert!(resp["result"]["uptime_secs"].as_f64().unwrap() >= 0.0);
-        // Telemetry counters should be present
         assert!(resp["result"]["counters"].is_object());
 
-        // Clean shutdown
         let shutdown = serde_json::json!({
             "jsonrpc": "2.0",
             "id": 2,
@@ -107,7 +115,7 @@ mod integration_tests {
     }
 
     #[test]
-    #[ignore = "requires no existing arshyd daemon running"]
+    #[ignore]
     fn run_echo_and_get_result() {
         let (socket_path, mut child, _tmp) = spawn_daemon();
 
@@ -118,7 +126,6 @@ mod integration_tests {
         let mut reader = BufReader::new(stream.try_clone().unwrap());
         let mut writer = stream;
 
-        // Send a run request
         let request = serde_json::json!({
             "jsonrpc": "2.0",
             "id": 1,
@@ -136,14 +143,12 @@ mod integration_tests {
         let resp: serde_json::Value =
             serde_json::from_str(&response).expect("invalid JSON response");
 
-        // Verify structured output
         assert_eq!(resp["id"], 1);
         assert_eq!(resp["result"]["status"], "completed");
         assert_eq!(resp["result"]["exit_code"], 0);
         assert!(resp["result"]["task_id"].is_string());
         assert!(resp["result"]["event_count"].as_u64().unwrap() >= 1);
 
-        // Clean shutdown
         let shutdown = serde_json::json!({
             "jsonrpc": "2.0",
             "id": 2,
@@ -157,7 +162,7 @@ mod integration_tests {
     }
 
     #[test]
-    #[ignore = "requires no existing arshyd daemon running"]
+    #[ignore]
     fn run_command_with_parser() {
         let (socket_path, mut child, _tmp) = spawn_daemon();
 
@@ -168,11 +173,9 @@ mod integration_tests {
         let mut reader = BufReader::new(stream.try_clone().unwrap());
         let mut writer = stream;
 
-        // Write a Rust file with a compile error
         let src = std::env::temp_dir().join("arshy_int_test.rs");
         std::fs::write(&src, "fn main() {\n    let x: u32 = \"hello\";\n}\n").unwrap();
 
-        // Run rustc
         let request = serde_json::json!({
             "jsonrpc": "2.0",
             "id": 1,
@@ -190,16 +193,13 @@ mod integration_tests {
         let resp: serde_json::Value =
             serde_json::from_str(&response).expect("invalid JSON response");
 
-        // Should have failed with a diagnostic event
         assert_eq!(resp["id"], 1);
         assert_eq!(resp["result"]["status"], "failed");
         assert!(resp["result"]["exit_code"].as_i64().unwrap() != 0);
         assert!(resp["result"]["event_count"].as_u64().unwrap() >= 1);
 
-        // Cleanup
         let _ = std::fs::remove_file(&src);
 
-        // Shutdown
         let shutdown = serde_json::json!({
             "jsonrpc": "2.0",
             "id": 2,
@@ -210,5 +210,33 @@ mod integration_tests {
         writer.flush().unwrap();
 
         child.wait().expect("daemon did not exit cleanly");
+    }
+
+    // ── In-process config loading test ──────────────────────────────────────
+    //
+    // Tests config loading with env var overrides without requiring daemon
+    // binary or socket access. Always runs in CI.
+
+    #[test]
+    fn config_loads_with_env_overrides() {
+        use arshy_lib::config::{CliOverrides, Config};
+
+        let tmp = TempDir::new().unwrap();
+        let db_path = tmp.path().join("test.db");
+        let socket_path = tmp.path().join("test.sock");
+
+        std::env::set_var("ARSHY_STORE_DB_PATH", db_path.to_string_lossy().as_ref());
+        std::env::set_var("ARSHY_DAEMON_SOCKET_PATH", socket_path.to_string_lossy().as_ref());
+        std::env::set_var("ARSHY_DAEMON_LOG_LEVEL", "debug");
+
+        let cfg = Config::load(CliOverrides::default()).expect("config should load");
+
+        std::env::remove_var("ARSHY_STORE_DB_PATH");
+        std::env::remove_var("ARSHY_DAEMON_SOCKET_PATH");
+        std::env::remove_var("ARSHY_DAEMON_LOG_LEVEL");
+
+        assert_eq!(cfg.daemon.log_level, "debug");
+        assert_eq!(cfg.store.expanded_db_path(), db_path);
+        assert_eq!(cfg.daemon.expanded_socket_path(), socket_path);
     }
 }

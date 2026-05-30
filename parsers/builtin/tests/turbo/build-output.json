@@ -1,0 +1,41 @@
+[
+  {
+    "code": "frontend",
+    "message": "Compiling...",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "code": "frontend",
+    "message": "src/app.tsx(10,5): error TS2322: Type 'string' is not assignable to type 'number'.",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "code": "backend",
+    "message": "Compiled successfully",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "code": "backend",
+    "message": "FAIL tests/api.test.ts",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": "in src/app.tsx",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "message": "Tasks:  2 successful",
+    "severity": "info",
+    "type": "summary"
+  },
+  {
+    "message": " Cache:  65.0%",
+    "severity": "info",
+    "type": "summary"
+  }
+]

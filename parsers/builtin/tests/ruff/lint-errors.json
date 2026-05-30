@@ -1,0 +1,52 @@
+[
+  {
+    "code": "F401",
+    "file": "src/main.py",
+    "line": 10,
+    "message": "`os` imported but unused",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "E302",
+    "file": "src/main.py",
+    "line": 15,
+    "message": "expected 2 blank lines, found 1",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "F841",
+    "file": "src/utils.py",
+    "line": 23,
+    "message": "[fixable] local variable `x` is assigned to but never used",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "E501",
+    "file": "src/models.py",
+    "line": 45,
+    "message": "line too long (120 > 79 characters)",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "I001",
+    "file": "src/handlers.py",
+    "line": 8,
+    "message": "[fixable] Import block is un-sorted or un-formatted",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "message": "Found 5 errors.",
+    "severity": "error",
+    "type": "summary"
+  },
+  {
+    "message": "4 fixable",
+    "severity": "info",
+    "type": "summary"
+  }
+]

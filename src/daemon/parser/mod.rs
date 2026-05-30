@@ -585,6 +585,76 @@ mod harness_tests {
     }
 
     #[test]
+    fn fixture_docker() {
+        run_parser_fixtures("docker");
+    }
+
+    #[test]
+    fn fixture_aws() {
+        run_parser_fixtures("aws");
+    }
+
+    #[test]
+    fn fixture_terraform() {
+        run_parser_fixtures("terraform");
+    }
+
+    #[test]
+    fn fixture_kubectl() {
+        run_parser_fixtures("kubectl");
+    }
+
+    #[test]
+    fn fixture_helm() {
+        run_parser_fixtures("helm");
+    }
+
+    #[test]
+    fn fixture_ruff() {
+        run_parser_fixtures("ruff");
+    }
+
+    #[test]
+    fn fixture_uv() {
+        run_parser_fixtures("uv");
+    }
+
+    #[test]
+    fn fixture_bun() {
+        run_parser_fixtures("bun");
+    }
+
+    #[test]
+    fn fixture_deno() {
+        run_parser_fixtures("deno");
+    }
+
+    #[test]
+    fn fixture_nx() {
+        run_parser_fixtures("nx");
+    }
+
+    #[test]
+    fn fixture_turbo() {
+        run_parser_fixtures("turbo");
+    }
+
+    #[test]
+    fn fixture_biome() {
+        run_parser_fixtures("biome");
+    }
+
+    #[test]
+    fn fixture_oxlint() {
+        run_parser_fixtures("oxlint");
+    }
+
+    #[test]
+    fn fixture_vitest() {
+        run_parser_fixtures("vitest");
+    }
+
+    #[test]
     fn all_parsers_load() {
         let config = ParserConfig::default();
         let engine = Engine::new(&config).unwrap();
@@ -621,6 +691,9 @@ mod harness_tests {
             "nx",
             "deno",
             "bun",
+            "biome",
+            "oxlint",
+            "vitest",
         ];
 
         for name in &parsers {

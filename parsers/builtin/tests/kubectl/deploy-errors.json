@@ -1,0 +1,44 @@
+[
+  {
+    "message": "error validating \"deployment.yaml\": error validating data: ValidationError(Deployment.spec.replicas): invalid type for io.k8s.api.apps.v1.DeploymentSpec.replicas: got \"string\", expected \"integer\"",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "message": "apps/v1beta1 Deployment is deprecated, use apps/v1 instead.",
+    "severity": "warning",
+    "type": "diagnostic"
+  },
+  {
+    "message": "deployments.apps \"my-app\" not found",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "message": "NAME                     READY   STATUS             RESTARTS   AGE",
+    "severity": "info",
+    "type": "summary"
+  },
+  {
+    "message": "nginx-7d8b49557c-abc12   1/1     Running            0          5d",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": "nginx-7d8b49557c-def34   0/1     CrashLoopBackOff   3          5d",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "code": "Normal",
+    "message": "Pulling           pod/nginx-7d8b49557c-abc12   Pulling image \"nginx:latest\"",
+    "severity": "info",
+    "type": "diagnostic"
+  },
+  {
+    "code": "Warning",
+    "message": "FailedScheduling  pod/nginx-7d8b49557c-def34   0/3 nodes available",
+    "severity": "info",
+    "type": "diagnostic"
+  }
+]

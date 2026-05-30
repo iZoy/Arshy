@@ -1,0 +1,33 @@
+[meta]
+name = "biome"
+description = "Biome linter/formatter (formerly Rome)"
+detect = ["biome"]
+priority = 55
+
+[[pattern]]
+name = "biome-error"
+regex = '^(.+?):(\d+):(\d+)\s+error\s+(\S+)\s+(.+)$'
+event_type = "diagnostic"
+severity = "error"
+fields = { file = 1, line = 2, column = 3, code = 4, message = 5 }
+
+[[pattern]]
+name = "biome-warning"
+regex = '^(.+?):(\d+):(\d+)\s+warning\s+(\S+)\s+(.+)$'
+event_type = "diagnostic"
+severity = "warning"
+fields = { file = 1, line = 2, column = 3, code = 4, message = 5 }
+
+[[pattern]]
+name = "biome-info"
+regex = '^(.+?):(\d+):(\d+)\s+info\s+(\S+)\s+(.+)$'
+event_type = "diagnostic"
+severity = "info"
+fields = { file = 1, line = 2, column = 3, code = 4, message = 5 }
+
+[[pattern]]
+name = "biome-summary"
+regex = '^\s*✖ Found (\d+) \w+'
+event_type = "summary"
+severity = "error"
+fields = { message = 0 }

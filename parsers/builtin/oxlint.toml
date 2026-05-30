@@ -1,0 +1,40 @@
+[meta]
+name = "oxlint"
+description = "Oxc linter (Rust-based JavaScript linter)"
+detect = ["oxlint"]
+priority = 55
+
+[[pattern]]
+name = "oxlint-error"
+regex = '^\s*error\[(\S+)\]:\s+(.+)$'
+event_type = "diagnostic"
+severity = "error"
+fields = { code = 1, message = 2 }
+
+[[pattern]]
+name = "oxlint-warning"
+regex = '^\s*warning\[(\S+)\]:\s+(.+)$'
+event_type = "diagnostic"
+severity = "warning"
+fields = { code = 1, message = 2 }
+
+[[pattern]]
+name = "oxlint-info"
+regex = '^\s*info\[(\S+)\]:\s+(.+)$'
+event_type = "diagnostic"
+severity = "info"
+fields = { code = 1, message = 2 }
+
+[[pattern]]
+name = "oxlint-location"
+regex = '^\s*-->\s+(.+?):(\d+):(\d+)$'
+event_type = "location"
+severity = "info"
+fields = { file = 1, line = 2, column = 3 }
+
+[[pattern]]
+name = "oxlint-summary"
+regex = '^\s*Found (\d+) errors?'
+event_type = "summary"
+severity = "error"
+fields = { message = 0 }

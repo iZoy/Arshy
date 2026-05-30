@@ -1,0 +1,106 @@
+[
+  {
+    "message": "Step 1/6 : FROM node:18-alpine",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": " ---> abc123def456",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": "Step 2/6 : WORKDIR /app",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": " ---> Using cache",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": "Step 3/6 : COPY package*.json ./",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": " ---> Using cache",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": "Step 4/6 : RUN npm install",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": " ---> Running in 7a8b9c0d1e2f",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": "npm WARN deprecated inflight@1.0.6: This module is not supported, and leaks memory.",
+    "severity": "warning",
+    "type": "log"
+  },
+  {
+    "message": "npm WARN deprecated rimraf@2.7.1: Rimraf versions prior to v4 are no longer supported",
+    "severity": "warning",
+    "type": "log"
+  },
+  {
+    "message": " ---> 3f4e5d6c7b8a",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": "Step 5/6 : COPY . .",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": " ---> 9a8b7c6d5e4f",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": "Step 6/6 : RUN npm run build",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": " ---> Running in 1a2b3c4d5e6f",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": "process \"/bin/sh -c npm run build\" did not complete successfully: exit code 2",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "file": "src/index.ts",
+    "line": 15,
+    "message": " --> src/index.ts:15",
+    "severity": "info",
+    "type": "location"
+  },
+  {
+    "file": "src/utils.ts",
+    "line": 42,
+    "message": " --> src/utils.ts:42",
+    "severity": "info",
+    "type": "location"
+  },
+  {
+    "message": "failed to solve: process \"/bin/sh -c npm run build\" did not complete successfully",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "message": "some deprecation warnings were emitted during build",
+    "severity": "warning",
+    "type": "diagnostic"
+  }
+]

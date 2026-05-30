@@ -1,0 +1,8 @@
+Error: INSTALLATION FAILED: rendered manifests contain a resource that already exists
+WARNING: Kubernetes configuration file is group-readable
+Error: template: mychart/templates/deployment.yaml:15: executing "mychart/templates/deployment.yaml" at <.Values.invalid>: map has no entry for key "invalid"
+NAME: my-release
+LAST DEPLOYED: Thu May 30 10:00:00 2026
+STATUS: deployed
+NOTES:
+1. Get the application URL by running these commands:

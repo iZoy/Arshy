@@ -1,0 +1,27 @@
+[
+  {
+    "message": "Resolved 45 packages in 230ms",
+    "severity": "info",
+    "type": "summary"
+  },
+  {
+    "message": "Installed 12 packages",
+    "severity": "info",
+    "type": "summary"
+  },
+  {
+    "message": "Package `requests` has a known vulnerability CVE-2023-12345",
+    "severity": "warning",
+    "type": "diagnostic"
+  },
+  {
+    "message": "No solution found when resolving dependencies:",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "message": "  Because package-a requires package-b>=2.0 and package-b<2.0 is available, no solution found.",
+    "severity": "info",
+    "type": "log"
+  }
+]

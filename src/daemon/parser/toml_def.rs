@@ -266,6 +266,9 @@ pub const BUILTIN_TOML: &[(&str, &str)] = &[
     ("nx.toml", include_str!("../../../parsers/builtin/nx.toml")),
     ("deno.toml", include_str!("../../../parsers/builtin/deno.toml")),
     ("bun.toml", include_str!("../../../parsers/builtin/bun.toml")),
+    ("biome.toml", include_str!("../../../parsers/builtin/biome.toml")),
+    ("oxlint.toml", include_str!("../../../parsers/builtin/oxlint.toml")),
+    ("vitest.toml", include_str!("../../../parsers/builtin/vitest.toml")),
 ];
 
 /// Load all builtin parser definitions.
@@ -334,7 +337,7 @@ mod tests {
     #[test]
     fn parse_all_builtins() {
         let builtins = load_builtins();
-        assert_eq!(builtins.len(), 31, "expected 31 builtin parsers");
+        assert_eq!(builtins.len(), 34, "expected 34 builtin parsers");
 
         for (name, def) in &builtins {
             assert!(!def.meta.name.is_empty(), "parser '{}' has empty name", name);

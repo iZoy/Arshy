@@ -1,0 +1,10 @@
+  error[no-debugger]: 'debugger' statement is not allowed
+  --> src/index.ts:5:10
+
+  warning[no-unused-vars]: 'count' is defined but never used
+  --> src/utils.ts:12:1
+
+  warning[eqeqeq]: Expected '===' and instead saw '=='
+  --> src/app.tsx:24:8
+
+Found 1 error and 2 warnings.

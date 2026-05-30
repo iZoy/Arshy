@@ -1,0 +1,5 @@
+src/index.ts:5:10 error lint/suspicious/noDebugger  Unexpected 'debugger' statement.
+src/utils.ts:12:1 warning lint/correctness/noUnusedVariables  'count' is defined but never used.
+src/app.tsx:24:8 error lint/a11y/useKeyWithClickEvents  Visible, non-interactive elements with click handlers must have at least one keyboard listener.
+src/hooks.ts:8:3 info lint/style/noNonNullAssertion  Forbidden non-null assertion.
+✖ Found 3 errors and 1 warning.

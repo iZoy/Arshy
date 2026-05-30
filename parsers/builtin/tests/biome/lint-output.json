@@ -1,0 +1,39 @@
+[
+  {
+    "code": "lint/suspicious/noDebugger",
+    "file": "src/index.ts",
+    "line": 5,
+    "message": "Unexpected 'debugger' statement.",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "lint/correctness/noUnusedVariables",
+    "file": "src/utils.ts",
+    "line": 12,
+    "message": "'count' is defined but never used.",
+    "severity": "warning",
+    "type": "diagnostic"
+  },
+  {
+    "code": "lint/a11y/useKeyWithClickEvents",
+    "file": "src/app.tsx",
+    "line": 24,
+    "message": "Visible, non-interactive elements with click handlers must have at least one keyboard listener.",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "lint/style/noNonNullAssertion",
+    "file": "src/hooks.ts",
+    "line": 8,
+    "message": "Forbidden non-null assertion.",
+    "severity": "info",
+    "type": "diagnostic"
+  },
+  {
+    "message": "✖ Found 3 errors",
+    "severity": "error",
+    "type": "summary"
+  }
+]

@@ -1,0 +1,59 @@
+[
+  {
+    "message": "$ aws s3 cp myfile.txt s3://my-bucket/",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": "upload failed: ./myfile.txt to s3://my-bucket/myfile.txt An error occurred (NoSuchBucket) when calling the PutObject operation: The specified bucket does not exist",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "message": "$ aws ec2 describe-instances --instance-ids i-1234567890abcdef0",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "code": "An error occurred (InvalidInstanceID.NotFound)",
+    "message": "when calling the DescribeInstances operation: The instance ID 'i-1234567890abcdef0' does not exist",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "message": "$ aws iam create-user --user-name admin",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "code": "An error occurred (AccessDenied)",
+    "message": "when calling the CreateUser operation: User: arn:aws:iam::123456789012:user/developer is not authorized to perform: iam:CreateUser on resource: arn:aws:iam::123456789012:user/admin",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "message": "$ aws s3 ls s3://nonexistent-bucket/",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": "An error occurred (NoSuchBucket) when calling the ListObjectsV2 operation: The specified bucket does not exist",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "message": "$ aws cloudformation describe-stacks --stack-name my-stack",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": "| StackId | StackStatus |",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": "| arn:aws:cloudformation:us-east-1:123456789012:stack/my-stack/abc123 | CREATE_FAILED |",
+    "severity": "error",
+    "type": "log"
+  }
+]
