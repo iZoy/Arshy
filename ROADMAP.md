@@ -66,12 +66,12 @@ Agent 加载 Skill → 知道用哪个 CLI → 执行命令 → arshy (shell) �
 
 | Step | 内容 | 状态 |
 |------|------|------|
-| D1 | **Tier 1 TOML** — 行正则匹配、20 内置 parser (tsc/cargo/jest/vite/eslint/go/python/cc/npm/webpack/prettier/swc/esbuild/clippy/make/gradle/cargo-test/mocha/pip/pnpm) | ✅ 26 tests |
+| D1 | **Tier 1 TOML** — 行正则匹配、31 内置 parser (tsc/cargo/jest/vite/eslint/go/python/cc/npm/webpack/prettier/swc/esbuild/clippy/make/gradle/cargo-test/mocha/pip/pnpm/kubectl/docker/terraform/helm/aws/uv/ruff/turbo/nx/deno/bun) | ✅ 26 tests |
 | D2 | **Parser 加载** — `include_str!` 编译入二进制 + 文件系统加载 | ✅ |
 | D3 | **版本探测** — tool_versions SQLite 缓存、15 工具支持、24h TTL | ✅ |
 | D4 | **Crash Parser** — 通用崩溃/traceback 检测 (Go/Python/Rust/Node/Shell) | ✅ 8 tests |
 | D5 | **状态解析器** — regex+state-machine 回退实现 (npm/webpack 等多行输出) | ✅ |
-| D6 | **Test Harness** — fixture 格式 (.txt/.json)、匹配率 ≥95% 阈值、20 parser 全覆盖 | ✅ |
+| D6 | **Test Harness** — fixture 格式 (.txt/.json)、匹配率 ≥95% 阈值、31 parser 全覆盖 | ✅ |
 
 ---
 
@@ -148,103 +148,21 @@ Agent 加载 Skill → 知道用哪个 CLI → 执行命令 → arshy (shell) �
 
 > P0 — 做完此项，arshy 成为 Agent 的唯一 shell 通道。
 
-### 目标
-
-1. 短命令零开销，和原生 Bash tool 体验一致
-2. 长命令自动进入结构化模式
-3. Agent 不需要思考"该用哪个工具"，`arshy_run` 通吃
-4. 预留企业级扩展接口（沙箱/容器/中间件），不实现
-
 ### Step 列表
 
 | Step | 内容 | 状态 |
 |------|------|------|
-| P1 | **mode:auto 智能推断** — 短命令 (≤3 词、无管道、无 watch/serve/daemon 标志) → sync + raw text + 跳过 Store；其余 → async + 结构化 + Store | ✅ |
+| P1 | **mode:auto 智能推断** — 短命令 (≤5 词、无管道、无长时间运行标志) → sync + raw text + 跳过 Store；其余 → sync 60s + 结构化 + Store | ✅ |
 | P2 | **短命令零开销路径** — `executor.run()` 中 auto 模式判断：短命令不 insert_task、不 spawn parser session、直接 spawn → wait → return stdout 原文 | ✅ |
-| P3 | **输出格式自动切换** — MCP response: 短命令返回 `{"text": "..."}` (纯文本)，长命令返回 `{"structured": {...}}` (task_id + status + events) | ✅ |
-| P4 | **MCP Instructions 强引导** — instructions 改为: "NEVER use raw shell tools. ALL commands go through arshy_run. Short commands return instantly; long commands stream structured output." | ✅ |
-| P5 | **Tool description 优化** — arshy_run description 加明: "Works for ALL commands. Short commands (ls, git status) return instantly like a normal shell." | ✅ |
-| P6 | **接口预留: sandbox_mode** — config `executor.sandbox_mode: "none" | "process" | "container"`，executor 中 stub 分支，当前只走 none | ✅ |
-| P7 | **接口预留: task/stdin** — IPC 方法定义 + executor stub（返回 "stdin write not supported yet"），为未来交互式 PTY 留口子 | ✅ |
-| P8 | **接口预留: store.backend** — config `store.backend: "sqlite" | "postgres" | "redis"`，Store 改为 trait，当前只实现 SqliteStore | ✅ |
-| P9 | **接口预留: proxy middleware** — `proxy::Middleware` trait 定义，proxy_main 中 `Vec<Box<dyn Middleware>>` 骨架，当前为空 Vec | ✅ |
-| P10 | **接口预留: notifications/stream** — EventBus 新增 `StreamOutput { task_id, data }` variant，当前不产生此事件，为未来 tail -f 留口子 | ✅ |
-| P11 | **接入测试** — 验证: `arshy_run "ls"` 返回纯文本、`arshy_run "cargo build"` 返回结构化、mode:auto 自动切换、MCP tool list 包含 5 工具 | ✅ |
-
-### 短命令判定规则 (P1)
-
-```rust
-fn is_short_command(command: &str) -> bool {
-    let cmd = command.trim();
-    // 太长 → 非短命令
-    if cmd.len() > 80 { return false; }
-    // 包含管道/重定向/后台 → 非短命令
-    if cmd.contains('|') || cmd.contains(">>") || cmd.contains("&&") || cmd.contains("||") || cmd.contains('&') {
-        return false;
-    }
-    // 包含长时间运行标志 → 非短命令
-    let long_flags = ["--watch", "-f", "serve", "daemon", "start", "dev", "preview"];
-    if long_flags.iter().any(|f| cmd.contains(f)) { return false; }
-    // 词数 ≤ 5 → 短命令
-    cmd.split_whitespace().count() <= 5
-}
-```
-
-### 接口预留详情
-
-**sandbox_mode (P6):**
-```toml
-# config.toml
-[executor]
-sandbox_mode = "none"  # none | process | container
-# container 模式预留字段:
-# container_image = "ubuntu:22.04"
-# container_timeout_ms = 3600000
-# container_network = false
-```
-
-**task/stdin (P7):**
-```json
-// IPC method: "task/stdin"
-{ "jsonrpc": "2.0", "method": "task/stdin", "params": { "task_id": "abc", "data": "y\n" } }
-// 当前返回: { "error": { "code": -32603, "message": "stdin write not supported yet" } }
-```
-
-**store.backend (P8):**
-```rust
-// src/daemon/store/mod.rs
-pub trait StoreBackend: Send + Sync {
-    fn insert_task(&self, task: &Task) -> Result<()>;
-    fn get_task(&self, id: &str) -> Result<Option<Task>>;
-    fn list_tasks(&self, status: Option<&str>, limit: usize) -> Result<Vec<Task>>;
-    fn update_task(&self, id: &str, status: &TaskStatus, exit_code: Option<i32>, duration_ms: Option<u64>) -> Result<()>;
-    fn insert_event(&self, task_id: &str, seq: u64, event: &TaskEvent) -> Result<()>;
-    fn query_events(&self, params: &QueryParams) -> Result<(Vec<TaskEvent>, u64)>;
-    // ... 其余方法
-}
-
-pub struct Store { backend: Box<dyn StoreBackend> }
-// 当前: Box<SqliteStore>
-```
-
-**proxy middleware (P9):**
-```rust
-pub trait Middleware: Send + Sync {
-    fn on_request(&self, request: &serde_json::Value) -> Result<()> { Ok(()) }
-    fn on_response(&self, response: &serde_json::Value) -> Result<()> { Ok(()) }
-    fn on_notification(&self, notif: &Notification) -> Result<()> { Ok(()) }
-}
-// 未来实现: AuditMiddleware, RateLimitMiddleware, AuthMiddleware
-```
-
-**notifications/stream (P10):**
-```rust
-// src/daemon/bus/mod.rs
-pub enum BusEventKind {
-    // ... 现有 variants
-    StreamOutput { task_id: String, data: String },  // 新增，当前不产生
-}
-```
+| P3 | **输出格式自动切换** — MCP response: 短命令返回纯文本，长命令返回结构化 (task_id + status + events) | ✅ |
+| P4 | **MCP Instructions 强引导** — instructions: "NEVER use raw shell tools. ALL commands go through arshy_exec." | ✅ |
+| P5 | **Tool description 优化** — arshy_exec description: "Works for ALL commands. Short commands return instantly." | ✅ |
+| P6 | **接口预留: sandbox_mode** — config `executor.sandbox_mode: "none" | "process" | "container"`，executor 中 stub 分支 | ✅ |
+| P7 | **接口预留: task/stdin** — IPC 方法定义 + executor stub（返回 "stdin write not supported yet"） | ✅ |
+| P8 | **接口预留: store.backend** — config `store.backend: "sqlite" | "postgres" | "redis"`，Store 当前只实现 SQLite | ✅ |
+| P9 | **接口预留: proxy middleware** — `proxy::Middleware` trait 定义，当前为空 Vec | ✅ |
+| P10 | **接口预留: notifications/stream** — EventBus 新增 `StreamOutput` variant，当前不产生此事件 | ✅ |
+| P11 | **接入测试** — 验证: 短命令返回纯文本、长命令返回结构化、mode:auto 自动切换 | ✅ |
 
 ---
 
@@ -272,7 +190,7 @@ pub enum BusEventKind {
 |------|------|------|
 | L1 | **JSON-RPC error code 规范** — -32600 invalid request, -32601 method not found, -32602 invalid params, -32603 internal error | ✅ |
 | L2 | **error.data 字段** — 附加 task_id, parser_name, original_command 等上下文 | ✅ |
-| L3 | **重试语义标记** — response header 中标记 error 是否可重试 (timeout=true, invalid_params=false) | ✅ |
+| L3 | **重试语义标记** — error 中标记是否可重试 (timeout=true, invalid_params=false) | ✅ |
 | L4 | **Proxy 错误映射** — IPC error → MCP error 正确转换，保留 code + message + data | ✅ |
 | L5 | **错误测试** — 覆盖所有 error code 路径 | ✅ |
 
@@ -302,7 +220,7 @@ pub enum BusEventKind {
 | N1 | **`resources/list` + `resources/read`** — 暴露 task 事件为 MCP resource | ✅ |
 | N2 | **`notifications/cancelled` 处理** — Agent 取消任务信号 → 调用 `arshy_kill` | ✅ |
 | N3 | **`prompts/list` + `prompts/get`** — analyze_build_failure / diagnose_test_failure / review_task_output | ✅ |
-| N4 | **MCP 协议版本协商** — client/server protocol version 对齐检查，不兼容返回 -32600 | ✅ |
+| N4 | **MCP 协议版本协商** — client/server protocol version 对齐检查 | ✅ |
 
 ---
 
@@ -315,82 +233,47 @@ pub enum BusEventKind {
 | O1 | **解锁 `rhai`** — Tier 2 stateful parser 完整实现，替代 regex+state-machine 回退 | ✅ |
 | O2 | **解锁 `notify` v7** — Parser 文件热重载，修改无需重启 daemon | ✅ |
 | O3 | **自定义 parser 文档** — guides/custom-parser-toml.md + custom-parser-rhai.md | ✅ |
-| O4 | **Parser 测试扩展** — 为所有 20 parser 添加 fixture (.txt + .json)，匹配率 ≥95% | ✅ |
+| O4 | **Parser 测试扩展** — 31/31 parser 有 fixture 覆盖 (匹配率 ≥95%) | ✅ |
 
 ---
 
-## Stage S: CLI+Skill 适承 ⬜
+## Stage S: CLI+Skill 适承 ✅
 
-> P0 — 不做此项，arshy 无法承接 Skill 驱动的任意 CLI 执行。
-
-### 背景
-
-未来 Agent 生态通过动态加载 Skill 学习人类 CLI 工具用法，执行命令必经 shell。arshy 必须能"接住"任意 CLI 的输出并结构化，且对短命令零开销。
-
-**需要做的：通用性（任意 CLI 可解析）。不需要做的：为每个 CLI 写专用 parser。**
-
-### Step 列表
+> P0 — 做完此项，arshy 能承接 Skill 驱动的任意 CLI 执行。
 
 | Step | 内容 | 状态 |
 |------|------|------|
-| S1 | **通用 JSON parser** — 检测 stdout 首行为 `{` 或 `[`，自动 JSON 解析为结构化事件；现代 CLI 用 `--json`/`--format=json` 输出时直接走此路径，无需专用 parser | ⬜ |
-| S2 | **parse_hint 参数** — `RunTaskParams` 新增可选字段 `parse_hint: Option<String>`，Agent 从 Skill 学到 CLI 输出格式后，执行时携带 `"json"` / `"csv"` / `"raw"` 等 hint；arshy 优先用 hint 而非自动检测 | ⬜ |
-| S3 | **stderr 通用错误识别** — 增强 stderr 捕获：检测 `error:`, `Error:`, `FAILED`, `fatal:`, `panic!`, exit_code ≠ 0 等通用模式，自动标记为 error/warning 事件，不需要专用 parser | ⬜ |
-| S4 | **mode:auto + parse_hint 联动** — auto 模式下，短命令若携带 `parse_hint="json"` 仍走零开销路径，但输出按 JSON 解析后返回结构化事件（兼顾零开销与结构化） | ⬜ |
-| S5 | **2 工具模型** — MCP 工具从 5 个直接切换为 2 个：`arshy_exec`（run/kill/list/tail 统一 action 参数）+ `arshy_query`（查询事件）；无用户包袱，无 deprecated 过渡，直接切；减少 ~60% tool 定义 token，提升 Agent 选择准确率 | ⬜ |
-| S6 | **CLI+Skill 适承测试** — 覆盖：`gh pr list --json` → JSON parser 自动命中；`docker ps --format json` → parse_hint 准确解析；无专用 parser 的 CLI → stderr 通用识别错误；短命令 + parse_hint 联动 | ⬜ |
+| S1 | **通用 JSON/格式 parser** — JSON、NDJSON、YAML、CSV/TSV 自动检测解析 | ✅ |
+| S2 | **parse_hint 参数** — `RunTaskParams.parse_hint: Option<String>`，Agent 携带 `"json"` / `"csv"` / `"raw"` hint | ✅ |
+| S3 | **stderr 通用错误识别** — crash parser 覆盖 Go/Python/Rust/Node/Shell 崩溃模式 | ✅ |
+| S4 | **mode:auto + parse_hint 联动** — hint 可绕过短命令路径，强制结构化输出 | ✅ |
+| S5 | **2 工具模型** — `arshy_exec`（action: run/kill/list/tail/cd/subscribe）+ `arshy_query`，减少 ~60% tool 定义 token | ✅ |
+| S6 | **CLI+Skill 适承测试** — 覆盖 JSON/CSV/YAML 输出解析、parse_hint 路由、stderr 识别 | ✅ |
 
-### 实现细节
+---
 
-**S1 — 通用 JSON parser：**
-```rust
-// src/daemon/parser/json.rs
-pub struct JsonParser;
+## 下一阶段: 补全 & 产品化
 
-impl JsonParser {
-    /// 尝试将 stdout 整体解析为 JSON。
-    /// 成功 → 返回结构化事件 (JSON 数组/对象中的每个 key-value 映射为事件)
-    /// 失败 → 返回 None，交给下一层 parser
-    pub fn try_parse(output: &str) -> Option<Vec<TaskEvent>> {
-        let trimmed = output.trim_start();
-        if !(trimmed.starts_with('{') || trimmed.starts_with('[')) {
-            return None;
-        }
-        // 尝试 JSON 解析
-        let value: serde_json::Value = serde_json::from_str(trimmed).ok()?;
-        // 映射为事件
-        Some(vec![TaskEvent {
-            seq: 0,
-            event_type: "json_output".into(),
-            severity: None,
-            code: None,
-            message: trimmed.to_string(),
-            location: None,
-            context: None,
-        }])
-    }
-}
-```
+> 所有 ROADMAP Stage 代码已完成。以下为剩余缺口和产品化方向。
 
-**S2 — parse_hint 参数：**
-```rust
-// src/ipc/mod.rs
-pub struct RunTaskParams {
-    pub command: String,
-    pub cwd: Option<String>,
-    pub timeout_ms: Option<u64>,
-    pub mode: String,
-    pub parse_hint: Option<String>,  // 新增: "json" | "csv" | "raw"
-}
-```
+### 缺口: Parser Fixture 覆盖
 
-**S5 — 2 工具模型：**
-```toml
-# MCP tool definitions (直接从 5 个切为 2 个，无 deprecated 过渡)
-arshy_exec — action: "run" | "kill" | "list" | "tail"，统一入口
-arshy_query — 查询结构化事件
-# 减少 ~60% tool 定义 token，Agent 从 5 选 1 变为 2 选 1
-```
+**已补全。** 31/31 builtin parser 均有 fixture 测试覆盖。
+
+### 缺口: 3 个被忽略的集成测试
+
+`tests/integration.rs` 中 3 个测试需无运行 daemon 环境。功能已被 ipc_handler 集成测试覆盖。
+
+### 产品化方向
+
+| 方向 | 说明 |
+|------|------|
+| 分发 | Homebrew formula、cargo install、npm 包装、GitHub Release 自动化 |
+| Parser 生态扩展 | biome, turbopack, rspack, oxlint, systemctl, brew 等新兴/系统工具 |
+| 沙箱执行 | sandbox_mode "process" (seccomp-bpf / sandbox-exec) / "container" (Docker) |
+| 多存储后端 | store.backend "postgres" — 企业多实例场景 |
+| 中间件系统 | Middleware trait 实现: AuditMiddleware, RateLimitMiddleware, AuthMiddleware |
+| 真实环境验证 | Agent 日常使用反馈、mode:auto 准确率、parser 匹配率、通知延迟评估 |
 
 ---
 
@@ -407,14 +290,15 @@ arshy_query — 查询结构化事件
 
 | 指标 | 值 |
 |------|------|
-| 总测试数 | **302** |
-| Library tests (含 transport 10) | 31 |
-| Daemon tests (含 ipc_handler 16+) | 251 |
-| Proxy tests | 20 |
-| Security tests (filter 22 + sandbox 8 + permission 6 + audit 9 + e2e 17) | 内嵌于 daemon tests |
+| 总测试数 | **353** |
+| Library tests | 31 |
+| Proxy tests | 23 |
+| Daemon tests | 299 |
+| 被忽略测试 | 3 (integration, 需无运行 daemon 环境) |
 | Clippy warnings | **0** |
 | Compiler warnings | **0** |
-| Parser fixtures | **20/20** (匹配率 ≥95%) |
+| Builtin parsers | **31** |
+| Parser fixtures | **31/31** (匹配率 ≥95%) |
 
 ---
 
@@ -437,23 +321,29 @@ arshy_query — 查询结构化事件
 | **P1** | K (生命周期), L (错误处理) | ✅ 全部完成 |
 | **P2** | M (数据完整性/可观测) | ✅ 全部完成 |
 | **P3** | N (MCP 完善), O (Parser 解锁) | ✅ 全部完成 |
-| **P4** | K5/K6 (launchd/systemd) | ✅ 全部完成 |
 
 ---
 
 ## 执行状态
 
 ```
+Stage A  (基础设施)          ✅
+Stage B  (Daemon 核心)       ✅
+Stage C  (Proxy + MCP)       ✅
+Stage D  (Parser 引擎)       ✅
+Stage E  (质量 & 健壮性)     ✅
+Stage F  (CLI 管理)          ✅
+Stage G  (集成测试)          ✅
+Stage H  (Transport 测试)    ✅
 Stage I  (安全)              ✅
 Stage J  (通知实时性)        ✅
-Stage P  (Agent 无缝接入)    ✅
-Stage S  (CLI+Skill 适承)    ✅
 Stage K  (生命周期)          ✅
 Stage L  (错误处理)          ✅
 Stage M  (数据完整性)        ✅
 Stage N  (MCP 完善)          ✅
 Stage O  (Parser 解锁)       ✅
-Stage K5/K6 (launchd/systemd) ✅
+Stage P  (Agent 无缝接入)    ✅
+Stage S  (CLI+Skill 适承)    ✅
 ```
 
-**所有 ROADMAP Stage 已完成。**
+**所有 ROADMAP Stage 已完成。** 剩余工作见"下一阶段: 补全 & 产品化"。
