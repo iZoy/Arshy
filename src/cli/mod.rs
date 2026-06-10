@@ -718,7 +718,7 @@ async fn daemon_stats(config_path: Option<PathBuf>, log_level: Option<String>) -
         params: serde_json::json!({}),
     };
     let response = ipc::send_request(&mut daemon, &request).await?;
-    println!("{}", serde_json::to_string_pretty(&response.result)?);
+    render::render_stats(&response.result);
     Ok(())
 }
 

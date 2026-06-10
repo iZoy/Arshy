@@ -166,6 +166,39 @@ impl super::Store {
 
         let db_size = db_path.and_then(|p| std::fs::metadata(p).ok()).map(|m| m.len());
 
+        let total_raw_bytes: Option<u64> = conn
+            .query_row(
+                "SELECT COALESCE(SUM(LENGTH(raw_output)), 0) \
+                 FROM tasks WHERE raw_output IS NOT NULL",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .ok()
+            .map(|v| v as u64);
+
+        let total_event_bytes: Option<u64> = conn
+            .query_row("SELECT COALESCE(SUM(LENGTH(payload)), 0) FROM events", [], |r| {
+                r.get::<_, i64>(0)
+            })
+            .ok()
+            .map(|v| v as u64);
+
+        let token_savings_pct = match (total_raw_bytes, total_event_bytes) {
+            (Some(raw), Some(evt)) if raw > 0 => Some((1.0 - evt as f64 / raw as f64) * 100.0),
+            _ => None,
+        };
+
+        let parser_coverage_pct: Option<f64> = conn
+            .query_row(
+                "SELECT CASE WHEN COUNT(*) = 0 THEN 0.0 \
+                 ELSE CAST(COUNT(CASE WHEN type != 'log' THEN 1 END) AS REAL) \
+                     * 100.0 / COUNT(*) END \
+                 FROM events",
+                [],
+                |r| r.get::<_, f64>(0),
+            )
+            .ok();
+
         Ok(arshy_lib::ipc::StatsResponse {
             total_tasks,
             by_status: counts,
@@ -176,6 +209,10 @@ impl super::Store {
             p99_duration_ms: p99,
             failure_rate,
             db_size_bytes: db_size,
+            total_raw_bytes,
+            total_event_bytes,
+            token_savings_pct,
+            parser_coverage_pct,
         })
     }
 }
@@ -191,6 +228,45 @@ fn percentile(sorted: &[u64], pct: u64) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use arshy_lib::ipc::{Task, TaskEvent, TaskStatus};
+    use tempfile::TempDir;
+
+    fn test_store() -> (super::super::Store, TempDir) {
+        let tmp = TempDir::new().unwrap();
+        let db = tmp.path().join("test.db");
+        let store = super::super::Store::open(&db, false).unwrap();
+        store.initialize_schema().unwrap();
+        (store, tmp)
+    }
+
+    fn make_task(id: &str, command: &str, status: TaskStatus) -> Task {
+        Task {
+            task_id: id.to_string(),
+            command: command.to_string(),
+            cwd: Some("/tmp".to_string()),
+            status,
+            exit_code: None,
+            pid: None,
+            parser_name: None,
+            started_at: chrono::Utc::now().to_rfc3339(),
+            finished_at: None,
+            duration_ms: None,
+            events_count: 0,
+            error_count: 0,
+        }
+    }
+
+    fn make_event(event_type: &str, severity: &str, message: &str) -> TaskEvent {
+        TaskEvent {
+            seq: 0,
+            event_type: event_type.to_string(),
+            severity: Some(severity.to_string()),
+            code: None,
+            message: message.to_string(),
+            location: None,
+            context: None,
+        }
+    }
 
     #[test]
     fn percentile_empty() {
@@ -232,6 +308,27 @@ mod tests {
         assert_eq!(stats.total_tasks, 0);
         assert_eq!(stats.total_events, 0);
         assert!(stats.avg_duration_ms.is_none());
+    }
+
+    #[test]
+    fn stats_with_raw_output() {
+        let (store, _tmp) = test_store();
+        let task = make_task("t1", "cargo test", TaskStatus::Failed);
+        store.insert_task(&task).unwrap();
+        store.update_task_raw_output("t1", "error: something failed\nline2\nline3").unwrap();
+        store
+            .insert_event("t1", 0, &make_event("diagnostic", "error", "something failed"))
+            .unwrap();
+        store.insert_event("t1", 1, &make_event("log", "info", "line2")).unwrap();
+        store.insert_event("t1", 2, &make_event("log", "info", "line3")).unwrap();
+
+        let stats = store.get_stats(None).unwrap();
+        assert!(stats.total_raw_bytes.is_some());
+        assert!(stats.total_raw_bytes.unwrap() > 0);
+        assert!(stats.parser_coverage_pct.is_some());
+        // 1 of 3 events is type != 'log' (the diagnostic one)
+        let coverage = stats.parser_coverage_pct.unwrap();
+        assert!(coverage > 30.0 && coverage < 40.0); // ~33.3%
     }
 
     #[test]
