@@ -231,4 +231,41 @@ mod tests {
         let flushed = d.finish().expect("should flush");
         assert_eq!(flushed.context, ctx);
     }
+
+    #[test]
+    fn flush_preserves_context_with_location() {
+        use arshy_lib::ipc::{EventContext, EventLocation};
+
+        let loc = Some(EventLocation { file: "src/main.rs".into(), line: 10, column: None });
+        let ctx = Some(EventContext {
+            before: vec!["fn main() {".into()],
+            line: "    let x: String = 1;".into(),
+            after: vec!["}".into()],
+        });
+        let mut d = Deduplicator::new();
+        // Two events with same (type, message, location) but first has context
+        let e1 = TaskEvent {
+            seq: 0,
+            event_type: "diagnostic".into(),
+            severity: Some("error".into()),
+            code: Some("E0308".into()),
+            message: "mismatched types".into(),
+            location: loc.clone(),
+            context: ctx.clone(),
+        };
+        let e2 = TaskEvent {
+            seq: 1,
+            event_type: "diagnostic".into(),
+            severity: Some("error".into()),
+            code: Some("E0308".into()),
+            message: "mismatched types".into(),
+            location: loc,
+            context: None,
+        };
+        d.feed(e1);
+        d.feed(e2);
+        let flushed = d.finish().expect("should flush");
+        assert_eq!(flushed.message, "mismatched types (repeated 2 times)");
+        assert_eq!(flushed.context, ctx, "context from first event should be preserved");
+    }
 }
