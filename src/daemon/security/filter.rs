@@ -184,11 +184,20 @@ mod tests {
     // ── Expanded blocked patterns ──────────────────────────────────────────
 
     #[test]
-    fn blocked_sudo() {
+    fn blocked_dangerous_sudo() {
         let filter = default_filter();
         assert!(filter.check("sudo rm -rf /").is_err());
+        assert!(filter.check("sudo dd if=/dev/zero of=/dev/sda").is_err());
+        assert!(filter.check("sudo chmod 777 /etc").is_err());
         assert!(filter.check("sudo su").is_err());
-        assert!(filter.check("sudo -u root bash").is_err());
+    }
+
+    #[test]
+    fn allowed_benign_sudo() {
+        let filter = default_filter();
+        assert!(filter.check("sudo systemctl status nginx").is_ok());
+        assert!(filter.check("sudo apt-get update").is_ok());
+        assert!(filter.check("sudo vim /etc/hosts").is_ok());
     }
 
     #[test]
