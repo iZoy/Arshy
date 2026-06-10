@@ -23,6 +23,7 @@ pub const METHOD_STATS: &str = "daemon/stats";
 pub const METHOD_HEALTH: &str = "daemon/health";
 pub const METHOD_CD: &str = "session/cd";
 pub const METHOD_SUBSCRIBE: &str = "task/subscribe";
+pub const METHOD_PARSER_RELOAD: &str = "parser/reload";
 
 pub const NOTIF_TASK_UPDATE: &str = "task/update";
 pub const NOTIF_TASK_COMPLETE: &str = "task/complete";
@@ -179,6 +180,9 @@ pub struct RunTaskParams {
     /// Inherited from the parent process; these entries add or override.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub env: Option<HashMap<String, String>>,
+    /// Only return error-severity events. Reduces output for large builds.
+    #[serde(default)]
+    pub errors_only: bool,
 }
 
 fn default_mode() -> String {

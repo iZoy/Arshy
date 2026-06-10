@@ -282,6 +282,7 @@ impl Executor {
     /// - **auto**: Smart — short commands get zero-overhead sync path (raw stdout),
     ///   long commands get sync with 60s timeout (structured result in 1 call).
     ///   Only commands exceeding 60s degrade to async (returns task_id).
+    #[allow(clippy::too_many_arguments)]
     pub async fn run(
         &self,
         command: &str,
@@ -290,6 +291,7 @@ impl Executor {
         mode: &str,
         parse_hint: Option<&str>,
         env: Option<&HashMap<String, String>>,
+        errors_only: bool,
     ) -> Result<RunResult> {
         // ── Security checks (always run) ──────────────────────────────────
         if let Err(e) = self.filter.check(command) {
@@ -478,6 +480,12 @@ impl Executor {
                             })
                         };
 
+                        let events_json = if errors_only {
+                            filter_events_errors_only(&events_json)
+                        } else {
+                            events_json
+                        };
+
                         Ok(RunResult {
                             task_id: task_id.clone(),
                             status: info.status.clone(),
@@ -634,6 +642,18 @@ impl Executor {
         let (events, _total) = self.store.query_events(&params)?;
         Ok(events.into_iter().map(|e| e.message).collect())
     }
+}
+
+/// Filter events to only include error-severity items.
+fn filter_events_errors_only(
+    events: &Option<Vec<serde_json::Value>>,
+) -> Option<Vec<serde_json::Value>> {
+    events.as_ref().map(|evts| {
+        evts.iter()
+            .filter(|e| e.get("severity").and_then(|v| v.as_str()) == Some("error"))
+            .cloned()
+            .collect()
+    })
 }
 
 /// Compute event statistics from a list of serialized events.
@@ -1076,7 +1096,8 @@ mod tests {
         let (store, parser, bus, _tmp) = setup();
         let executor = Executor::new(store.clone(), parser, bus);
 
-        let result = executor.run("echo hello", None, None, "async", None, None).await.unwrap();
+        let result =
+            executor.run("echo hello", None, None, "async", None, None, false).await.unwrap();
         assert!(!result.task_id.is_empty());
         assert_eq!(result.status, TaskStatus::Running);
 
@@ -1110,7 +1131,7 @@ mod tests {
         let (store, parser, bus, _tmp) = setup();
         let executor = Executor::new(store.clone(), parser, bus);
 
-        let result = executor.run("exit 1", None, None, "async", None, None).await.unwrap();
+        let result = executor.run("exit 1", None, None, "async", None, None, false).await.unwrap();
 
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
@@ -1124,8 +1145,10 @@ mod tests {
         let (store, parser, bus, _tmp) = setup();
         let executor = Executor::new(store.clone(), parser, bus);
 
-        let result =
-            executor.run("printf 'a\nb\nc\n'", None, None, "async", None, None).await.unwrap();
+        let result = executor
+            .run("printf 'a\nb\nc\n'", None, None, "async", None, None, false)
+            .await
+            .unwrap();
 
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
@@ -1139,7 +1162,8 @@ mod tests {
         let executor = Executor::new(store.clone(), parser, bus)
             .with_config(ExecutorConfig { max_task_duration_ms: 500, ..Default::default() });
 
-        let result = executor.run("sleep 60", None, Some(500), "async", None, None).await.unwrap();
+        let result =
+            executor.run("sleep 60", None, Some(500), "async", None, None, false).await.unwrap();
 
         tokio::time::sleep(std::time::Duration::from_secs(3)).await;
 
@@ -1157,7 +1181,8 @@ mod tests {
         let (store, parser, bus, _tmp) = setup();
         let executor = Executor::new(store.clone(), parser, bus);
 
-        let result = executor.run("echo sync_test", None, None, "sync", None, None).await.unwrap();
+        let result =
+            executor.run("echo sync_test", None, None, "sync", None, None, false).await.unwrap();
         // Sync mode should wait for completion and return full result
         assert_eq!(result.status, TaskStatus::Completed);
         assert_eq!(result.exit_code, Some(0));
@@ -1170,7 +1195,7 @@ mod tests {
         let (store, parser, bus, _tmp) = setup();
         let executor = Executor::new(store.clone(), parser, bus);
 
-        let result = executor.run("exit 42", None, None, "sync", None, None).await.unwrap();
+        let result = executor.run("exit 42", None, None, "sync", None, None, false).await.unwrap();
         assert_eq!(result.status, TaskStatus::Failed);
         assert_eq!(result.exit_code, Some(42));
     }
@@ -1180,7 +1205,8 @@ mod tests {
         let (store, parser, bus, _tmp) = setup();
         let executor = Executor::new(store.clone(), parser, bus);
 
-        let result = executor.run("sleep 60", None, None, "async", None, None).await.unwrap();
+        let result =
+            executor.run("sleep 60", None, None, "async", None, None, false).await.unwrap();
         assert_eq!(result.status, TaskStatus::Running);
 
         // Wait a bit for the process to start
@@ -1298,7 +1324,8 @@ mod tests {
         let (store, parser, bus, _tmp) = setup();
         let executor = Executor::new(store.clone(), parser, bus);
 
-        let result = executor.run("echo fast-path", None, None, "auto", None, None).await.unwrap();
+        let result =
+            executor.run("echo fast-path", None, None, "auto", None, None, false).await.unwrap();
         assert!(result.short_command, "short_command should be true");
         assert_eq!(result.status, TaskStatus::Completed);
         assert_eq!(result.exit_code, Some(0));
@@ -1319,7 +1346,7 @@ mod tests {
 
         let result = executor.run(
             "cargo build --manifest-path /some/really/really/really/long/path/Cargo.toml --release",
-            None, None, "auto", None, None,
+            None, None, "auto", None, None, false,
         ).await.unwrap();
         assert!(!result.short_command, "long build command should not be short_command");
         assert_eq!(result.status, TaskStatus::Failed, "invalid path should fail");
@@ -1335,7 +1362,7 @@ mod tests {
 
         let result = executor.run(
             "echo this-command-is-definitely-longer-than-eighty-characters-so-it-should-still-use-short-path",
-            None, None, "auto", None, None,
+            None, None, "auto", None, None, false,
         ).await.unwrap();
         assert!(result.short_command, "long echo should still use short path");
         assert_eq!(result.status, TaskStatus::Completed);
@@ -1350,7 +1377,7 @@ mod tests {
         let executor = Executor::new(store.clone(), parser, bus);
 
         let result =
-            executor.run("echo hello | cat", None, None, "auto", None, None).await.unwrap();
+            executor.run("echo hello | cat", None, None, "auto", None, None, false).await.unwrap();
         assert!(result.short_command, "simple piped cmd should use short path");
         assert_eq!(result.status, TaskStatus::Completed);
         assert!(result.raw_output.is_some(), "short path populates raw_output");
@@ -1363,7 +1390,8 @@ mod tests {
         let (store, parser, bus, _tmp) = setup();
         let executor = Executor::new(store.clone(), parser, bus);
 
-        let result = executor.run("echo sync-short", None, None, "sync", None, None).await.unwrap();
+        let result =
+            executor.run("echo sync-short", None, None, "sync", None, None, false).await.unwrap();
         // Sync mode: should complete and return structure, not short path
         assert!(!result.short_command, "explicit sync should use full structured path");
         assert_eq!(result.status, TaskStatus::Completed);
@@ -1378,7 +1406,8 @@ mod tests {
         let (store, parser, bus, _tmp) = setup();
         let executor = Executor::new(store.clone(), parser, bus);
 
-        let result = executor.run("nonexistent_xyz", None, None, "auto", None, None).await.unwrap();
+        let result =
+            executor.run("nonexistent_xyz", None, None, "auto", None, None, false).await.unwrap();
         assert!(result.short_command);
         assert_eq!(result.status, TaskStatus::Failed);
         assert!(result.exit_code.unwrap() != 0);
@@ -1394,8 +1423,10 @@ mod tests {
         let executor = Executor::new(store.clone(), parser, bus);
 
         // Short command with parse_hint="json" → should NOT take short path
-        let result =
-            executor.run("echo hello", None, None, "auto", Some("json"), None).await.unwrap();
+        let result = executor
+            .run("echo hello", None, None, "auto", Some("json"), None, false)
+            .await
+            .unwrap();
         assert!(!result.short_command, "parse_hint should force structured path");
         assert_eq!(result.status, TaskStatus::Running);
 
@@ -1413,7 +1444,15 @@ mod tests {
         let executor = Executor::new(store.clone(), parser, bus);
 
         let result = executor
-            .run(r#"echo '{"status":"ok","count":1}'"#, None, None, "auto", Some("json"), None)
+            .run(
+                r#"echo '{"status":"ok","count":1}'"#,
+                None,
+                None,
+                "auto",
+                Some("json"),
+                None,
+                false,
+            )
             .await
             .unwrap();
         assert!(!result.short_command);
@@ -1445,7 +1484,7 @@ mod tests {
 
         // Short command with parse_hint="raw" → structured path
         let result =
-            executor.run("echo hello", None, None, "auto", Some("raw"), None).await.unwrap();
+            executor.run("echo hello", None, None, "auto", Some("raw"), None, false).await.unwrap();
         assert!(!result.short_command, "any parse_hint should force structured path");
         assert_eq!(result.status, TaskStatus::Running);
 
@@ -1461,7 +1500,8 @@ mod tests {
         let (store, parser, bus, _tmp) = setup();
         let executor = Executor::new(store.clone(), parser, bus);
 
-        let result = executor.run("echo fast", None, None, "auto", None, None).await.unwrap();
+        let result =
+            executor.run("echo fast", None, None, "auto", None, None, false).await.unwrap();
         assert!(result.short_command, "no hint should keep short path for short commands");
         assert!(result.raw_output.is_some());
     }
@@ -1492,7 +1532,7 @@ mod tests {
         let executor = Executor::new(store.clone(), parser, bus);
 
         let result = executor
-            .run(r#"printf '{"name":"test","count":42}\n'"#, None, None, "async", None, None)
+            .run(r#"printf '{"name":"test","count":42}\n'"#, None, None, "async", None, None, false)
             .await
             .unwrap();
 
@@ -1524,7 +1564,15 @@ mod tests {
         let executor = Executor::new(store.clone(), parser, bus);
 
         let result = executor
-            .run(r#"echo '["item-a","item-b","item-c"]'"#, None, None, "auto", Some("json"), None)
+            .run(
+                r#"echo '["item-a","item-b","item-c"]'"#,
+                None,
+                None,
+                "auto",
+                Some("json"),
+                None,
+                false,
+            )
             .await
             .unwrap();
 
@@ -1559,6 +1607,7 @@ mod tests {
             "async",
             None,
         None,
+        false,
         ).await.unwrap();
 
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
@@ -1595,6 +1644,7 @@ mod tests {
                 "async",
                 None,
                 None,
+                false,
             )
             .await
             .unwrap();
@@ -1625,8 +1675,10 @@ mod tests {
         let executor = Executor::new(store.clone(), parser, bus);
 
         // Short command with parse_hint → forced structured path
-        let result =
-            executor.run("echo structured", None, None, "auto", Some("raw"), None).await.unwrap();
+        let result = executor
+            .run("echo structured", None, None, "auto", Some("raw"), None, false)
+            .await
+            .unwrap();
 
         assert!(!result.short_command);
 
@@ -1645,7 +1697,7 @@ mod tests {
 
         // Plain text output
         let result = executor
-            .run("printf 'regular output\nmore output\n'", None, None, "async", None, None)
+            .run("printf 'regular output\nmore output\n'", None, None, "async", None, None, false)
             .await
             .unwrap();
 
@@ -1671,5 +1723,33 @@ mod tests {
             events.iter().all(|e| e.event_type == "log"),
             "plain text output should produce log events"
         );
+    }
+
+    // ── Errors-only filter tests ──────────────────────────────────────────
+
+    #[test]
+    fn filter_errors_only() {
+        let events = Some(vec![
+            serde_json::json!({"type": "diagnostic", "severity": "error", "message": "bad"}),
+            serde_json::json!({"type": "diagnostic", "severity": "warning", "message": "warn"}),
+            serde_json::json!({"type": "log", "severity": "info", "message": "ok"}),
+            serde_json::json!({"type": "diagnostic", "severity": "error", "message": "bad2"}),
+        ]);
+        let filtered = filter_events_errors_only(&events);
+        let evts = filtered.unwrap();
+        assert_eq!(evts.len(), 2);
+        assert_eq!(evts[0]["message"], "bad");
+        assert_eq!(evts[1]["message"], "bad2");
+    }
+
+    #[test]
+    fn filter_errors_only_none_passthrough() {
+        assert!(filter_events_errors_only(&None).is_none());
+    }
+
+    #[test]
+    fn filter_errors_only_empty() {
+        let events = Some(vec![]);
+        assert!(filter_events_errors_only(&events).unwrap().is_empty());
     }
 }

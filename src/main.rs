@@ -5,7 +5,12 @@ mod cli;
 mod proxy;
 
 #[derive(Parser, Debug)]
-#[command(name = "arshy", version, about = "AI Agent native shell — structured output, auto-mode intelligence, command filtering", long_about = "Arshy is a structured shell execution layer for AI agents. It replaces raw Bash with typed, queryable command execution: smart sync for short commands, async structured output for long commands, and 20 built-in parsers for common build/test tools.")]
+#[command(
+    name = "arshy",
+    version,
+    about = "AI Agent native shell — structured output, auto-mode intelligence, command filtering",
+    long_about = "Arshy is a structured shell execution layer for AI agents. It replaces raw Bash with typed, queryable command execution: smart sync for short commands, async structured output for long commands, and 20 built-in parsers for common build/test tools."
+)]
 pub struct Cli {
     /// Run as MCP stdio proxy (for Claude Code / Cursor integration).
     /// The proxy connects to the arshyd daemon via Unix socket and translates
@@ -36,6 +41,12 @@ pub enum CliCommand {
         timeout_ms: Option<u64>,
         #[arg(long)]
         mode: Option<String>,
+        /// Output format: pretty (terminal UI), json (raw JSON), auto (default)
+        #[arg(long, default_value = "auto")]
+        format: String,
+        /// Only return error-severity events
+        #[arg(long)]
+        errors_only: bool,
     },
     /// List tasks
     List {
@@ -99,6 +110,13 @@ pub enum CliCommand {
     InstallSystemd,
     /// Diagnose Claude Code integration and show fix suggestions
     Doctor,
+    /// Run parser benchmark across all builtin parsers
+    Benchmark,
+    /// Manage parsers
+    Parser {
+        #[command(subcommand)]
+        action: ParserAction,
+    },
 }
 
 #[derive(clap::Subcommand, Debug)]
@@ -121,6 +139,14 @@ pub enum DaemonAction {
     Stop,
     /// Restart the daemon (stop + start)
     Restart,
+}
+
+#[derive(clap::Subcommand, Debug)]
+pub enum ParserAction {
+    /// Reload parsers from disk and show what changed
+    Reload,
+    /// List all loaded parsers
+    List,
 }
 
 fn main() -> arshy_lib::Result<()> {

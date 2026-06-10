@@ -1,5 +1,7 @@
 //! CLI command dispatch — connects to daemon via UDS and executes user commands.
 
+pub mod render;
+
 use arshy_lib::config::Config;
 use arshy_lib::ipc::{
     self, QueryParams, Request, RunTaskParams, METHOD_LIST, METHOD_PRUNE, METHOD_RUN,
@@ -8,7 +10,13 @@ use arshy_lib::ipc::{
 use arshy_lib::Result;
 use std::path::PathBuf;
 
-use crate::{Cli, CliCommand, ConfigAction, DaemonAction};
+use crate::{Cli, CliCommand, ConfigAction, DaemonAction, ParserAction};
+
+// ANSI color constants for terminal output
+const RESET: &str = "\x1b[0m";
+const GREEN: &str = "\x1b[32m";
+const RED: &str = "\x1b[31m";
+const YELLOW: &str = "\x1b[33m";
 
 /// Route a parsed CLI to the appropriate handler.
 pub async fn dispatch(cli: Cli) -> Result<()> {
@@ -16,8 +24,18 @@ pub async fn dispatch(cli: Cli) -> Result<()> {
     let log_level = cli.log_level;
 
     match cli.command {
-        Some(CliCommand::Run { command, cwd, timeout_ms, mode }) => {
-            run_command(config_path, log_level, &command, cwd, timeout_ms, mode).await
+        Some(CliCommand::Run { command, cwd, timeout_ms, mode, format, errors_only }) => {
+            run_command(
+                config_path,
+                log_level,
+                &command,
+                cwd,
+                timeout_ms,
+                mode,
+                &format,
+                errors_only,
+            )
+            .await
         }
         Some(CliCommand::List { status, limit }) => {
             list_tasks(config_path, log_level, status, limit).await
@@ -42,6 +60,8 @@ pub async fn dispatch(cli: Cli) -> Result<()> {
         Some(CliCommand::InstallLaunchd) => install_launchd(),
         Some(CliCommand::InstallSystemd) => install_systemd(),
         Some(CliCommand::Doctor) => doctor(config_path, log_level),
+        Some(CliCommand::Benchmark) => run_benchmark(),
+        Some(CliCommand::Parser { action }) => parser_action(action, config_path, log_level).await,
         None => {
             println!("Arshy — AI Agent native shell execution layer");
             println!("Usage: arshy [--from-mcp] [OPTIONS] <COMMAND>");
@@ -64,6 +84,7 @@ async fn connect(
 
 // ── Subcommand handlers ────────────────────────────────────────────────────────
 
+#[allow(clippy::too_many_arguments)]
 async fn run_command(
     config_path: Option<PathBuf>,
     log_level: Option<String>,
@@ -71,6 +92,8 @@ async fn run_command(
     cwd: Option<String>,
     timeout_ms: Option<u64>,
     mode: Option<String>,
+    format: &str,
+    errors_only: bool,
 ) -> Result<()> {
     let mut daemon = connect(config_path, log_level).await?;
     let params = RunTaskParams {
@@ -80,6 +103,7 @@ async fn run_command(
         mode: mode.unwrap_or_else(|| "sync".into()),
         parse_hint: None,
         env: None,
+        errors_only,
     };
     let request = Request {
         jsonrpc: "2.0".into(),
@@ -88,8 +112,29 @@ async fn run_command(
         params: serde_json::to_value(&params)?,
     };
     let response = ipc::send_request(&mut daemon, &request).await?;
-    println!("{}", serde_json::to_string_pretty(&response.result)?);
+
+    match format {
+        "json" => {
+            println!("{}", serde_json::to_string_pretty(&response.result)?);
+        }
+        "pretty" => {
+            render::render(&response.result);
+        }
+        _ => {
+            // Default: pretty for interactive, json for non-interactive
+            if atty_is_available() {
+                render::render(&response.result);
+            } else {
+                println!("{}", serde_json::to_string_pretty(&response.result)?);
+            }
+        }
+    }
     Ok(())
+}
+
+/// Check if stdout is a terminal (for auto-detecting format).
+fn atty_is_available() -> bool {
+    std::io::IsTerminal::is_terminal(&std::io::stderr())
 }
 
 async fn list_tasks(
@@ -994,4 +1039,107 @@ fn check_permissions(path: &std::path::Path) -> PermStatus {
     } else {
         PermStatus::Missing(missing)
     }
+}
+
+// ── Parser management ──────────────────────────────────────────────────────
+
+async fn parser_action(
+    action: ParserAction,
+    config_path: Option<PathBuf>,
+    log_level: Option<String>,
+) -> Result<()> {
+    match action {
+        ParserAction::Reload => parser_reload(config_path, log_level).await,
+        ParserAction::List => parser_list(config_path, log_level).await,
+    }
+}
+
+async fn parser_reload(config_path: Option<PathBuf>, log_level: Option<String>) -> Result<()> {
+    let mut daemon = connect(config_path, log_level).await?;
+    let request = Request {
+        jsonrpc: "2.0".into(),
+        id: 1,
+        method: ipc::METHOD_PARSER_RELOAD.into(),
+        params: serde_json::json!({}),
+    };
+    let response = ipc::send_request(&mut daemon, &request).await?;
+
+    let diff = response.result.get("diff").and_then(|v| v.as_str()).unwrap_or("");
+
+    if diff.is_empty() {
+        eprintln!("  {}✓ Parsers reloaded — no changes{}", GREEN, RESET);
+    } else {
+        eprintln!("  {}✓ Parsers reloaded — changes detected:{}", GREEN, RESET);
+        eprintln!();
+        for line in diff.lines() {
+            if line.starts_with('+') {
+                eprintln!("    {}{}{}", GREEN, line, RESET);
+            } else if line.starts_with('-') {
+                eprintln!("    {}{}{}", RED, line, RESET);
+            } else {
+                eprintln!("    {}{}{}", YELLOW, line, RESET);
+            }
+        }
+    }
+    eprintln!();
+    Ok(())
+}
+
+async fn parser_list(config_path: Option<PathBuf>, log_level: Option<String>) -> Result<()> {
+    let mut daemon = connect(config_path, log_level).await?;
+    let request = Request {
+        jsonrpc: "2.0".into(),
+        id: 1,
+        method: ipc::METHOD_STATUS.into(),
+        params: serde_json::json!({}),
+    };
+    let response = ipc::send_request(&mut daemon, &request).await?;
+
+    let parser_count = response.result.get("parser_count").and_then(|v| v.as_u64()).unwrap_or(0);
+
+    eprintln!("  Loaded parsers: {}", parser_count);
+    eprintln!();
+    Ok(())
+}
+
+// ── Benchmark ──────────────────────────────────────────────────────────────
+
+/// Run parser benchmark by executing the daemon's benchmark test.
+/// The test outputs structured JSON to stderr between marker lines.
+fn run_benchmark() -> Result<()> {
+    eprintln!("Running benchmark across all builtin parsers...\n");
+
+    let output = std::process::Command::new("cargo")
+        .args(["test", "--bin", "arshyd", "benchmark::run_benchmark", "--", "--nocapture"])
+        .output()
+        .map_err(|e| arshy_lib::ArshyError::Other(format!("failed to run cargo test: {}", e)))?;
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let combined = format!("{}\n{}", stdout, stderr);
+
+    // Extract JSON between markers
+    let json_str = combined
+        .lines()
+        .skip_while(|l| !l.contains("=== ARSHY BENCHMARK ==="))
+        .skip(1) // skip the marker itself
+        .take_while(|l| !l.contains("=== END BENCHMARK ==="))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    if json_str.trim().is_empty() {
+        eprintln!("ERROR: Benchmark produced no output.");
+        if !output.status.success() {
+            eprintln!("cargo test failed. Output:\n{}", combined);
+        }
+        return Err(arshy_lib::ArshyError::Other("benchmark produced no output".into()));
+    }
+
+    // Parse and display
+    let result: serde_json::Value = serde_json::from_str(&json_str)
+        .map_err(|e| arshy_lib::ArshyError::Other(format!("invalid benchmark JSON: {}", e)))?;
+
+    render::render_benchmark(&result);
+
+    Ok(())
 }

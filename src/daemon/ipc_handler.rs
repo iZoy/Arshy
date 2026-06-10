@@ -284,6 +284,7 @@ async fn dispatch(
                     &params.mode,
                     params.parse_hint.as_deref(),
                     params.env.as_ref(),
+                    params.errors_only,
                 )
                 .await?;
             Ok(serde_json::to_value(&result)?)
