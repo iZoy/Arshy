@@ -12,6 +12,7 @@
 //! - `loader` — filesystem hot-reload watcher (notify v7)
 
 mod crash;
+pub mod dedup;
 mod detect;
 mod heuristic;
 mod json;

@@ -18,6 +18,7 @@ use tokio::sync::{oneshot, Mutex as TokioMutex};
 use super::bus::{BusEvent, BusEventKind, EventBus};
 use super::context;
 use super::ipc_handler::RunResult;
+use super::parser::dedup::Deduplicator;
 use super::parser::{Engine, ParsedTool};
 use super::security::{AuditEntry, AuditLog, CommandFilter};
 use super::store::Store;
@@ -43,8 +44,18 @@ pub fn is_short_command(command: &str) -> bool {
         return false;
     }
 
-    let first_word = cmd.split_whitespace().next().unwrap_or("");
-    let first_two = cmd.split_whitespace().take(2).collect::<Vec<_>>().join(" ");
+    // Split whitespace once and reuse
+    let words: Vec<&str> = cmd.split_whitespace().collect();
+    let word_count = words.len();
+    let first_word = words.first().copied().unwrap_or("");
+    let first_two = if words.len() >= 2 {
+        // Avoid allocation: just check starts_with on the original command
+        // after the first word. But since we need first_two for matching,
+        // build it from the words we already have.
+        &cmd[..cmd.len().min(first_word.len() + 1 + words.get(1).map(|w| w.len()).unwrap_or(0))]
+    } else {
+        first_word
+    };
 
     // Build/test/install commands always produce substantial output → non-short
     let long_output_prefixes = [
@@ -169,7 +180,7 @@ pub fn is_short_command(command: &str) -> bool {
     if cmd.len() > 80 {
         return false;
     }
-    cmd.split_whitespace().count() <= 5
+    word_count <= 5
 }
 
 /// Core executor that owns the store, parser, and event bus.
@@ -244,6 +255,11 @@ impl Executor {
     /// Current access level ("full" or "read-only").
     pub fn access_level(&self) -> &str {
         &self.access_level
+    }
+
+    /// Reload parsers from disk and return a human-readable diff.
+    pub fn reload_parsers(&self) -> Result<String> {
+        self.parser.reload()
     }
 
     /// Kill all running tasks. Used during daemon shutdown to drain work.
@@ -338,11 +354,8 @@ impl Executor {
 
         // Auto mode uses a bounded wait; if command exceeds 60s, degrade to async.
         // Explicit sync waits indefinitely (caller chose to block).
-        let auto_sync_timeout = if is_auto && !is_short {
-            Some(std::time::Duration::from_secs(60))
-        } else {
-            None
-        };
+        let auto_sync_timeout =
+            if is_auto && !is_short { Some(std::time::Duration::from_secs(60)) } else { None };
 
         // Spawn background execution task
         let store = self.store.clone();
@@ -418,7 +431,10 @@ impl Executor {
                         Err(_) => {
                             // Auto mode timeout — degrade to async: task is still running,
                             // agent can query later or subscribe if needed.
-                            tracing::debug!("auto sync timeout for task {}, degrading to async", task_id);
+                            tracing::debug!(
+                                "auto sync timeout for task {}, degrading to async",
+                                task_id
+                            );
                             return Ok(RunResult {
                                 task_id,
                                 status: TaskStatus::Running,
@@ -453,10 +469,11 @@ impl Executor {
                                 limit: 200,
                                 offset: 0,
                             };
-                            self.store.query_events(&params).ok()
-                                .map(|(evts, _total)| evts.into_iter()
+                            self.store.query_events(&params).ok().map(|(evts, _total)| {
+                                evts.into_iter()
                                     .map(|e| serde_json::to_value(&e).unwrap_or_default())
-                                    .collect())
+                                    .collect()
+                            })
                         };
 
                         Ok(RunResult {
@@ -616,7 +633,9 @@ impl Executor {
 
 /// Compute event statistics from a list of serialized events.
 /// Returns counts by event_type and severity.
-fn compute_summary(events: &Option<Vec<serde_json::Value>>) -> Option<super::ipc_handler::ResultSummary> {
+fn compute_summary(
+    events: &Option<Vec<serde_json::Value>>,
+) -> Option<super::ipc_handler::ResultSummary> {
     let evts = events.as_ref()?;
     if evts.is_empty() {
         return None;
@@ -639,9 +658,7 @@ fn compute_summary(events: &Option<Vec<serde_json::Value>>) -> Option<super::ipc
 /// Extract the first error-level event as the root cause of failure.
 fn extract_root_cause(events: &Option<Vec<serde_json::Value>>) -> Option<serde_json::Value> {
     let evts = events.as_ref()?;
-    evts.iter().find(|e| {
-        e.get("severity").and_then(|v| v.as_str()) == Some("error")
-    }).cloned()
+    evts.iter().find(|e| e.get("severity").and_then(|v| v.as_str()) == Some("error")).cloned()
 }
 
 /// Compute project context for failed commands.
@@ -653,10 +670,8 @@ fn compute_project_context(status: &TaskStatus) -> Option<serde_json::Value> {
     }
 
     // Try to get git diff stat
-    let output = std::process::Command::new("git")
-        .args(["diff", "--stat", "HEAD~1"])
-        .output()
-        .ok()?;
+    let output =
+        std::process::Command::new("git").args(["diff", "--stat", "HEAD~1"]).output().ok()?;
 
     if !output.status.success() {
         return None;
@@ -761,6 +776,7 @@ async fn run_background(mut t: BackgroundTask) -> Result<()> {
             let mut total_bytes: u64 = 0;
             let mut error_count: u64 = 0;
             let mut full_output = String::new();
+            let mut dedup = Deduplicator::new();
             while let Some((source, line)) = handle.output_rx.recv().await {
                 full_output.push_str(&line);
                 full_output.push('\n');
@@ -817,51 +833,78 @@ async fn run_background(mut t: BackgroundTask) -> Result<()> {
                     }
                 };
 
-                for mut event in events {
-                    seq += 1;
-                    event.seq = seq;
+                for event in events {
+                    if let Some(deduped) = dedup.feed(event) {
+                        seq += 1;
+                        let mut event = deduped;
+                        event.seq = seq;
 
-                    if source == "stderr" {
-                        match event.severity.as_deref() {
-                            Some("info") => {
-                                if super::parser::stderr_looks_like_error(&line) {
+                        if source == "stderr" {
+                            match event.severity.as_deref() {
+                                Some("info") => {
+                                    if super::parser::stderr_looks_like_error(&line) {
+                                        event.severity = Some("error".into());
+                                    } else {
+                                        event.severity = Some("warning".into());
+                                    }
+                                }
+                                Some("warning")
+                                    if super::parser::stderr_looks_like_error(&line) =>
+                                {
                                     event.severity = Some("error".into());
-                                } else {
-                                    event.severity = Some("warning".into());
+                                }
+                                _ => {}
+                            }
+                        }
+
+                        if event.severity.as_deref() == Some("error") {
+                            error_count += 1;
+                        }
+
+                        // Extract error context (source file +/- 3 lines) for events with location
+                        if let Some(ref loc) = event.location {
+                            if loc.line > 0 && !loc.file.is_empty() {
+                                if let Some(ctx) =
+                                    context::extract_context_async(&loc.file, loc.line).await
+                                {
+                                    event.context = Some(ctx);
                                 }
                             }
-                            Some("warning") if super::parser::stderr_looks_like_error(&line) => {
-                                event.severity = Some("error".into());
-                            }
-                            _ => {}
                         }
-                    }
 
-                    if event.severity.as_deref() == Some("error") {
-                        error_count += 1;
-                    }
-
-                    // Extract error context (source file ±3 lines) for events with location
-                    if let Some(ref loc) = event.location {
-                        if loc.line > 0 && !loc.file.is_empty() {
-                            if let Some(ctx) = context::extract_context_async(&loc.file, loc.line).await {
-                                event.context = Some(ctx);
-                            }
+                        if let Err(e) = t.store.insert_event(&t.task_id, seq, &event) {
+                            tracing::error!(
+                                "task {} failed to store event: {}",
+                                t.task_id,
+                                e
+                            );
                         }
-                    }
 
-                    if let Err(e) = t.store.insert_event(&t.task_id, seq, &event) {
-                        tracing::error!("task {} failed to store event: {}", t.task_id, e);
+                        t.event_bus.publish(BusEvent {
+                            connection_id: 0,
+                            kind: BusEventKind::Diagnostic {
+                                task_id: t.task_id.clone(),
+                                event,
+                            },
+                        });
                     }
-
-                    t.event_bus.publish(BusEvent {
-                        connection_id: 0,
-                        kind: BusEventKind::Diagnostic {
-                            task_id: t.task_id.clone(),
-                            event,
-                        },
-                    });
                 }
+            }
+            // Flush remaining deduplicated events
+            if let Some(final_event) = dedup.finish() {
+                seq += 1;
+                let mut event = final_event;
+                event.seq = seq;
+                if let Err(e) = t.store.insert_event(&t.task_id, seq, &event) {
+                    tracing::error!("task {} failed to store dedup event: {}", t.task_id, e);
+                }
+                t.event_bus.publish(BusEvent {
+                    connection_id: 0,
+                    kind: BusEventKind::Diagnostic {
+                        task_id: t.task_id.clone(),
+                        event,
+                    },
+                });
             }
             // Try JSON parsing on the full accumulated output
             if let Some(json_events) = super::parser::try_parse_json(&full_output) {
