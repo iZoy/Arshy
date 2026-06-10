@@ -148,12 +148,10 @@ mod tests {
     }
 
     #[test]
-    fn lookup_returns_retry_for_e0308() {
+    fn lookup_no_retry_for_e0308() {
         let db = HintDb::get();
         let hint = db.lookup("rust", "E0308").expect("E0308 should exist");
-        let retry = hint.retry.as_ref().expect("E0308 should have retry");
-        assert!(retry.commands.iter().any(|c| c.contains("cargo clean")));
-        assert!(!retry.reason.is_empty());
+        assert!(hint.retry.is_none(), "E0308 should not have retry suggestion");
     }
 
     #[test]

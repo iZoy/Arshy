@@ -5,8 +5,6 @@ language = "rust"
 code = "E0308"
 cause = "Type mismatch — expected one type but found another"
 fix = "Check expected type, convert with .into(), as, or From trait"
-retry_commands = ["cargo clean && cargo build"]
-retry_reason = "Stale build cache may reference old type definitions"
 
 [[error]]
 code = "E0599"

@@ -35,8 +35,6 @@ fix = "Add undefined check or use optional chaining (?.)"
 code = "TS2307"
 cause = "Cannot find module"
 fix = "Check module name, install with npm/yarn, check tsconfig paths"
-retry_commands = ["rm -rf node_modules && npm install"]
-retry_reason = "Corrupted node_modules may cause module resolution failures"
 
 [[error]]
 code = "TS2554"
