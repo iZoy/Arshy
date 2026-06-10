@@ -38,7 +38,12 @@ pub struct HintDb {
 impl HintDb {
     fn load() -> Self {
         let mut entries = HashMap::new();
-        let files: &[(&str, &str)] = &[("rust", include_str!("../../../parsers/errors/rust.toml"))];
+        let files: &[(&str, &str)] = &[
+            ("rust", include_str!("../../../parsers/errors/rust.toml")),
+            ("typescript", include_str!("../../../parsers/errors/typescript.toml")),
+            ("python", include_str!("../../../parsers/errors/python.toml")),
+            ("go", include_str!("../../../parsers/errors/go.toml")),
+        ];
 
         for &(language, content) in files {
             match toml::from_str::<ErrorFile>(content) {

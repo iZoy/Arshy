@@ -1,0 +1,57 @@
+[meta]
+language = "go"
+
+[[error]]
+code = "undeclared"
+cause = "Undeclared name or variable"
+fix = "Declare the variable or import the package"
+
+[[error]]
+code = "cannot use"
+cause = "Type mismatch in assignment or function call"
+fix = "Convert type with T(x) or check function signature"
+
+[[error]]
+code = "missing return"
+cause = "Function missing return statement at end"
+fix = "Add return statement at the end of the function"
+
+[[error]]
+code = "not enough arguments"
+cause = "Too few arguments in function call"
+fix = "Check function signature and provide all required arguments"
+
+[[error]]
+code = "too many arguments"
+cause = "Too many arguments in function call"
+fix = "Remove extra arguments or check function signature"
+
+[[error]]
+code = "undefined"
+cause = "Type or field not defined"
+fix = "Check spelling, import, or struct field definition"
+
+[[error]]
+code = "imported and not used"
+cause = "Package imported but not referenced"
+fix = "Remove unused import or use the package"
+
+[[error]]
+code = "declared and not used"
+cause = "Variable declared but never read"
+fix = "Use the variable or assign to _ (blank identifier)"
+
+[[error]]
+code = "cannot assign"
+cause = "Cannot assign to value (e.g., map not initialized)"
+fix = "Initialize with make() before assignment"
+
+[[error]]
+code = "nil pointer"
+cause = "Nil pointer dereference"
+fix = "Add nil check before accessing: if p != nil { p.Field }"
+
+[[error]]
+code = "index out of range"
+cause = "Slice or array index out of bounds"
+fix = "Check len(s) before accessing s[i]"

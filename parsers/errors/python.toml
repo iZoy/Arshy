@@ -1,0 +1,72 @@
+[meta]
+language = "python"
+
+[[error]]
+code = "NameError"
+cause = "Variable or function name is not defined"
+fix = "Check spelling, import the name, or define it before use"
+
+[[error]]
+code = "TypeError"
+cause = "Operation on inappropriate type"
+fix = "Check variable types, add type conversion (int(), str(), etc.)"
+
+[[error]]
+code = "AttributeError"
+cause = "Object has no such attribute or method"
+fix = "Check attribute name spelling and object type"
+
+[[error]]
+code = "ImportError"
+cause = "Cannot import name from module"
+fix = "Check module name and exported names, install package if needed"
+
+[[error]]
+code = "ModuleNotFoundError"
+cause = "Module not found"
+fix = "Install with pip install <package>, check sys.path"
+
+[[error]]
+code = "KeyError"
+cause = "Dictionary key not found"
+fix = "Use .get(key, default) or check 'key in dict' first"
+
+[[error]]
+code = "IndexError"
+cause = "List index out of range"
+fix = "Check list length, use len() guard or try/except"
+
+[[error]]
+code = "ValueError"
+cause = "Function received argument of right type but inappropriate value"
+fix = "Validate input before passing to function"
+
+[[error]]
+code = "FileNotFoundError"
+cause = "File or directory does not exist"
+fix = "Check path, use os.path.exists() before opening"
+
+[[error]]
+code = "PermissionError"
+cause = "Insufficient permissions for file operation"
+fix = "Check file permissions, run with appropriate privileges"
+
+[[error]]
+code = "SyntaxError"
+cause = "Invalid Python syntax"
+fix = "Check for missing colons, brackets, quotes, or indentation"
+
+[[error]]
+code = "IndentationError"
+cause = "Incorrect indentation"
+fix = "Use consistent indentation (4 spaces recommended)"
+
+[[error]]
+code = "ZeroDivisionError"
+cause = "Division or modulo by zero"
+fix = "Add guard: if denominator != 0"
+
+[[error]]
+code = "RuntimeError"
+cause = "Generic runtime error"
+fix = "Read the full traceback for context-specific fix"

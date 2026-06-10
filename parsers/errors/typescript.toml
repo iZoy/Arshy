@@ -1,0 +1,77 @@
+[meta]
+language = "typescript"
+
+[[error]]
+code = "TS2345"
+cause = "Argument type not assignable to parameter type"
+fix = "Check parameter type annotation, cast with 'as' or update argument"
+
+[[error]]
+code = "TS2339"
+cause = "Property does not exist on type"
+fix = "Check spelling, add optional chaining (?.), or extend the type"
+
+[[error]]
+code = "TS2322"
+cause = "Type not assignable to target type"
+fix = "Check the assignment target type and adjust the value"
+
+[[error]]
+code = "TS7006"
+cause = "Parameter implicitly has 'any' type"
+fix = "Add explicit type annotation to the parameter"
+
+[[error]]
+code = "TS2531"
+cause = "Object is possibly null"
+fix = "Add null check (if (x !== null)) or use non-null assertion (!)"
+
+[[error]]
+code = "TS2532"
+cause = "Object is possibly undefined"
+fix = "Add undefined check or use optional chaining (?.)"
+
+[[error]]
+code = "TS2307"
+cause = "Cannot find module"
+fix = "Check module name, install with npm/yarn, check tsconfig paths"
+
+[[error]]
+code = "TS2554"
+cause = "Expected N arguments but got M"
+fix = "Check function signature and provide correct number of arguments"
+
+[[error]]
+code = "TS18048"
+cause = "Value is possibly 'undefined'"
+fix = "Add a guard: if (value !== undefined) { ... }"
+
+[[error]]
+code = "TS2769"
+cause = "No overload matches this call"
+fix = "Check function overloads and provide matching argument types"
+
+[[error]]
+code = "TS6133"
+cause = "Declared but never read"
+fix = "Remove unused variable or prefix with underscore (_var)"
+
+[[error]]
+code = "TS2571"
+cause = "Object is of type 'unknown'"
+fix = "Add type assertion (as Type) or type guard"
+
+[[error]]
+code = "TS2304"
+cause = "Cannot find name"
+fix = "Import the name or check spelling"
+
+[[error]]
+code = "TS2459"
+cause = "Type has no property and no index signature"
+fix = "Add the property to the type or use a type assertion"
+
+[[error]]
+code = "TS2352"
+cause = "Conversion of type may be a mistake"
+fix = "Use 'as unknown as Target' for intentional casts, or fix the type"
