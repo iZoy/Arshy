@@ -134,7 +134,7 @@ async fn run_command(
 
 /// Check if stdout is a terminal (for auto-detecting format).
 fn atty_is_available() -> bool {
-    std::io::IsTerminal::is_terminal(&std::io::stderr())
+    std::io::IsTerminal::is_terminal(&std::io::stdout())
 }
 
 async fn list_tasks(
