@@ -75,7 +75,7 @@ static ERROR_PATTERNS: LazyLock<Vec<HeuristicPattern>> = LazyLock::new(|| {
             col_group: None,
         },
         // Standalone error keywords (no file:line)
-        // Uses leading \b only — trailing \b removed so "panicked" matches "panic"
+        // Leading \b only — no trailing \b allows "panic" to match "panicked" and "panic!"
         HeuristicPattern {
             regex: Regex::new(
                 r"(?i)\b(?:fatal\s+error|FAILED|panic|traceback|segmentation fault|bus error|killed)",
@@ -85,9 +85,11 @@ static ERROR_PATTERNS: LazyLock<Vec<HeuristicPattern>> = LazyLock::new(|| {
             line_group: None,
             col_group: None,
         },
-        // Generic "Error:" or "error:" at start or after whitespace
+        // Generic "Error:" at line start — requires colon/bracket after "error"
+        // Matches: "Error: something", "error[E0308]: types", "| error: msg"
+        // Rejects: "error handling", "error messages" (natural language)
         HeuristicPattern {
-            regex: Regex::new(r"(?i)(?:^|\s)error[\s:]+").unwrap(),
+            regex: Regex::new(r"(?i)(?:^|[:\|]\s*)error(?:\[[\w]+\])?\s*:").unwrap(),
             file_group: None,
             line_group: None,
             col_group: None,
@@ -190,5 +192,21 @@ mod tests {
         assert!(try_parse_heuristic("hello world").is_none());
         assert!(try_parse_heuristic("Compiling foo v0.1.0").is_none());
         assert!(try_parse_heuristic("   Finished release [optimized]").is_none());
+    }
+
+    #[test]
+    fn case_insensitive_error() {
+        let evt = try_parse_heuristic("src/main.rs:42:10: Error[E0308]: mismatched types")
+            .expect("should match");
+        assert_eq!(evt.severity.as_deref(), Some("error"));
+        let loc = evt.location.as_ref().expect("should have location");
+        assert_eq!(loc.file, "src/main.rs");
+        assert_eq!(loc.line, 42);
+    }
+
+    #[test]
+    fn no_false_positive_on_error_handling() {
+        assert!(try_parse_heuristic("Implement proper error handling for this module").is_none());
+        assert!(try_parse_heuristic("error handling utilities").is_none());
     }
 }
