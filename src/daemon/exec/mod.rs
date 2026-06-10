@@ -486,6 +486,29 @@ impl Executor {
                             events_json
                         };
 
+                        // Enrich error/warning events with surrounding source context
+                        let events_json = {
+                            let cwd_path = std::path::PathBuf::from(cwd.unwrap_or("."));
+                            let evts = events_json.unwrap_or_default();
+                            let evts_fallback = evts.clone();
+                            tokio::task::spawn_blocking(move || {
+                                let mut enricher = super::context::ContextEnricher::new(3);
+                                let mut task_events: Vec<arshy_lib::ipc::TaskEvent> = evts
+                                    .iter()
+                                    .filter_map(|e| serde_json::from_value(e.clone()).ok())
+                                    .collect();
+                                enricher.enrich(&mut task_events, &cwd_path);
+                                Some(
+                                    task_events
+                                        .into_iter()
+                                        .map(|e| serde_json::to_value(&e).unwrap_or_default())
+                                        .collect::<Vec<_>>(),
+                                )
+                            })
+                            .await
+                            .unwrap_or(Some(evts_fallback))
+                        };
+
                         Ok(RunResult {
                             task_id: task_id.clone(),
                             status: info.status.clone(),
