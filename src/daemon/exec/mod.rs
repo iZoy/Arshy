@@ -418,6 +418,7 @@ impl Executor {
                 summary: None,
                 root_cause: None,
                 project_context: None,
+                raw_output_ref: None,
             });
         }
 
@@ -449,6 +450,7 @@ impl Executor {
                                 summary: None,
                                 root_cause: None,
                                 project_context: None,
+                                raw_output_ref: None,
                             });
                         }
                     }
@@ -477,7 +479,7 @@ impl Executor {
                         };
 
                         Ok(RunResult {
-                            task_id,
+                            task_id: task_id.clone(),
                             status: info.status.clone(),
                             pid: info.pid,
                             exit_code: Some(info.exit_code),
@@ -490,6 +492,7 @@ impl Executor {
                             root_cause: extract_root_cause(&events_json),
                             project_context: compute_project_context(&info.status),
                             events: events_json,
+                            raw_output_ref: Some(task_id),
                         })
                     }
                     Err(_) => Ok(RunResult {
@@ -506,6 +509,7 @@ impl Executor {
                         summary: None,
                         root_cause: None,
                         project_context: None,
+                        raw_output_ref: None,
                     }),
                 }
             }
@@ -593,6 +597,7 @@ impl Executor {
             summary: None,
             root_cause: None,
             project_context: None,
+            raw_output_ref: None,
         })
     }
 
@@ -770,7 +775,7 @@ async fn run_background(mut t: BackgroundTask) -> Result<()> {
 
     // 3-way select: output reading, timeout, or kill signal
     // After this select, handle.wait() is called to get the exit code.
-    let (timed_out, killed, mut seq, error_count) = tokio::select! {
+    let (timed_out, killed, mut seq, error_count, raw_output) = tokio::select! {
         result = async {
             let mut seq: u64 = 0;
             let mut total_bytes: u64 = 0;
@@ -924,15 +929,15 @@ async fn run_background(mut t: BackgroundTask) -> Result<()> {
                 }
             }
             // Output channel closed — process exited, readers finished
-            (seq, error_count)
+            (seq, error_count, full_output)
         } => {
-            (false, false, result.0, result.1)
+            (false, false, result.0, result.1, result.2)
         }
         _ = tokio::time::sleep(timeout_dur) => {
             tracing::warn!("task {} timed out after {}ms", t.task_id, timeout_dur.as_millis());
             let _ = handle.force_kill();
             let _ = t.store.update_task(&t.task_id, &TaskStatus::Timeout, Some(-2), None);
-            (true, false, 0u64, 0u64)
+            (true, false, 0u64, 0u64, String::new())
         }
         _ = t.kill_rx.recv() => {
             tracing::info!("task {} received kill signal, initiating graceful kill", t.task_id);
@@ -944,7 +949,7 @@ async fn run_background(mut t: BackgroundTask) -> Result<()> {
                 Ok(false) => tracing::warn!("task {} was force-killed", t.task_id),
                 Err(e) => tracing::error!("task {} kill error: {}", t.task_id, e),
             }
-            (false, true, 0u64, 0u64)
+            (false, true, 0u64, 0u64, String::new())
         }
     };
 
@@ -971,6 +976,13 @@ async fn run_background(mut t: BackgroundTask) -> Result<()> {
     };
 
     let exit_code_val = exit_code.unwrap_or(if killed { -3 } else { -1 });
+
+    // Store raw output for tee / failure recovery
+    if !raw_output.is_empty() {
+        if let Err(e) = t.store.update_task_raw_output(&t.task_id, &raw_output) {
+            tracing::warn!("failed to store raw output for task {}: {}", t.task_id, e);
+        }
+    }
 
     // Emit completion events from stateful parsers
     let completion_events = session.on_complete(exit_code_val, seq);

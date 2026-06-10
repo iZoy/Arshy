@@ -85,6 +85,14 @@ impl super::Store {
             )?;
         }
 
+        if current < 4 {
+            // v4: add raw_output column for tee / failure recovery
+            conn.execute_batch(
+                "ALTER TABLE tasks ADD COLUMN raw_output TEXT;
+                 INSERT INTO schema_version (version) VALUES (4);",
+            )?;
+        }
+
         Ok(())
     }
 

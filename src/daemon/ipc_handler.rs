@@ -71,6 +71,9 @@ pub struct RunResult {
     /// Helps agent understand what changed before the command ran.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub project_context: Option<serde_json::Value>,
+    /// Task ID for retrieving full raw output via `arshy run --format raw`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub raw_output_ref: Option<String>,
 }
 
 // ── Main handler entry ──────────────────────────────────────────────────────
@@ -375,6 +378,10 @@ async fn dispatch(
             Ok(serde_json::to_value(&stats)?)
         }
         METHOD_STDIN => Err(arshy_lib::ArshyError::Ipc("stdin write not supported yet".into())),
+        ipc::METHOD_PARSER_RELOAD => {
+            let diff = executor.reload_parsers()?;
+            Ok(serde_json::json!({ "diff": diff }))
+        }
         _ => Err(arshy_lib::ArshyError::Ipc(format!("unknown method: {}", request.method))),
     }
 }

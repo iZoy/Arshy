@@ -94,6 +94,32 @@ impl super::Store {
         conn.execute("UPDATE tasks SET pid=?1 WHERE task_id=?2", rusqlite::params![pid, task_id])?;
         Ok(())
     }
+
+    /// Store full raw output for a task.
+    pub fn update_task_raw_output(&self, task_id: &str, raw_output: &str) -> Result<()> {
+        let conn = self.lock();
+        conn.execute(
+            "UPDATE tasks SET raw_output = ?1 WHERE task_id = ?2",
+            rusqlite::params![raw_output, task_id],
+        )?;
+        Ok(())
+    }
+
+    /// Retrieve full raw output for a task.
+    #[allow(dead_code)] // used by future tail --format raw command
+    pub fn get_task_raw_output(&self, task_id: &str) -> Result<Option<String>> {
+        let conn = self.lock();
+        let result = conn.query_row(
+            "SELECT raw_output FROM tasks WHERE task_id = ?1",
+            rusqlite::params![task_id],
+            |row| row.get::<_, Option<String>>(0),
+        );
+        match result {
+            Ok(raw) => Ok(raw),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
 }
 
 fn map_task(row: &rusqlite::Row<'_>) -> std::result::Result<Task, rusqlite::Error> {

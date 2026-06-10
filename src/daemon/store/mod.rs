@@ -541,4 +541,34 @@ mod tests {
         assert_eq!(dt, 0);
         assert_eq!(de, 0);
     }
+
+    // ── Raw output tests ────────────────────────────────────────────────────
+
+    #[test]
+    fn update_and_retrieve_raw_output() {
+        let (store, _tmp) = test_store();
+        let task = make_task("t1", "cargo test", TaskStatus::Completed);
+        store.insert_task(&task).unwrap();
+        store.update_task_raw_output("t1", "line1\nline2\nline3").unwrap();
+        let raw = store.get_task_raw_output("t1").unwrap();
+        assert_eq!(raw.as_deref(), Some("line1\nline2\nline3"));
+    }
+
+    #[test]
+    fn raw_output_none_for_missing() {
+        let (store, _tmp) = test_store();
+        let raw = store.get_task_raw_output("nonexistent").unwrap();
+        assert!(raw.is_none());
+    }
+
+    #[test]
+    fn raw_output_overwrite() {
+        let (store, _tmp) = test_store();
+        let task = make_task("t2", "echo test", TaskStatus::Running);
+        store.insert_task(&task).unwrap();
+        store.update_task_raw_output("t2", "first version").unwrap();
+        store.update_task_raw_output("t2", "second version").unwrap();
+        let raw = store.get_task_raw_output("t2").unwrap();
+        assert_eq!(raw.as_deref(), Some("second version"));
+    }
 }
