@@ -257,18 +257,15 @@ pub struct StatsResponse {
     pub failure_rate: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub db_size_bytes: Option<u64>,
-    /// Estimated total raw output bytes stored.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub total_raw_bytes: Option<u64>,
-    /// Estimated total event payload bytes.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub total_event_bytes: Option<u64>,
-    /// Estimated token savings percentage (raw vs events).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub token_savings_pct: Option<f64>,
     /// Parser coverage: percentage of events that aren't raw log fallback.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parser_coverage_pct: Option<f64>,
+    /// Number of error events that received fix hints from HintDb.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hints_attached: Option<u64>,
+    /// Number of error/warning events enriched with source context.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_enriched: Option<u64>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

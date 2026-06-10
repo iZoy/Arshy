@@ -471,11 +471,10 @@ pub fn render_stats(result: &serde_json::Value) {
     let killed = by_status.and_then(|s| s.get("killed")).and_then(|v| v.as_u64()).unwrap_or(0);
     let timeout = by_status.and_then(|s| s.get("timeout")).and_then(|v| v.as_u64()).unwrap_or(0);
 
-    // New token-savings fields
-    let total_raw_bytes = result.get("total_raw_bytes").and_then(|v| v.as_u64());
-    let total_event_bytes = result.get("total_event_bytes").and_then(|v| v.as_u64());
-    let token_savings_pct = result.get("token_savings_pct").and_then(|v| v.as_f64());
+    // Intelligence metrics
     let parser_coverage_pct = result.get("parser_coverage_pct").and_then(|v| v.as_f64());
+    let hints_attached = result.get("hints_attached").and_then(|v| v.as_u64());
+    let context_enriched = result.get("context_enriched").and_then(|v| v.as_u64());
 
     eprintln!();
     box_top();
@@ -489,7 +488,7 @@ pub fn render_stats(result: &serde_json::Value) {
     box_line(&format!("Events:  {} total ({} errors)", total_events, total_errors));
 
     if let Some(rate) = failure_rate {
-        box_line(&format!("Failure rate:  {:.0}%", rate));
+        box_line(&format!("Failure rate:  {:.0}%", rate * 100.0));
     }
     if let Some(ms) = avg_duration {
         box_line(&format!("Avg duration:  {:.0}ms", ms));
@@ -498,25 +497,20 @@ pub fn render_stats(result: &serde_json::Value) {
         box_line(&format!("DB size:       {} bytes", bytes));
     }
 
-    // Token savings section
-    let has_token_info =
-        token_savings_pct.is_some() || parser_coverage_pct.is_some() || total_raw_bytes.is_some();
-    if has_token_info {
+    // Intelligence section
+    let has_intelligence =
+        parser_coverage_pct.is_some() || hints_attached.is_some() || context_enriched.is_some();
+    if has_intelligence {
         box_divider();
-        box_line(&format!("{}Token Savings{}", BOLD, RESET));
-        if let Some(raw) = total_raw_bytes {
-            let raw_tokens = raw / 4;
-            box_line(&format!("  Raw output:    {} bytes (~{} tokens)", raw, raw_tokens));
-        }
-        if let Some(evt) = total_event_bytes {
-            let evt_tokens = evt / 4;
-            box_line(&format!("  Event payload: {} bytes (~{} tokens)", evt, evt_tokens));
-        }
-        if let Some(pct) = token_savings_pct {
-            box_line(&format!("  Savings:       {}~{:.0}% reduction{}", GREEN, pct, RESET));
-        }
+        box_line(&format!("{}Intelligence{}", BOLD, RESET));
         if let Some(cov) = parser_coverage_pct {
-            box_line(&format!("  Coverage:      {:.0}% events parsed (not raw log)", cov));
+            box_line(&format!("  Parser coverage: {:.0}% events structured (not raw log)", cov));
+        }
+        if let Some(hints) = hints_attached {
+            box_line(&format!("  Hints attached:  {} error events with fix suggestions", hints));
+        }
+        if let Some(ctx) = context_enriched {
+            box_line(&format!("  Context enriched: {} events with source code", ctx));
         }
     }
 
