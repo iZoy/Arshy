@@ -1,0 +1,42 @@
+[
+  {
+    "message": "deployment.apps/nginx created",
+    "severity": "info",
+    "type": "action"
+  },
+  {
+    "message": "service/nginx configured",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": "the server doesn't have a resource type \"podss\"",
+    "severity": "error",
+    "type": "error"
+  },
+  {
+    "message": "autopilot-default-resource-limits is not set",
+    "severity": "warning",
+    "type": "warning"
+  },
+  {
+    "message": "nginx-7d8b49557c-abc12   1/1     Running",
+    "severity": "info",
+    "type": "pod_status"
+  },
+  {
+    "message": "nginx-7d8b49557c-def34   0/1     CrashLoopBackOff",
+    "severity": "error",
+    "type": "pod_status"
+  },
+  {
+    "message": "deployments.apps \"missing\" not found",
+    "severity": "error",
+    "type": "error"
+  },
+  {
+    "message": "pod/web-5f9b7c8d6-x7z9k deleted",
+    "severity": "info",
+    "type": "log"
+  }
+]

@@ -1,0 +1,8 @@
+deployment.apps/nginx created
+service/nginx configured
+error: the server doesn't have a resource type "podss"
+Warning: autopilot-default-resource-limits is not set
+nginx-7d8b49557c-abc12   1/1     Running   0          5m
+nginx-7d8b49557c-def34   0/1     CrashLoopBackOff   3          2m
+Error from server (NotFound): deployments.apps "missing" not found
+pod/web-5f9b7c8d6-x7z9k deleted
