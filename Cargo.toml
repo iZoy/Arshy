@@ -2,12 +2,12 @@
 name = "arshy"
 version = "0.1.0"
 edition = "2021"
-description = "AI Agent's native shell — structured output, auto-mode intelligence, security sandbox"
+description = "AI Agent's native shell — structured output, security sandbox, MCP server"
 license = "MIT"
 repository = "https://github.com/iZoy/Arshy"
 homepage = "https://github.com/iZoy/Arshy"
-keywords = ["ai-agent", "mcp", "shell", "structured-output", "cli"]
-categories = ["command-line-utilities", "parser-implementations"]
+keywords = ["mcp", "ai-agent", "shell", "cli", "structured-output"]
+categories = ["command-line-utilities", "development-tools"]
 
 [[bin]]
 name = "arshy"
