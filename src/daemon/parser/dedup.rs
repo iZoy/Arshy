@@ -11,6 +11,7 @@ pub struct Deduplicator {
     last_message: Option<String>,
     last_severity: Option<String>,
     last_location: Option<arshy_lib::ipc::EventLocation>,
+    last_code: Option<String>,
     repeat_count: u64,
     first_seq: u64,
 }
@@ -22,6 +23,7 @@ impl Deduplicator {
             last_message: None,
             last_severity: None,
             last_location: None,
+            last_code: None,
             repeat_count: 0,
             first_seq: 0,
         }
@@ -45,6 +47,7 @@ impl Deduplicator {
         self.last_message = Some(event.message.clone());
         self.last_severity = event.severity.clone();
         self.last_location = event.location.clone();
+        self.last_code = event.code.clone();
         self.repeat_count = 1;
 
         flushed.or(Some(event))
@@ -68,7 +71,7 @@ impl Deduplicator {
             seq: self.first_seq,
             event_type: self.last_event_type.clone().unwrap_or_default(),
             severity: self.last_severity.clone(),
-            code: None,
+            code: self.last_code.clone(),
             message,
             location: self.last_location.clone(),
             context: None,
@@ -77,6 +80,7 @@ impl Deduplicator {
         self.last_message = None;
         self.last_severity = None;
         self.last_location = None;
+        self.last_code = None;
         self.repeat_count = 0;
         Some(event)
     }
