@@ -163,12 +163,23 @@ pub struct EventContext {
     pub after: Vec<String>,
 }
 
+/// Suggested retry commands for when an error occurs.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RetryHint {
+    /// Suggested commands to retry (in order)
+    pub commands: Vec<String>,
+    /// Why this retry might help
+    pub reason: String,
+}
+
 /// Fix suggestion attached to an error event via error code lookup.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EventHint {
     pub cause: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fix: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retry: Option<RetryHint>,
 }
 
 // ── Specific param / response types ──────────────────────────────────────────

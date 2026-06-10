@@ -10,6 +10,8 @@ fix = "Declare the variable or import the package"
 code = "cannot use"
 cause = "Type mismatch in assignment or function call"
 fix = "Convert type with T(x) or check function signature"
+retry_commands = ["go clean -cache && go build"]
+retry_reason = "Stale Go build cache may reference old type definitions"
 
 [[error]]
 code = "missing return"

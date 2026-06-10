@@ -1,6 +1,6 @@
 //! Error code -> fix suggestion lookup database.
 
-use arshy_lib::ipc::EventHint;
+use arshy_lib::ipc::{EventHint, RetryHint};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::LazyLock;
@@ -24,6 +24,8 @@ struct ErrorEntry {
     code: String,
     cause: String,
     fix: Option<String>,
+    retry_commands: Option<Vec<String>>,
+    retry_reason: Option<String>,
 }
 
 #[allow(dead_code)]
@@ -49,9 +51,13 @@ impl HintDb {
             match toml::from_str::<ErrorFile>(content) {
                 Ok(file) => {
                     for entry in file.error {
+                        let retry = match (entry.retry_commands, entry.retry_reason) {
+                            (Some(commands), Some(reason)) => Some(RetryHint { commands, reason }),
+                            _ => None,
+                        };
                         entries.insert(
                             (language.to_string(), entry.code),
-                            EventHint { cause: entry.cause, fix: entry.fix },
+                            EventHint { cause: entry.cause, fix: entry.fix, retry },
                         );
                     }
                 }
@@ -128,9 +134,32 @@ mod tests {
 
     #[test]
     fn hint_serialization_round_trip() {
-        let hint = EventHint { cause: "Type mismatch".into(), fix: Some("Use .into()".into()) };
+        let hint = EventHint {
+            cause: "Type mismatch".into(),
+            fix: Some("Use .into()".into()),
+            retry: Some(RetryHint {
+                commands: vec!["cargo clean && cargo build".into()],
+                reason: "Stale cache".into(),
+            }),
+        };
         let json = serde_json::to_string(&hint).unwrap();
         let back: EventHint = serde_json::from_str(&json).unwrap();
         assert_eq!(hint, back);
+    }
+
+    #[test]
+    fn lookup_returns_retry_for_e0308() {
+        let db = HintDb::get();
+        let hint = db.lookup("rust", "E0308").expect("E0308 should exist");
+        let retry = hint.retry.as_ref().expect("E0308 should have retry");
+        assert!(retry.commands.iter().any(|c| c.contains("cargo clean")));
+        assert!(!retry.reason.is_empty());
+    }
+
+    #[test]
+    fn lookup_no_retry_for_e0425() {
+        let db = HintDb::get();
+        let hint = db.lookup("rust", "E0425").expect("E0425 should exist");
+        assert!(hint.retry.is_none(), "E0425 should not have retry suggestion");
     }
 }
