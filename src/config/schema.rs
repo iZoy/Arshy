@@ -64,13 +64,32 @@ fn default_clients() -> Vec<String> {
 }
 fn default_blocked_patterns() -> Vec<String> {
     vec![
-        r"rm\s+-rf\s+/".into(),           // root deletion
-        r"rm\s+-rf\s+~/".into(),          // home deletion
-        r"curl.*\|\s*sh".into(),          // remote code execution via curl
-        r"wget.*\|\s*sh".into(),          // remote code execution via wget
-        r"dd\s+if=".into(),               // disk overwrite
-        r"mkfs".into(),                   // filesystem format
-        r":\(\)\{\s*:\|:&\s*\};:".into(), // fork bomb
+        // ── Filesystem destruction ─────────────────────────────
+        r"rm\s+-rf\s+[/~]".into(),
+        r"dd\s+if=".into(),
+        r"mkfs\.".into(),
+        r"mkfs\s".into(),
+        // ── Shell injection ───────────────────────────────────
+        r"curl.*\|\s*(ba)?sh".into(),
+        r"wget.*\|\s*(ba)?sh".into(),
+        r"\|\s*(ba)?sh".into(),
+        r"\|\s*base64\s+-d\s*\|\s*(ba)?sh".into(),
+        r"base64\s+-d.*\|\s*(ba)?sh".into(),
+        r"eval\s+\$\(|eval\s+`".into(),
+        // ── Privilege escalation ──────────────────────────────
+        r"sudo\s+".into(),
+        r"su\s+-".into(),
+        // ── Credential exfiltration ──────────────────────────
+        r"cat\s+.*\.ssh/(id_rsa|id_ed25519|id_dsa|id_ecdsa|authorized_keys)".into(),
+        r"/proc/self/environ".into(),
+        r"/proc/\d+/environ".into(),
+        // ── Network abuse ────────────────────────────────────
+        r"nc\s+-l".into(),
+        r"ncat\s+-l".into(),
+        // ── Dangerous permissions ────────────────────────────
+        r"chmod\s+(-R\s+)?777".into(),
+        // ── Fork bombs ───────────────────────────────────────
+        r":\(\)\{\s*:\|:&\s*\};:".into(),
     ]
 }
 fn default_access_level() -> String {
