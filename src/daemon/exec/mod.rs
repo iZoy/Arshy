@@ -397,6 +397,7 @@ impl Executor {
         let cmd = command.to_string();
         let task_id_bg = task_id.clone();
         let detected_tool = tool;
+        let detected_tool_clone = detected_tool.clone();
 
         super::telemetry::record_task_created();
 
@@ -517,7 +518,7 @@ impl Executor {
                         };
 
                         // Enrich error/warning events with surrounding source context
-                        let events_json = {
+                        let mut events_json = {
                             let cwd_path = std::path::PathBuf::from(cwd.unwrap_or("."));
                             let evts = events_json.unwrap_or_default();
                             let evts_fallback = evts.clone();
@@ -553,6 +554,27 @@ impl Executor {
                             .await
                             .unwrap_or(None)
                         };
+
+                        // Enrich error events with fix hints from HintDb
+                        if let Some(ref mut evts) = events_json {
+                            let hint_db = super::parser::hint::HintDb::get();
+                            let language = detected_tool_clone.as_ref().and_then(|tool| {
+                                super::parser::hint::tool_to_language(&tool.tool_name)
+                            });
+                            if let Some(lang) = language {
+                                for evt in evts.iter_mut() {
+                                    if evt.get("hint").is_some() {
+                                        continue;
+                                    }
+                                    if let Some(code) = evt.get("code").and_then(|v| v.as_str()) {
+                                        if let Some(hint) = hint_db.lookup(lang, code) {
+                                            evt["hint"] =
+                                                serde_json::to_value(hint).unwrap_or_default();
+                                        }
+                                    }
+                                }
+                            }
+                        }
 
                         Ok(RunResult {
                             task_id: task_id.clone(),
