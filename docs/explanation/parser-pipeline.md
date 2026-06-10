@@ -4,12 +4,12 @@
 
 Parser 管道是 Arshy 的核心：将命令的原始文本输出转化为结构化事件。
 
-## 五级匹配
+## 六级匹配
 
 每行输出按优先级依次尝试，命中即停止：
 
 ```
-行 → 格式检测(JSON/NDJSON/YAML/CSV) → Stateful(Rhai) → TOML(regex) → Crash(通用) → Raw
+行 → 格式检测(JSON/NDJSON/YAML/CSV) → Stateful(Rhai) → TOML(regex) → Crash(通用) → Heuristic(启发式) → Raw
 ```
 
 ### 1. 格式检测（新增）
@@ -36,7 +36,7 @@ Parser 管道是 Arshy 的核心：将命令的原始文本输出转化为结构
 
 ### 3. Line Patterns（TOML 无状态）
 
-逐行正则匹配。覆盖 80% 场景。31 个 builtin parser。
+逐行正则匹配。覆盖 80% 场景。37 个 builtin parser。
 
 实现：`TomlParser::parse_line()` 按顺序尝试 pattern，第一个匹配的捕获组提取 file/line/column/code/message/severity。所有正则经过 ReDoS 静态校验。
 
@@ -52,7 +52,24 @@ Parser 管道是 Arshy 的核心：将命令的原始文本输出转化为结构
 | Node.js | `Error: ...` + `at func (file.js:42:10)` |
 | Shell | `Segmentation fault` / `Bus error` / `Killed` |
 
-### 5. Raw Fallback
+### 5. Heuristic Error Filter（启发式错误过滤）
+
+在所有工具特定 parser 均未命中时，捕获行中的 error/warning 关键词：
+
+| 关键词 | 说明 |
+|--------|------|
+| error, fatal error, FAILED, panic | 高严重度 |
+| traceback, segmentation fault | 运行时崩溃 |
+| warning, deprecated | 低严重度 |
+
+行为：
+- 从编译器风格输出中提取 `file:line:col`（如 `src/main.rs:42:10: error`）
+- 设置 `type=diagnostic`（区别于 raw fallback 的 `type=log`）
+- 不设置 `code` 字段（无工具特定错误码）
+
+实现：`heuristic.rs` 中的 `try_parse_heuristic()`。
+
+### 6. Raw Fallback
 
 所有未匹配行归类为 `log` 事件。`classify_severity()` 通过关键词（error/fatal/failed/panic/warning/deprecated）自动判断严重度。stderr 行额外经过 `stderr_looks_like_error()` 修正。
 
@@ -64,7 +81,41 @@ Parser 管道是 Arshy 的核心：将命令的原始文本输出转化为结构
 |------|------|------|
 | **summary** | 按 type/severity 分组统计 | Agent 直接读 `summary.by_severity.error == 0` |
 | **root_cause** | 第一个 error 级别事件 | Agent 直接读 `root_cause.message` |
-| **project_context** | 失败时附加 git diff | Agent 直接看 `project_context.git_diff_stat` |
+| **project_context** | 失败时自动附加 git diff + 错误-变更关联 | Agent 看 `project_context.correlated_errors` 判断哪些错误由最近改动引起 |
+
+## 事件去重
+
+连续相同事件（相同 event_type + message）自动折叠为单条事件，后缀 "(repeated N times)"。
+典型场景：cargo build 产生的 50 条相同 warning → 折叠为 1 条 "unused variable (repeated 50 times)"。
+
+实现：`Deduplicator` 在 parser 输出和 store 插入之间运行。
+
+## 上下文丰富
+
+错误/警告事件自动附带源码上下文（前后 3 行代码）：
+
+```json
+{
+  "type": "diagnostic", "severity": "error",
+  "location": {"file": "src/main.rs", "line": 42},
+  "context": {
+    "before": ["fn main() {", "    let x = 1;", "    let y = 2;"],
+    "line": "    let z = x + y + \"hello\";",
+    "after": ["    println!(\"{}\", z);", "}", ""]
+  }
+}
+```
+
+Git 关联：失败命令自动标记哪些错误文件在最近提交中被修改。
+```json
+"project_context": {
+  "git_diff_stat": " src/main.rs | 3 ++-",
+  "changed_files": ["src/main.rs"],
+  "correlated_errors": [{"file": "src/main.rs", "recently_changed": true}]
+}
+```
+
+实现：`ContextEnricher`（文件缓存）+ `GitCorrelation`（git diff --name-only）
 
 ## 工具检测
 
@@ -89,13 +140,16 @@ Parser 管道是 Arshy 的核心：将命令的原始文本输出转化为结构
        │         ├─ StatefulParser::feed_line()
        │         ├─ TomlParser::parse_line()
        │         ├─ crash::try_parse_crash()
+       │         ├─ heuristic::try_parse_heuristic()  ← 新增
        │         └─ raw_event()
        │
-完成 ──→ on_complete(exit_code, seq)
+       ├─ Deduplicator::feed()  ← 新增
+       │
+完成 ──→ ContextEnricher::enrich()  ← 新增
             ├─ StatefulParser::on_complete()
+            ├─ compute_enhanced_project_context()  ← 更新
             ├─ compute_summary()
-            ├─ extract_root_cause()
-            └─ compute_project_context()
+            └─ extract_root_cause()
 ```
 
 ## 测试体系

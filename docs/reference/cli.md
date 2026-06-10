@@ -22,11 +22,14 @@ arshy run <COMMAND>
   --cwd <PATH>          工作目录（绝对路径）
   --timeout-ms <MS>     超时时间（ms）
   --mode <MODE>         auto（默认）| sync | async
+  --format <FMT>        输出格式：pretty（终端 UI）| json（原始 JSON）| auto（默认，TTY 检测）
+  --errors-only         只返回 error 级别事件（过滤 warning/info）
 ```
 
-- `auto`：80+ 条规则智能判断短/长命令。短命令同步返回原文，长命令异步执行
+- `auto` 模式：80+ 条规则智能判断短/长命令。短命令同步返回原文，长命令异步执行
 - `sync`：阻塞等待完成，返回完整结构化结果
 - `async`：立即返回 task_id，后台执行
+- `pretty` 格式：box drawing + ANSI color 可视化输出
 
 ### arshy list
 
@@ -66,7 +69,7 @@ arshy kill <TASK_ID>
 ```
 arshy tail <TASK_ID>
   --lines <N>           行数（默认 50）
-  --format <FMT>        event（默认，结构化）| raw（原始文本）
+  --format <FMT>        event（默认，结构化）| raw（完整原始文本，来自 raw_output 列）
 ```
 
 ### arshy status
@@ -75,7 +78,20 @@ arshy tail <TASK_ID>
 
 ### arshy stats
 
-聚合统计：总任务数、状态分布、数据库大小、遥测快照。
+聚合统计：总任务数、状态分布、数据库大小、Token 节省量。
+
+输出示例：
+```
+┌─ arshy stats ─────────────────────────────────────┐
+│ Tasks:     1,247 total (1,180 ok / 67 failed)     │
+│ Events:    18,432 (892 errors)                     │
+│ Duration:  p50=1.2s  p99=45.3s                     │
+│                                                    │
+│ Token savings:  ~73% (est. 890K → 240K tokens)     │
+│ Parser coverage: 82% lines matched parsers         │
+│ DB size:        12.4 MB                            │
+└────────────────────────────────────────────────────┘
+```
 
 ### arshy prune
 
@@ -123,3 +139,31 @@ arshy daemon restart    重启 daemon
 ### arshy doctor
 
 诊断 Claude Code 集成状态，显示修复建议。
+
+### arshy benchmark
+
+跨所有 37 个内置 parser 运行性能测试，输出：
+- 信息密度（结构化字段/event）
+- Token 效率（raw vs structured 压缩比）
+- 错误定位速度
+- 解析准确率
+
+```
+arshy benchmark
+```
+
+### arshy parser reload
+
+热重载 parser 定义并显示变更 diff。用于编辑自定义 parser 后验证。
+
+```
+arshy parser reload
+```
+
+### arshy parser list
+
+列出已加载的 parser。
+
+```
+arshy parser list
+```

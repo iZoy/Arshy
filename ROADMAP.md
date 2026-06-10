@@ -66,12 +66,12 @@ Agent 加载 Skill → 知道用哪个 CLI → 执行命令 → arshy (shell) �
 
 | Step | 内容 | 状态 |
 |------|------|------|
-| D1 | **Tier 1 TOML** — 行正则匹配、31 内置 parser (tsc/cargo/jest/vite/eslint/go/python/cc/npm/webpack/prettier/swc/esbuild/clippy/make/gradle/cargo-test/mocha/pip/pnpm/kubectl/docker/terraform/helm/aws/uv/ruff/turbo/nx/deno/bun) | ✅ 26 tests |
+| D1 | **Tier 1 TOML** — 行正则匹配、37 内置 parser (tsc/cargo/jest/vite/eslint/go/python/cc/npm/webpack/prettier/swc/esbuild/clippy/make/gradle/cargo-test/mocha/pip/pnpm/kubectl/docker/terraform/helm/aws/uv/ruff/turbo/nx/deno/bun/biome/oxlint/vitest/curl/git/ssh) | ✅ 26 tests |
 | D2 | **Parser 加载** — `include_str!` 编译入二进制 + 文件系统加载 | ✅ |
 | D3 | **版本探测** — tool_versions SQLite 缓存、15 工具支持、24h TTL | ✅ |
 | D4 | **Crash Parser** — 通用崩溃/traceback 检测 (Go/Python/Rust/Node/Shell) | ✅ 8 tests |
 | D5 | **状态解析器** — regex+state-machine 回退实现 (npm/webpack 等多行输出) | ✅ |
-| D6 | **Test Harness** — fixture 格式 (.txt/.json)、匹配率 ≥95% 阈值、31 parser 全覆盖 | ✅ |
+| D6 | **Test Harness** — fixture 格式 (.txt/.json)、匹配率 ≥95% 阈值、37 parser 全覆盖 | ✅ |
 
 ---
 
@@ -233,7 +233,7 @@ Agent 加载 Skill → 知道用哪个 CLI → 执行命令 → arshy (shell) �
 | O1 | **解锁 `rhai`** — Tier 2 stateful parser 完整实现，替代 regex+state-machine 回退 | ✅ |
 | O2 | **解锁 `notify` v7** — Parser 文件热重载，修改无需重启 daemon | ✅ |
 | O3 | **自定义 parser 文档** — guides/custom-parser-toml.md + custom-parser-rhai.md | ✅ |
-| O4 | **Parser 测试扩展** — 31/31 parser 有 fixture 覆盖 (匹配率 ≥95%) | ✅ |
+| O4 | **Parser 测试扩展** — 37/37 parser 有 fixture 覆盖 (匹配率 ≥95%) | ✅ |
 
 ---
 
@@ -252,13 +252,41 @@ Agent 加载 Skill → 知道用哪个 CLI → 执行命令 → arshy (shell) �
 
 ---
 
+## Stage T: 竞品功能对标 ✅
+
+> P0 — 借鉴 headroom/RTK 的优秀实践，强化 arshy 的解析深度和可靠性。
+
+| Step | 内容 | 状态 |
+|------|------|------|
+| T1 | **启发式错误过滤器** — tier 4.5，关键词检测 (error/fatal/FAILED/panic/traceback) + file:line:col 提取，未匹配工具也能识别错误 | ✅ 10 tests |
+| T2 | **事件去重** — 连续相同事件折叠为 "(repeated N times)"，减少 token 浪费 | ✅ 6 tests |
+| T3 | **Tee 失败恢复** — 全量原始输出存入 SQLite (raw_output 列)，任务失败时可通过 `tail --format raw` 取回 | ✅ 3 tests |
+| T4 | **Errors-only 模式** — `--errors-only` CLI 参数 + MCP 参数，只返回 error 级别事件 | ✅ 3 tests |
+| T5 | **Docker/kubectl/AWS 解析器** — 3 个新 TOML parser，覆盖容器和云 CLI | ✅ 100% 准确率 |
+| T6 | **Token 节省统计** — `arshy stats` 显示 token 节省百分比和 parser 覆盖率 | ✅ 1 test |
+| T7 | **多 AI 工具集成文档** — Cursor/Codex/Copilot/Gemini 集成指南 | ✅ |
+
+---
+
+## Stage U: 上下文丰富 ✅
+
+> P0 — 让 Agent 从"读日志"变成"懂问题"。
+
+| Step | 内容 | 状态 |
+|------|------|------|
+| U1 | **源码上下文丰富** — 错误事件自动附带 ±3 行源码，文件缓存避免重复读取 | ✅ 6 tests |
+| U2 | **Git 变更关联** — 错误文件与 `git diff --name-only HEAD~1` 交叉比对，标记 `recently_changed` | ✅ 4 tests |
+| U3 | **Executor 集成** — `spawn_blocking` 包装避免阻塞异步运行时，enrichment 在 store 查询后、summary 计算前执行 | ✅ |
+
+---
+
 ## 下一阶段: 补全 & 产品化
 
 > 所有 ROADMAP Stage 代码已完成。以下为剩余缺口和产品化方向。
 
 ### 缺口: Parser Fixture 覆盖
 
-**已补全。** 31/31 builtin parser 均有 fixture 测试覆盖。
+**已补全。** 37/37 builtin parser 均有 fixture 测试覆盖。
 
 ### 缺口: 3 个被忽略的集成测试
 
@@ -297,8 +325,8 @@ Agent 加载 Skill → 知道用哪个 CLI → 执行命令 → arshy (shell) �
 | 被忽略测试 | 3 (integration, 需无运行 daemon 环境) |
 | Clippy warnings | **0** |
 | Compiler warnings | **0** |
-| Builtin parsers | **31** |
-| Parser fixtures | **31/31** (匹配率 ≥95%) |
+| Builtin parsers | **37** |
+| Parser fixtures | **37/37** (匹配率 ≥95%) |
 
 ---
 
@@ -317,7 +345,7 @@ Agent 加载 Skill → 知道用哪个 CLI → 执行命令 → arshy (shell) �
 
 | 优先级 | Stage | 说明 |
 |--------|-------|------|
-| **P0** | I (安全), J (通知实时性), P (Agent 无缝接入), S (CLI+Skill 适承) | ✅ 全部完成 |
+| **P0** | I (安全), J (通知实时性), P (Agent 无缝接入), S (CLI+Skill 适承), T (竞品功能对标), U (上下文丰富) | ✅ 全部完成 |
 | **P1** | K (生命周期), L (错误处理) | ✅ 全部完成 |
 | **P2** | M (数据完整性/可观测) | ✅ 全部完成 |
 | **P3** | N (MCP 完善), O (Parser 解锁) | ✅ 全部完成 |
@@ -344,6 +372,8 @@ Stage N  (MCP 完善)          ✅
 Stage O  (Parser 解锁)       ✅
 Stage P  (Agent 无缝接入)    ✅
 Stage S  (CLI+Skill 适承)    ✅
+Stage T  (竞品功能对标)       ✅
+Stage U  (上下文丰富)         ✅
 ```
 
 **所有 ROADMAP Stage 已完成。** 剩余工作见"下一阶段: 补全 & 产品化"。

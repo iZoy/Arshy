@@ -29,6 +29,10 @@ AI Agent 的原生 Shell。安装即接管 — 无需修改 CLAUDE.md，无需�
 - [Parser Rhai API](reference/parser-rhai-api.md) — 脚本引擎 API 参考
 - [错误码](reference/error-codes.md) — JSON-RPC 错误码及重试语义
 
+## 规范
+
+- [Parser Specification v1.0](spec/parser-spec.md) — 开放规范：parser 定义格式、事件 schema、fixture 测试格式、贡献指南
+
 ## 深度理解
 
 - [架构](explanation/architecture.md) — 组件、数据流、进程树关闭、并发模型
@@ -45,17 +49,19 @@ Agent: arshy_exec(command: "cargo test")
       ← {status:"completed", exit_code:0, summary:{...}, root_cause:null, events:[...]}
 ```
 
-### 5 级 Parser 管道
+### 6 级 Parser 管道
 ```
-行 → 格式检测(JSON/NDJSON/YAML/CSV) → Stateful(Rhai) → TOML(regex) → Crash(通用) → Raw
+行 → 格式检测(JSON/NDJSON/YAML/CSV) → Stateful(Rhai) → TOML(regex) → Crash(通用) → Heuristic(启发式) → Raw
 ```
 
 ### 智能输出
 - **summary**: 按 type/severity 分组统计
 - **root_cause**: 第一个 error 级别事件
-- **project_context**: 失败时自动附加 git diff
+- **project_context**: 失败时自动附加 git diff + 错误-变更关联
+- **context**: 错误事件自动附带 ±3 行源码上下文
+- **dedup**: 相同行自动折叠，减少 token 浪费
 
-## 内置 Parser（31 个）
+## 内置 Parser（37 个）
 
 | 工具 | Pattern | 工具 | Pattern | 工具 | Pattern |
 |------|:------:|------|:------:|------|:------:|
@@ -69,6 +75,29 @@ Agent: arshy_exec(command: "cargo test")
 | cc (gcc/clang) | 5 | pnpm | 4 | turbo | 4 |
 | npm | 5 | vite | 4 | nx | 4 |
 | webpack | 5 | jest | 3 | deno | 5 |
-| | | | | bun | 5 |
+| biome | 4 | oxlint | 3 | bun | 5 |
+| vitest | 4 | curl | 4 | git | 5 |
+| ssh | 4 | | | | |
 
 [↗ 查看全部 parser 规则](../../parsers/builtin/)
+
+## 开发者工具
+
+### 终端 UI
+```bash
+arshy run "cargo build" --format pretty    # 可视化输出（box drawing + color）
+arshy run "cargo build" --format json      # 原始 JSON
+arshy run "cargo build" --format auto      # 自动检测（TTY=pretty，管道=json）
+```
+
+### Benchmark
+```bash
+arshy benchmark                            # 跨 37 个 parser 的性能测试
+scripts/benchmark.sh                       # 格式化输出脚本
+```
+
+### Parser 管理
+```bash
+arshy parser reload                        # 热重载 + 显示变更 diff
+arshy parser list                          # 列出已加载的 parser
+```
