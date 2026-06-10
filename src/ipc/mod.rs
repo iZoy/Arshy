@@ -144,7 +144,7 @@ pub struct TaskEvent {
     pub context: Option<EventContext>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EventLocation {
     pub file: String,
     pub line: u64,
@@ -152,7 +152,7 @@ pub struct EventLocation {
     pub column: Option<u64>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EventContext {
     #[serde(default)]
     pub before: Vec<String>,

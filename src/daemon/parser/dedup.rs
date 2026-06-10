@@ -12,6 +12,7 @@ pub struct Deduplicator {
     last_severity: Option<String>,
     last_location: Option<arshy_lib::ipc::EventLocation>,
     last_code: Option<String>,
+    last_context: Option<arshy_lib::ipc::EventContext>,
     repeat_count: u64,
     first_seq: u64,
 }
@@ -24,6 +25,7 @@ impl Deduplicator {
             last_severity: None,
             last_location: None,
             last_code: None,
+            last_context: None,
             repeat_count: 0,
             first_seq: 0,
         }
@@ -34,7 +36,8 @@ impl Deduplicator {
     /// Returns None if the event is a duplicate (accumulated internally).
     pub fn feed(&mut self, event: TaskEvent) -> Option<TaskEvent> {
         let is_dup = self.last_event_type.as_deref() == Some(&event.event_type)
-            && self.last_message.as_deref() == Some(&event.message);
+            && self.last_message.as_deref() == Some(&event.message)
+            && self.last_location == event.location;
 
         if is_dup {
             self.repeat_count += 1;
@@ -48,6 +51,7 @@ impl Deduplicator {
         self.last_severity = event.severity.clone();
         self.last_location = event.location.clone();
         self.last_code = event.code.clone();
+        self.last_context = event.context.clone();
         self.repeat_count = 1;
 
         flushed.or(Some(event))
@@ -74,13 +78,14 @@ impl Deduplicator {
             code: self.last_code.clone(),
             message,
             location: self.last_location.clone(),
-            context: None,
+            context: self.last_context.clone(),
         };
         self.last_event_type = None;
         self.last_message = None;
         self.last_severity = None;
         self.last_location = None;
         self.last_code = None;
+        self.last_context = None;
         self.repeat_count = 0;
         Some(event)
     }
@@ -163,5 +168,67 @@ mod tests {
         d.feed(make_event("log", "info", "msg", 0));
         let r = d.feed(make_event("diagnostic", "error", "msg", 1));
         assert!(r.is_some());
+    }
+
+    #[test]
+    fn same_type_message_different_location_not_collapsed() {
+        use arshy_lib::ipc::EventLocation;
+
+        let mut d = Deduplicator::new();
+        let e1 = TaskEvent {
+            seq: 0,
+            event_type: "diagnostic".into(),
+            severity: Some("error".into()),
+            code: None,
+            message: "unused variable".into(),
+            location: Some(EventLocation { file: "src/main.rs".into(), line: 10, column: None }),
+            context: None,
+        };
+        let e2 = TaskEvent {
+            seq: 1,
+            event_type: "diagnostic".into(),
+            severity: Some("error".into()),
+            code: None,
+            message: "unused variable".into(),
+            location: Some(EventLocation { file: "src/lib.rs".into(), line: 42, column: Some(5) }),
+            context: None,
+        };
+        assert!(d.feed(e1).is_some());
+        assert!(d.feed(e2).is_some());
+        assert!(d.finish().is_none());
+    }
+
+    #[test]
+    fn flush_preserves_context() {
+        use arshy_lib::ipc::EventContext;
+
+        let mut d = Deduplicator::new();
+        let ctx = Some(EventContext {
+            before: vec!["fn foo() {".into()],
+            line: "    let x = 1;".into(),
+            after: vec!["}".into()],
+        });
+        let e1 = TaskEvent {
+            seq: 0,
+            event_type: "diagnostic".into(),
+            severity: Some("error".into()),
+            code: None,
+            message: "unused variable".into(),
+            location: None,
+            context: ctx.clone(),
+        };
+        let e2 = TaskEvent {
+            seq: 1,
+            event_type: "diagnostic".into(),
+            severity: Some("error".into()),
+            code: None,
+            message: "unused variable".into(),
+            location: None,
+            context: None,
+        };
+        d.feed(e1);
+        d.feed(e2);
+        let flushed = d.finish().expect("should flush");
+        assert_eq!(flushed.context, ctx);
     }
 }
