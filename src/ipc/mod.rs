@@ -142,6 +142,8 @@ pub struct TaskEvent {
     pub location: Option<EventLocation>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context: Option<EventContext>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hint: Option<EventHint>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -159,6 +161,14 @@ pub struct EventContext {
     pub line: String,
     #[serde(default)]
     pub after: Vec<String>,
+}
+
+/// Fix suggestion attached to an error event via error code lookup.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EventHint {
+    pub cause: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fix: Option<String>,
 }
 
 // ── Specific param / response types ──────────────────────────────────────────

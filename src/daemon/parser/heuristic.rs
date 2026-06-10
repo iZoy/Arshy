@@ -53,6 +53,7 @@ fn build_event(
         message: line.to_string(),
         location,
         context: None,
+        hint: None,
     }
 }
 

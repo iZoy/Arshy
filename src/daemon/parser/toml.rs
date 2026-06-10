@@ -75,6 +75,7 @@ impl TomlParser {
                     message,
                     location,
                     context: None,
+                    hint: None,
                 });
             }
         }
@@ -96,37 +97,53 @@ pub fn raw_event(line: &str, seq: u64) -> TaskEvent {
         message: line.to_string(),
         location: None,
         context: None,
+        hint: None,
     }
+}
+
+/// ASCII case-insensitive substring search. Avoids heap allocation from `to_lowercase()`.
+fn contains_ignore_ascii_case(haystack: &str, needle: &str) -> bool {
+    if needle.is_empty() {
+        return true;
+    }
+    if needle.len() > haystack.len() {
+        return false;
+    }
+    haystack.as_bytes().windows(needle.len()).any(|w| w.eq_ignore_ascii_case(needle.as_bytes()))
+}
+
+/// ASCII case-insensitive prefix check.
+fn starts_with_ignore_ascii_case(haystack: &str, prefix: &str) -> bool {
+    haystack.len() >= prefix.len()
+        && haystack.as_bytes()[..prefix.len()].eq_ignore_ascii_case(prefix.as_bytes())
 }
 
 /// Classify severity from a raw output line using common cross-language patterns.
 fn classify_severity(line: &str) -> &'static str {
-    let lower = line.to_lowercase();
-
-    let is_error = lower.contains("error")
-        || lower.contains("fatal")
-        || lower.contains("failed")
-        || lower.contains("panic")
-        || lower.contains("aborted")
-        || lower.contains("traceback")
-        || lower.contains("killed")
-        || lower.contains("segmentation fault")
-        || lower.contains("bus error")
-        || lower.contains("assertion failed")
-        || lower.starts_with("e ")
-        || lower.starts_with("e\t");
+    let is_error = contains_ignore_ascii_case(line, "error")
+        || contains_ignore_ascii_case(line, "fatal")
+        || contains_ignore_ascii_case(line, "failed")
+        || contains_ignore_ascii_case(line, "panic")
+        || contains_ignore_ascii_case(line, "aborted")
+        || contains_ignore_ascii_case(line, "traceback")
+        || contains_ignore_ascii_case(line, "killed")
+        || contains_ignore_ascii_case(line, "segmentation fault")
+        || contains_ignore_ascii_case(line, "bus error")
+        || contains_ignore_ascii_case(line, "assertion failed")
+        || starts_with_ignore_ascii_case(line, "e ")
+        || starts_with_ignore_ascii_case(line, "e\t");
 
     if is_error {
         return "error";
     }
 
-    let is_warning = lower.contains("warning")
-        || lower.contains("warn")
-        || lower.contains("deprecated")
-        || lower.contains("notice")
-        || lower.contains("attention")
-        || lower.starts_with("w ")
-        || lower.starts_with("w\t");
+    let is_warning = contains_ignore_ascii_case(line, "warning")
+        || contains_ignore_ascii_case(line, "warn")
+        || contains_ignore_ascii_case(line, "deprecated")
+        || contains_ignore_ascii_case(line, "notice")
+        || contains_ignore_ascii_case(line, "attention")
+        || starts_with_ignore_ascii_case(line, "w ")
+        || starts_with_ignore_ascii_case(line, "w\t");
 
     if is_warning {
         return "warning";
@@ -141,28 +158,27 @@ fn classify_severity(line: &str) -> &'static str {
 ///
 /// Returns true if the line strongly signals an error condition.
 pub fn stderr_looks_like_error(line: &str) -> bool {
-    let lower = line.to_lowercase();
     // Strong signals: explicit error keywords
-    lower.contains("error:")
-        || lower.contains("error ")
-        || lower.contains("failed:")
-        || lower.contains("fatal:")
-        || lower.contains("panic:")
-        || lower.contains("panic!")
-        || lower.contains("traceback (most recent call last)")
-        || lower.contains("segmentation fault")
-        || lower.contains("abort trap")
-        || lower.starts_with("e ")
-        || lower.starts_with("e\t")
+    contains_ignore_ascii_case(line, "error:")
+        || contains_ignore_ascii_case(line, "error ")
+        || contains_ignore_ascii_case(line, "failed:")
+        || contains_ignore_ascii_case(line, "fatal:")
+        || contains_ignore_ascii_case(line, "panic:")
+        || contains_ignore_ascii_case(line, "panic!")
+        || contains_ignore_ascii_case(line, "traceback (most recent call last)")
+        || contains_ignore_ascii_case(line, "segmentation fault")
+        || contains_ignore_ascii_case(line, "abort trap")
+        || starts_with_ignore_ascii_case(line, "e ")
+        || starts_with_ignore_ascii_case(line, "e\t")
         // Common CLI patterns
-        || lower.contains("command not found")
-        || lower.contains("no such file")
-        || lower.contains("cannot find")
-        || lower.contains("permission denied")
-        || lower.contains("access denied")
-        || lower.contains("not found")
-        || lower.contains("syntax error")
-        || lower.contains("unexpected token")
+        || contains_ignore_ascii_case(line, "command not found")
+        || contains_ignore_ascii_case(line, "no such file")
+        || contains_ignore_ascii_case(line, "cannot find")
+        || contains_ignore_ascii_case(line, "permission denied")
+        || contains_ignore_ascii_case(line, "access denied")
+        || contains_ignore_ascii_case(line, "not found")
+        || contains_ignore_ascii_case(line, "syntax error")
+        || contains_ignore_ascii_case(line, "unexpected token")
 }
 
 #[cfg(test)]

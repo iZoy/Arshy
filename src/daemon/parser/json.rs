@@ -69,12 +69,8 @@ fn try_parse_whole(output: &str) -> Option<Vec<TaskEvent>> {
     let value: serde_json::Value = serde_json::from_str(output).ok()?;
 
     match &value {
-        serde_json::Value::Array(arr) => {
-            Some(arr.iter().map(value_to_event).collect())
-        }
-        serde_json::Value::Object(_) => {
-            Some(vec![value_to_event(&value)])
-        }
+        serde_json::Value::Array(arr) => Some(arr.iter().map(value_to_event).collect()),
+        serde_json::Value::Object(_) => Some(vec![value_to_event(&value)]),
         _ => None,
     }
 }
@@ -86,7 +82,8 @@ fn try_parse_ndjson(output: &str) -> Option<Vec<TaskEvent>> {
     }
 
     // Check if at least 80% of lines are valid JSON objects
-    let json_count = lines.iter()
+    let json_count = lines
+        .iter()
         .filter(|l| l.trim().starts_with('{'))
         .filter(|l| serde_json::from_str::<serde_json::Value>(l.trim()).is_ok())
         .count();
@@ -102,19 +99,21 @@ fn value_to_event(value: &serde_json::Value) -> TaskEvent {
     match value {
         serde_json::Value::Object(obj) => {
             // Try to extract structured fields from JSON object
-            let event_type = obj.get("type")
+            let event_type = obj
+                .get("type")
                 .and_then(|v| v.as_str())
-                .or_else(|| obj.get("level")
-                    .and_then(|v| v.as_str())
-                    .map(|l| match l {
+                .or_else(|| {
+                    obj.get("level").and_then(|v| v.as_str()).map(|l| match l {
                         "error" | "fatal" => "diagnostic",
                         "warn" | "warning" => "diagnostic",
                         _ => "log",
-                    }))
+                    })
+                })
                 .unwrap_or("data")
                 .to_string();
 
-            let severity = obj.get("severity")
+            let severity = obj
+                .get("severity")
                 .and_then(|v| v.as_str())
                 .or_else(|| obj.get("level").and_then(|v| v.as_str()))
                 .map(|s| match s {
@@ -125,26 +124,38 @@ fn value_to_event(value: &serde_json::Value) -> TaskEvent {
                 .unwrap_or("info")
                 .to_string();
 
-            let code = obj.get("code")
+            let code = obj
+                .get("code")
                 .or_else(|| obj.get("errorCode"))
                 .or_else(|| obj.get("error_code"))
-                .and_then(|v| v.as_str().or_else(|| v.as_i64().map(|_| "")).map(|s| if s.is_empty() { v.to_string() } else { s.to_string() }))
+                .and_then(|v| {
+                    v.as_str().or_else(|| v.as_i64().map(|_| "")).map(|s| {
+                        if s.is_empty() {
+                            v.to_string()
+                        } else {
+                            s.to_string()
+                        }
+                    })
+                })
                 .or_else(|| obj.get("code").and_then(|v| v.as_i64()).map(|n| n.to_string()));
 
-            let message = obj.get("message")
+            let message = obj
+                .get("message")
                 .or_else(|| obj.get("msg"))
                 .or_else(|| obj.get("text"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
 
-            let file = obj.get("file")
+            let file = obj
+                .get("file")
                 .or_else(|| obj.get("filename"))
                 .or_else(|| obj.get("path"))
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string());
 
-            let line = obj.get("line")
+            let line = obj
+                .get("line")
                 .or_else(|| obj.get("lineNumber"))
                 .or_else(|| obj.get("lineno"))
                 .and_then(|v| v.as_u64());
@@ -167,6 +178,7 @@ fn value_to_event(value: &serde_json::Value) -> TaskEvent {
                 },
                 location,
                 context: None,
+                hint: None,
             }
         }
         serde_json::Value::Array(arr) => {
@@ -179,6 +191,7 @@ fn value_to_event(value: &serde_json::Value) -> TaskEvent {
                 message: format!("JSON array ({} items)", arr.len()),
                 location: None,
                 context: None,
+                hint: None,
             }
         }
         _ => TaskEvent {
@@ -189,6 +202,7 @@ fn value_to_event(value: &serde_json::Value) -> TaskEvent {
             message: serde_json::to_string(value).unwrap_or_default(),
             location: None,
             context: None,
+            hint: None,
         },
     }
 }
@@ -205,10 +219,11 @@ fn try_parse_yaml(output: &str) -> Option<Vec<TaskEvent>> {
 
     // Check if output looks like YAML
     let is_yaml = lines[0].trim() == "---"
-        || (lines.len() >= 2 && lines.iter().take(5).all(|l| {
-            let trimmed = l.trim();
-            trimmed.is_empty() || trimmed.starts_with('#') || trimmed.contains(": ")
-        }));
+        || (lines.len() >= 2
+            && lines.iter().take(5).all(|l| {
+                let trimmed = l.trim();
+                trimmed.is_empty() || trimmed.starts_with('#') || trimmed.contains(": ")
+            }));
 
     if !is_yaml {
         return None;
@@ -231,6 +246,7 @@ fn try_parse_yaml(output: &str) -> Option<Vec<TaskEvent>> {
                 message: value.to_string(),
                 location: None,
                 context: None,
+                hint: None,
             });
         }
     }
@@ -287,6 +303,7 @@ fn try_parse_csv(output: &str) -> Option<Vec<TaskEvent>> {
             message,
             location: None,
             context: None,
+            hint: None,
         });
     }
 

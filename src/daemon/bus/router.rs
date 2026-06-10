@@ -103,6 +103,7 @@ mod tests {
             message: "type mismatch".into(),
             location: None,
             context: None,
+            hint: None,
         };
         let event =
             make_bus_event(BusEventKind::Diagnostic { task_id: "t4".into(), event: task_event });

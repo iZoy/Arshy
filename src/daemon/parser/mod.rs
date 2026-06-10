@@ -15,6 +15,7 @@ mod crash;
 pub(crate) mod dedup;
 mod detect;
 mod heuristic;
+pub mod hint;
 mod json;
 mod loader;
 mod redos;

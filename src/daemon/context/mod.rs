@@ -141,6 +141,7 @@ mod tests {
             message: "test error".into(),
             location: Some(EventLocation { file: "Cargo.toml".into(), line: 1, column: None }),
             context: None,
+            hint: None,
         }];
         enricher.enrich(&mut events, std::path::Path::new("."));
         assert!(events[0].context.is_some());
@@ -158,6 +159,7 @@ mod tests {
             message: "info message".into(),
             location: Some(EventLocation { file: "Cargo.toml".into(), line: 1, column: None }),
             context: None,
+            hint: None,
         }];
         enricher.enrich(&mut events, std::path::Path::new("."));
         assert!(events[0].context.is_none());
@@ -174,6 +176,7 @@ mod tests {
             message: "no location".into(),
             location: None,
             context: None,
+            hint: None,
         }];
         enricher.enrich(&mut events, std::path::Path::new("."));
         assert!(events[0].context.is_none());
@@ -190,6 +193,7 @@ mod tests {
             message: "already has context".into(),
             location: Some(EventLocation { file: "Cargo.toml".into(), line: 1, column: None }),
             context: Some(EventContext { before: vec![], line: "existing".into(), after: vec![] }),
+            hint: None,
         }];
         enricher.enrich(&mut events, std::path::Path::new("."));
         assert_eq!(events[0].context.as_ref().unwrap().line, "existing");
@@ -210,6 +214,7 @@ mod tests {
                 column: None,
             }),
             context: None,
+            hint: None,
         }];
         enricher.enrich(&mut events, std::path::Path::new("."));
         assert!(events[0].context.is_none());
@@ -227,6 +232,7 @@ mod tests {
                 message: "error 1".into(),
                 location: Some(EventLocation { file: "Cargo.toml".into(), line: 1, column: None }),
                 context: None,
+                hint: None,
             },
             TaskEvent {
                 seq: 1,
@@ -236,6 +242,7 @@ mod tests {
                 message: "error 2".into(),
                 location: Some(EventLocation { file: "Cargo.toml".into(), line: 2, column: None }),
                 context: None,
+                hint: None,
             },
         ];
         enricher.enrich(&mut events, std::path::Path::new("."));

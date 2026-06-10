@@ -916,6 +916,7 @@ async fn run_background(mut t: BackgroundTask) -> Result<()> {
                         message: format!("Output truncated: exceeded {} byte limit", max_bytes),
                         location: None,
                         context: None,
+                        hint: None,
                     };
                     seq += 1;
                     let mut te = truncation_event;

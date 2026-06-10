@@ -1,0 +1,17 @@
+[meta]
+language = "rust"
+
+[[error]]
+code = "E0308"
+cause = "Type mismatch — expected one type but found another"
+fix = "Check expected type, convert with .into(), as, or From trait"
+
+[[error]]
+code = "E0599"
+cause = "Method or associated item not found on type"
+fix = "Check method name, required traits (use), and type signature"
+
+[[error]]
+code = "E0425"
+cause = "Cannot find value in this scope"
+fix = "Check spelling, imports, and variable scope"

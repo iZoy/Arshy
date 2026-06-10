@@ -40,6 +40,7 @@ pub fn try_parse_crash(line: &str) -> Option<TaskEvent> {
                 message,
                 location,
                 context: None,
+                hint: None,
             });
         }
     }

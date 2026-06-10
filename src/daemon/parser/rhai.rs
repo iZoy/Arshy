@@ -239,6 +239,7 @@ fn feed_patterns(
                 message,
                 location,
                 context: None,
+                hint: None,
             });
 
             if let Some((key, value)) = &pat.state_transition {
@@ -278,6 +279,7 @@ fn on_complete_patterns(
                 message: msg,
                 location: None,
                 context: None,
+                hint: None,
             });
         }
     }
@@ -301,6 +303,7 @@ fn register_ctx_api(engine: &mut rhai::Engine) {
             message: msg.to_string(),
             location: None,
             context: None,
+            hint: None,
         });
     });
 
@@ -321,6 +324,7 @@ fn register_ctx_api(engine: &mut rhai::Engine) {
                     column: None,
                 }),
                 context: None,
+                hint: None,
             });
         },
     );

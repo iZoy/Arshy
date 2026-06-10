@@ -265,6 +265,7 @@ mod tests {
             message: message.to_string(),
             location: None,
             context: None,
+            hint: None,
         }
     }
 

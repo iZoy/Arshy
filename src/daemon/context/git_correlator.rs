@@ -81,6 +81,7 @@ mod tests {
             message: "test".into(),
             location: Some(EventLocation { file: file.into(), line, column: None }),
             context: None,
+            hint: None,
         }
     }
 

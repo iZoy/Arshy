@@ -79,6 +79,7 @@ impl Deduplicator {
             message,
             location: self.last_location.clone(),
             context: self.last_context.clone(),
+            hint: None,
         };
         self.last_event_type = None;
         self.last_message = None;
@@ -104,6 +105,7 @@ mod tests {
             message: message.into(),
             location: None,
             context: None,
+            hint: None,
         }
     }
 
@@ -183,6 +185,7 @@ mod tests {
             message: "unused variable".into(),
             location: Some(EventLocation { file: "src/main.rs".into(), line: 10, column: None }),
             context: None,
+            hint: None,
         };
         let e2 = TaskEvent {
             seq: 1,
@@ -192,6 +195,7 @@ mod tests {
             message: "unused variable".into(),
             location: Some(EventLocation { file: "src/lib.rs".into(), line: 42, column: Some(5) }),
             context: None,
+            hint: None,
         };
         assert!(d.feed(e1).is_some());
         assert!(d.feed(e2).is_some());
@@ -216,6 +220,7 @@ mod tests {
             message: "unused variable".into(),
             location: None,
             context: ctx.clone(),
+            hint: None,
         };
         let e2 = TaskEvent {
             seq: 1,
@@ -225,6 +230,7 @@ mod tests {
             message: "unused variable".into(),
             location: None,
             context: None,
+            hint: None,
         };
         d.feed(e1);
         d.feed(e2);
@@ -252,6 +258,7 @@ mod tests {
             message: "mismatched types".into(),
             location: loc.clone(),
             context: ctx.clone(),
+            hint: None,
         };
         let e2 = TaskEvent {
             seq: 1,
@@ -261,6 +268,7 @@ mod tests {
             message: "mismatched types".into(),
             location: loc,
             context: None,
+            hint: None,
         };
         d.feed(e1);
         d.feed(e2);

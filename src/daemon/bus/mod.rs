@@ -13,6 +13,7 @@ pub struct BusEvent {
 }
 
 #[derive(Debug, Clone)]
+#[allow(clippy::large_enum_variant)] // Diagnostic contains TaskEvent; boxing adds indirection cost
 pub enum BusEventKind {
     TaskUpdate {
         task_id: String,
