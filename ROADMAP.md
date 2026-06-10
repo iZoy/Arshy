@@ -280,6 +280,19 @@ Agent 加载 Skill → 知道用哪个 CLI → 执行命令 → arshy (shell) �
 
 ---
 
+## Stage V: 错误码诊断 ✅
+
+> P0 — 让 Agent 从"看到错误"变成"知道怎么修"。
+
+| Step | 内容 | 状态 |
+|------|------|------|
+| V1 | **EventHint 结构** — TaskEvent 新增 hint 字段 (cause, fix, retry) | ✅ |
+| V2 | **HintDb 加载** — parsers/errors/*.toml 编译时加载，LazyLock 单例 | ✅ 7 tests |
+| V3 | **4 语言错误码** — Rust (3), TypeScript (15), Python (14), Go (11) 共 43 个 | ✅ |
+| V4 | **Executor 集成** — sync 路径自动查表附加 hint | ✅ |
+
+---
+
 ## 下一阶段: 补全 & 产品化
 
 > 所有 ROADMAP Stage 代码已完成。以下为剩余缺口和产品化方向。
@@ -318,7 +331,7 @@ Agent 加载 Skill → 知道用哪个 CLI → 执行命令 → arshy (shell) �
 
 | 指标 | 值 |
 |------|------|
-| 总测试数 | **353** |
+| 总测试数 | **363** |
 | Library tests | 31 |
 | Proxy tests | 23 |
 | Daemon tests | 299 |

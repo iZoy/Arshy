@@ -60,6 +60,7 @@ Agent: arshy_exec(command: "cargo test")
 - **project_context**: 失败时自动附加 git diff + 错误-变更关联
 - **context**: 错误事件自动附带 ±3 行源码上下文
 - **dedup**: 相同行自动折叠，减少 token 浪费
+- **hint**: 错误事件自动附带修复建议（43 个常见错误码，4 种语言）
 
 ## 内置 Parser（37 个）
 

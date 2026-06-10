@@ -94,6 +94,10 @@ The executor distinguishes short vs long commands:
 
 37 builtin TOML parser definitions in `parsers/builtin/`. Each parser has fixture tests in `parsers/builtin/tests/<tool>/` with `.txt` input and `.json` expected output (42 fixtures total).
 
+### Error Code Hints
+
+43 error codes across 4 languages in `parsers/errors/*.toml`. When a parser extracts an error code, the executor automatically attaches `hint: {cause, fix}` to the event. The `HintDb` is loaded at startup via `include_str!`.
+
 ### Adding a Parser
 
 1. Create `parsers/builtin/<tool>.toml` with `[meta]` and `[[pattern]]` sections

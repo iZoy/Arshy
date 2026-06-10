@@ -117,6 +117,34 @@ Git 关联：失败命令自动标记哪些错误文件在最近提交中被修�
 
 实现：`ContextEnricher`（文件缓存）+ `GitCorrelation`（git diff --name-only）
 
+## 错误码修复建议
+
+错误事件自动附带修复建议（基于 43 个常见错误码）：
+
+```json
+{
+  "type": "diagnostic",
+  "severity": "error",
+  "code": "E0308",
+  "message": "mismatched types",
+  "hint": {
+    "cause": "Type mismatch — expected one type but found another",
+    "fix": "Check expected type, convert with .into(), as, or From trait"
+  }
+}
+```
+
+支持的语言和错误码数量：
+
+| 语言 | 工具 | 错误码数 |
+|------|------|---------|
+| Rust | cargo/rustc/clippy | 3 |
+| TypeScript | tsc/eslint/biome | 15 |
+| Python | python/pytest/ruff | 14 |
+| Go | go | 11 |
+
+实现：`HintDb` 从 `parsers/errors/*.toml` 加载，编译时通过 `include_str!` 嵌入二进制。
+
 ## 工具检测
 
 `ParserRegistry::detect()` 按优先级顺序匹配：
@@ -146,10 +174,11 @@ Git 关联：失败命令自动标记哪些错误文件在最近提交中被修�
        ├─ Deduplicator::feed()  ← 新增
        │
 完成 ──→ ContextEnricher::enrich()  ← 新增
-            ├─ StatefulParser::on_complete()
-            ├─ compute_enhanced_project_context()  ← 更新
-            ├─ compute_summary()
-            └─ extract_root_cause()
+         ├─ HintDb 查表附加 hint    ← 新增
+         ├─ StatefulParser::on_complete()
+         ├─ compute_enhanced_project_context()
+         ├─ compute_summary()
+         └─ extract_root_cause()
 ```
 
 ## 测试体系
