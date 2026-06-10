@@ -498,7 +498,11 @@ impl Executor {
                             short_command: false,
                             summary: compute_summary(&events_json),
                             root_cause: extract_root_cause(&events_json),
-                            project_context: compute_project_context(&info.status),
+                            project_context: compute_enhanced_project_context(
+                                &info.status,
+                                cwd.map(std::path::Path::new),
+                                events_json.as_ref().unwrap_or(&vec![]),
+                            ),
                             events: events_json,
                             raw_output_ref: Some(task_id),
                         })
@@ -687,29 +691,60 @@ fn extract_root_cause(events: &Option<Vec<serde_json::Value>>) -> Option<serde_j
 }
 
 /// Compute project context for failed commands.
-/// Runs `git diff --stat` to show recent changes.
-fn compute_project_context(status: &TaskStatus) -> Option<serde_json::Value> {
-    // Only add context for failed commands
+/// Runs `git diff --stat` to show recent changes, and correlates error events
+/// with recently changed files via `GitCorrelation`.
+fn compute_enhanced_project_context(
+    status: &TaskStatus,
+    cwd: Option<&std::path::Path>,
+    events: &[serde_json::Value],
+) -> Option<serde_json::Value> {
     if *status != TaskStatus::Failed {
         return None;
     }
 
-    // Try to get git diff stat
-    let output =
-        std::process::Command::new("git").args(["diff", "--stat", "HEAD~1"]).output().ok()?;
+    let mut context = serde_json::json!({});
 
-    if !output.status.success() {
-        return None;
+    // Git diff stat
+    let mut cmd = std::process::Command::new("git");
+    cmd.args(["diff", "--stat", "HEAD~1"]);
+    if let Some(dir) = cwd {
+        cmd.current_dir(dir);
+    }
+    if let Ok(output) = cmd.output() {
+        if output.status.success() {
+            let diff_stat = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !diff_stat.is_empty() {
+                context["git_diff_stat"] = serde_json::json!(diff_stat);
+            }
+        }
     }
 
-    let diff_stat = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if diff_stat.is_empty() {
-        return None;
+    // Git correlation — match error events to recently changed files
+    if let Some(gc) = super::context::git_correlator::GitCorrelation::detect(cwd) {
+        context["changed_files"] = serde_json::json!(gc.changed_files());
+
+        let correlated: Vec<serde_json::Value> = events
+            .iter()
+            .filter(|e| e.get("severity").and_then(|v| v.as_str()) == Some("error"))
+            .filter_map(|e| {
+                let file = e.get("location")?.get("file")?.as_str()?;
+                let recently_changed = gc.changed_files().iter().any(|f| f == file);
+                Some(serde_json::json!({
+                    "file": file,
+                    "recently_changed": recently_changed,
+                }))
+            })
+            .collect();
+
+        if !correlated.is_empty() {
+            context["correlated_errors"] = serde_json::json!(correlated);
+        }
     }
 
-    Some(serde_json::json!({
-        "git_diff_stat": diff_stat,
-    }))
+    if context.as_object().is_none_or(|m| m.is_empty()) {
+        return None;
+    }
+    Some(context)
 }
 
 /// Completion info sent through the oneshot channel for sync mode.
