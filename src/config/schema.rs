@@ -205,6 +205,7 @@ partial_section!(PartialSecurityConfig {
     sandbox_paths: Vec<String>,
     access_level: String,
     audit_log: String,
+    rate_limit: RateLimitConfig,
 });
 
 // ── Full config sections ─────────────────────────────────────────────────────

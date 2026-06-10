@@ -120,6 +120,9 @@ pub fn merge_partial(mut cfg: Config, partial: PartialConfig) -> Config {
         if let Some(v) = s.audit_log {
             cfg.security.audit_log = Some(v);
         }
+        if let Some(v) = s.rate_limit {
+            cfg.security.rate_limit = v;
+        }
     }
     cfg
 }
