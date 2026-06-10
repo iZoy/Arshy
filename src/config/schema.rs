@@ -77,10 +77,11 @@ fn default_blocked_patterns() -> Vec<String> {
         r"base64\s+-d.*\|\s*(ba)?sh".into(),
         r"eval\s+\$\(|eval\s+`".into(),
         // ── Privilege escalation ──────────────────────────────
-        r"sudo\s+.*rm\s+(-[a-zA-Z]*[rRfF]){2,}".into(), // sudo rm -rf
-        r"sudo\s+.*\b(dd|mkfs|fdisk|parted)\b".into(),  // sudo disk tools
-        r"sudo\s+.*\bchmod\s+(-R\s+)?777\b".into(),     // sudo chmod 777
-        r"sudo\s+su\b".into(),                          // sudo su (shell escape)
+        r"sudo\s+.*rm\s+-[a-zA-Z]*[rR]".into(), // sudo rm -r (recursive)
+        r"sudo\s+.*rm\s+-[a-zA-Z]*[fF]".into(), // sudo rm -f (force)
+        r"sudo\s+.*\b(dd|mkfs|fdisk|parted)\b".into(), // sudo disk tools
+        r"sudo\s+.*\bchmod\s+(-R\s+)?777\b".into(), // sudo chmod 777
+        r"sudo\s+su\b".into(),                  // sudo su (shell escape)
         r"su\s+-".into(),
         // ── Credential exfiltration ──────────────────────────
         r"cat\s+.*\.ssh/(id_rsa|id_ed25519|id_dsa|id_ecdsa|authorized_keys)".into(),
