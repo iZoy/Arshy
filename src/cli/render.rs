@@ -387,10 +387,10 @@ fn event_type_label(event_type: &str) -> &'static str {
 
 fn truncate(s: &str, max: usize) -> String {
     if s.len() <= max {
-        s.to_string()
-    } else {
-        format!("{}...", &s[..max.saturating_sub(3)])
+        return s.to_string();
     }
+    let end = s.char_indices().nth(max.saturating_sub(3)).map(|(i, _)| i).unwrap_or(s.len());
+    format!("{}...", &s[..end])
 }
 
 fn wrap_text(text: &str, width: usize) -> Vec<String> {
@@ -419,6 +419,7 @@ fn wrap_text(text: &str, width: usize) -> Vec<String> {
 }
 
 /// Calculate visible width of a string, ignoring ANSI escape sequences.
+/// CJK/fullwidth characters count as 2 columns.
 fn visible_width(s: &str) -> usize {
     let mut width = 0;
     let mut in_escape = false;
@@ -433,9 +434,21 @@ fn visible_width(s: &str) -> usize {
             }
             continue;
         }
-        width += 1;
+        width += if unicode_width(ch) { 2 } else { 1 };
     }
     width
+}
+
+fn unicode_width(c: char) -> bool {
+    let cp = c as u32;
+    // CJK Unified Ideographs + common fullwidth ranges
+    (0x4E00..=0x9FFF).contains(&cp)   // CJK
+        || (0x3000..=0x303F).contains(&cp)  // CJK symbols
+        || (0xFF00..=0xFFEF).contains(&cp)  // fullwidth
+        || (0x1F300..=0x1F9FF).contains(&cp) // emoji
+        || (0x2E80..=0x2FDF).contains(&cp)  // CJK radicals
+        || (0x3400..=0x4DBF).contains(&cp)  // CJK Extension A
+        || (0x20000..=0x2A6DF).contains(&cp) // CJK Extension B
 }
 
 // ── Benchmark renderer ─────────────────────────────────────────────────────
@@ -590,7 +603,12 @@ pub fn render_benchmark(result: &serde_json::Value) {
             let flds = d.get("structured_fields").and_then(|v| v.as_u64()).unwrap_or(0);
             let comp = d.get("compression_ratio").and_then(|v| v.as_f64()).unwrap_or(0.0);
             let acc = d.get("accuracy").and_then(|v| v.as_f64()).unwrap_or(0.0) * 100.0;
-            let p_name = if parser.len() > 12 { &parser[..12] } else { parser };
+            let p_name = if parser.len() > 12 {
+                let end = parser.char_indices().nth(12).map(|(i, _)| i).unwrap_or(parser.len());
+                &parser[..end]
+            } else {
+                parser
+            };
             eprintln!(
                 "  │ {:<12} │ {:>5} │ {:>6} │ {:>6} │ {:>6.1}x  │ {:>6.0}%   │",
                 p_name, lines, evts, flds, comp, acc
