@@ -160,4 +160,58 @@ mod tests {
         let hint = db.lookup("rust", "E0425").expect("E0425 should exist");
         assert!(hint.retry.is_none(), "E0425 should not have retry suggestion");
     }
+
+    #[test]
+    fn lookup_returns_hint_for_typescript() {
+        let db = HintDb::get();
+        let hint = db.lookup("typescript", "TS2345").expect("TS2345 should exist");
+        assert!(hint.cause.contains("Argument type"));
+        assert!(hint.fix.is_some());
+    }
+
+    #[test]
+    fn lookup_returns_hint_for_python() {
+        let db = HintDb::get();
+        let hint = db.lookup("python", "NameError").expect("NameError should exist");
+        assert!(hint.cause.contains("not defined"));
+        assert!(hint.fix.is_some());
+    }
+
+    #[test]
+    fn lookup_returns_hint_for_go() {
+        let db = HintDb::get();
+        let hint = db.lookup("go", "undeclared").expect("undeclared should exist");
+        assert!(hint.cause.contains("Undeclared"));
+        assert!(hint.fix.is_some());
+    }
+
+    #[test]
+    fn hint_db_contains_expected_count() {
+        let db = HintDb::get();
+        // 3 Rust + 15 TypeScript + 14 Python + 11 Go = 43
+        assert_eq!(db.len(), 43, "expected 43 error codes across 4 languages");
+    }
+
+    #[test]
+    fn tool_to_language_covers_common_tools() {
+        // Rust tools
+        assert_eq!(tool_to_language("cargo"), Some("rust"));
+        assert_eq!(tool_to_language("clippy"), Some("rust"));
+        assert_eq!(tool_to_language("rustc"), Some("rust"));
+        // TypeScript tools
+        assert_eq!(tool_to_language("tsc"), Some("typescript"));
+        assert_eq!(tool_to_language("eslint"), Some("typescript"));
+        assert_eq!(tool_to_language("biome"), Some("typescript"));
+        assert_eq!(tool_to_language("jest"), Some("typescript"));
+        assert_eq!(tool_to_language("vite"), Some("typescript"));
+        // Python tools
+        assert_eq!(tool_to_language("python"), Some("python"));
+        assert_eq!(tool_to_language("pytest"), Some("python"));
+        assert_eq!(tool_to_language("ruff"), Some("python"));
+        // Go tools
+        assert_eq!(tool_to_language("go"), Some("go"));
+        // Unknown
+        assert_eq!(tool_to_language("kubectl"), None);
+        assert_eq!(tool_to_language("docker"), None);
+    }
 }
