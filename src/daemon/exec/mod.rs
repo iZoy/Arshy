@@ -332,7 +332,14 @@ impl Executor {
             return Err(e);
         }
 
-        super::security::check_path(cwd.unwrap_or("."), &self.sandbox_paths)?;
+        let check_result = {
+            let cwd_owned = cwd.unwrap_or(".").to_string();
+            let paths = self.sandbox_paths.clone();
+            tokio::task::spawn_blocking(move || super::security::check_path(&cwd_owned, &paths))
+                .await
+                .map_err(|e| ArshyError::Ipc(format!("sandbox check panicked: {}", e)))?
+        };
+        check_result?;
 
         let is_auto = mode == "auto";
         let is_explicit_sync = mode == "sync";
@@ -532,6 +539,21 @@ impl Executor {
                             .unwrap_or(Some(evts_fallback))
                         };
 
+                        let project_context = {
+                            let status_clone = info.status.clone();
+                            let cwd_path_clone = cwd.map(std::path::PathBuf::from);
+                            let events_clone = events_json.clone();
+                            tokio::task::spawn_blocking(move || {
+                                compute_enhanced_project_context(
+                                    &status_clone,
+                                    cwd_path_clone.as_deref(),
+                                    events_clone.as_ref().unwrap_or(&vec![]),
+                                )
+                            })
+                            .await
+                            .unwrap_or(None)
+                        };
+
                         Ok(RunResult {
                             task_id: task_id.clone(),
                             status: info.status.clone(),
@@ -544,11 +566,7 @@ impl Executor {
                             short_command: false,
                             summary: compute_summary(&events_json),
                             root_cause: extract_root_cause(&events_json),
-                            project_context: compute_enhanced_project_context(
-                                &info.status,
-                                cwd.map(std::path::Path::new),
-                                events_json.as_ref().unwrap_or(&vec![]),
-                            ),
+                            project_context,
                             events: events_json,
                             raw_output_ref: Some(task_id),
                         })

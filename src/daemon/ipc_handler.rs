@@ -155,9 +155,14 @@ pub async fn handle(
             }
             dispatch(&req, &executor, &store, &shutdown_tx).await
         } else if request.method.as_str() == METHOD_CD {
-            let dir = request.params.get("command").and_then(|v| v.as_str()).unwrap_or(".");
-            let abs = std::fs::canonicalize(std::path::Path::new(dir))
-                .map_err(|e| arshy_lib::ArshyError::Ipc(format!("cd: {}: {}", dir, e)))?;
+            let dir =
+                request.params.get("command").and_then(|v| v.as_str()).unwrap_or(".").to_string();
+            let abs = tokio::task::spawn_blocking(move || {
+                std::fs::canonicalize(std::path::Path::new(&dir))
+                    .map_err(|e| arshy_lib::ArshyError::Ipc(format!("cd: {}: {}", dir, e)))
+            })
+            .await
+            .map_err(|e| arshy_lib::ArshyError::Ipc(format!("cd resolve panicked: {}", e)))??;
             let cwd_str = abs.to_string_lossy().to_string();
             default_cwd = Some(cwd_str.clone());
             Ok(serde_json::json!({"cwd": cwd_str}))
