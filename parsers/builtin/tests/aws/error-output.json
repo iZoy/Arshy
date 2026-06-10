@@ -15,10 +15,9 @@
     "type": "log"
   },
   {
-    "code": "An error occurred (InvalidInstanceID.NotFound)",
-    "message": "when calling the DescribeInstances operation: The instance ID 'i-1234567890abcdef0' does not exist",
+    "message": "An error occurred (InvalidInstanceID.NotFound) when calling the DescribeInstances operation: The instance ID 'i-1234567890abcdef0' does not exist",
     "severity": "error",
-    "type": "diagnostic"
+    "type": "log"
   },
   {
     "message": "$ aws iam create-user --user-name admin",
@@ -26,10 +25,10 @@
     "type": "log"
   },
   {
-    "code": "An error occurred (AccessDenied)",
-    "message": "when calling the CreateUser operation: User: arn:aws:iam::123456789012:user/developer is not authorized to perform: iam:CreateUser on resource: arn:aws:iam::123456789012:user/admin",
+    "code": "AccessDenied",
+    "message": "User: arn:aws:iam::123456789012:user/developer is not authorized to perform: iam:CreateUser on resource: arn:aws:iam::123456789012:user/admin",
     "severity": "error",
-    "type": "diagnostic"
+    "type": "error"
   },
   {
     "message": "$ aws s3 ls s3://nonexistent-bucket/",
@@ -37,9 +36,10 @@
     "type": "log"
   },
   {
+    "code": "node",
     "message": "An error occurred (NoSuchBucket) when calling the ListObjectsV2 operation: The specified bucket does not exist",
     "severity": "error",
-    "type": "diagnostic"
+    "type": "crash"
   },
   {
     "message": "$ aws cloudformation describe-stacks --stack-name my-stack",
