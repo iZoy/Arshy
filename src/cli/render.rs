@@ -488,7 +488,7 @@ pub fn render_stats(result: &serde_json::Value) {
     box_line(&format!("Events:  {} total ({} errors)", total_events, total_errors));
 
     if let Some(rate) = failure_rate {
-        box_line(&format!("Failure rate:  {:.0}%", rate * 100.0));
+        box_line(&format!("Failure rate:  {:.0}%", rate));
     }
     if let Some(ms) = avg_duration {
         box_line(&format!("Avg duration:  {:.0}ms", ms));
