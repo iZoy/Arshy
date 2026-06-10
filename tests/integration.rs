@@ -3,15 +3,16 @@
 //! These tests require the `arshyd` binary to be built (`cargo build --bin arshyd`).
 //! They use temporary directories for socket and database files.
 //!
-//! Daemon-spawning tests are marked `#[ignore]` because they:
-//! - Require Unix socket creation (blocked by macOS sandbox-exec)
-//! - Are flaky when run in parallel (daemon instances interfere via shared /tmp paths)
-//! - Duplicate coverage already in `ipc_handler.rs` UnixStream::pair tests
+//! Daemon-spawning tests use `#[serial]` to prevent parallel conflicts and
+//! `#[cfg_attr(target_os = "macos", ignore)]` to skip on macOS sandbox
+//! (which blocks Unix socket creation). Core IPC coverage is in
+//! `ipc_handler.rs` UnixStream::pair tests.
 //!
 //! Run explicitly: `cargo test --test integration -- --ignored`
 
 #[cfg(test)]
 mod integration_tests {
+    use serial_test::serial;
     use std::process::Command;
     use std::time::Duration;
     use tempfile::TempDir;
@@ -66,12 +67,13 @@ mod integration_tests {
 
     // ── Daemon binary end-to-end tests ──────────────────────────────────────
     //
-    // Marked #[ignore]: require real daemon subprocess + Unix socket.
-    // Run with: cargo test --test integration -- --ignored
+    // #[serial] prevents parallel daemon conflicts.
+    // #[cfg_attr(target_os = "macos", ignore)] skips on macOS sandbox.
     // Core IPC coverage is in ipc_handler.rs pair-stream tests.
 
     #[test]
-    #[ignore]
+    #[serial]
+    #[cfg_attr(target_os = "macos", ignore)]
     fn daemon_starts_and_responds_to_health() {
         let (socket_path, mut child, _tmp) = spawn_daemon();
 
@@ -115,7 +117,8 @@ mod integration_tests {
     }
 
     #[test]
-    #[ignore]
+    #[serial]
+    #[cfg_attr(target_os = "macos", ignore)]
     fn run_echo_and_get_result() {
         let (socket_path, mut child, _tmp) = spawn_daemon();
 
@@ -162,7 +165,8 @@ mod integration_tests {
     }
 
     #[test]
-    #[ignore]
+    #[serial]
+    #[cfg_attr(target_os = "macos", ignore)]
     fn run_command_with_parser() {
         let (socket_path, mut child, _tmp) = spawn_daemon();
 
