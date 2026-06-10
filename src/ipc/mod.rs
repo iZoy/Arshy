@@ -45,6 +45,7 @@ pub mod error_code {
     pub const TASK_TIMEOUT: i64 = -32002;
     pub const ACCESS_DENIED: i64 = -32003;
     pub const COMMAND_BLOCKED: i64 = -32004;
+    pub const RATE_LIMITED: i64 = -32005;
 }
 
 // ── JSON-RPC types ───────────────────────────────────────────────────────────

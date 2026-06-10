@@ -55,6 +55,7 @@ impl ArshyError {
             Self::AccessDenied(_) => ACCESS_DENIED,
             Self::Ipc(msg) if msg.contains("unknown method") => METHOD_NOT_FOUND,
             Self::Ipc(msg) if msg.contains("missing") || msg.contains("invalid") => INVALID_PARAMS,
+            Self::Ipc(msg) if msg.contains("rate limit") => RATE_LIMITED,
             _ => INTERNAL_ERROR,
         }
     }

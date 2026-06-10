@@ -10,6 +10,7 @@ pub mod process;
 pub mod pty;
 
 use arshy_lib::ipc::{Task, TaskStatus};
+use arshy_lib::ArshyError;
 use arshy_lib::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -20,7 +21,7 @@ use super::context;
 use super::ipc_handler::RunResult;
 use super::parser::dedup::Deduplicator;
 use super::parser::{Engine, ParsedTool};
-use super::security::{AuditEntry, AuditLog, CommandFilter};
+use super::security::{AuditEntry, AuditLog, CommandFilter, RateLimiter};
 use super::store::Store;
 
 /// Determine whether a command is "short" — eligible for zero-overhead sync path.
@@ -195,6 +196,7 @@ pub struct Executor {
     audit_log: Option<Arc<AuditLog>>,
     /// Registry of running tasks' kill signal senders.
     kill_registry: Arc<TokioMutex<HashMap<String, tokio::sync::mpsc::Sender<()>>>>,
+    rate_limiter: Arc<TokioMutex<RateLimiter>>,
 }
 
 /// Runtime configuration for task execution.
@@ -229,6 +231,7 @@ impl Executor {
             access_level: "full".into(),
             audit_log: None,
             kill_registry: Arc::new(TokioMutex::new(HashMap::new())),
+            rate_limiter: Arc::new(TokioMutex::new(RateLimiter::disabled())),
         }
     }
 
@@ -244,6 +247,15 @@ impl Executor {
         });
         self.sandbox_paths = config.sandbox_paths.clone();
         self.access_level = config.access_level.clone();
+
+        // Initialize rate limiter from config
+        let rate_limiter = if config.rate_limit.enabled {
+            RateLimiter::new(config.rate_limit.burst, config.rate_limit.max_commands_per_second)
+        } else {
+            RateLimiter::disabled()
+        };
+        self.rate_limiter = Arc::new(TokioMutex::new(rate_limiter));
+
         self
     }
 
@@ -293,6 +305,17 @@ impl Executor {
         env: Option<&HashMap<String, String>>,
         errors_only: bool,
     ) -> Result<RunResult> {
+        // ── Rate limit check (always run) ───────────────────────────────────
+        {
+            let mut limiter = self.rate_limiter.lock().await;
+            if !limiter.try_acquire() {
+                tracing::warn!("rate limit exceeded for command: {}", command);
+                return Err(ArshyError::Ipc(
+                    "rate limit exceeded: too many commands per second".into(),
+                ));
+            }
+        }
+
         // ── Security checks (always run) ──────────────────────────────────
         if let Err(e) = self.filter.check(command) {
             if let Some(ref audit) = self.audit_log {

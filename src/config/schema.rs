@@ -101,6 +101,12 @@ fn default_sandbox_mode() -> String {
 fn default_backend() -> String {
     "sqlite".into()
 }
+fn default_max_commands_per_second() -> f64 {
+    10.0
+}
+fn default_burst() -> f64 {
+    20.0
+}
 
 // ── Top-level ────────────────────────────────────────────────────────────────
 
@@ -372,6 +378,8 @@ pub struct SecurityConfig {
     pub access_level: String,
     #[serde(default)]
     pub audit_log: Option<String>,
+    #[serde(default)]
+    pub rate_limit: RateLimitConfig,
 }
 
 impl Default for SecurityConfig {
@@ -382,6 +390,27 @@ impl Default for SecurityConfig {
             sandbox_paths: Vec::new(),
             access_level: default_access_level(),
             audit_log: None,
+            rate_limit: RateLimitConfig::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RateLimitConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_max_commands_per_second")]
+    pub max_commands_per_second: f64,
+    #[serde(default = "default_burst")]
+    pub burst: f64,
+}
+
+impl Default for RateLimitConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            max_commands_per_second: default_max_commands_per_second(),
+            burst: default_burst(),
         }
     }
 }
