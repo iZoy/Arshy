@@ -1,0 +1,20 @@
+[
+  {
+    "code": "22",
+    "file": "example.com",
+    "line": 0,
+    "message": "Connection refused",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "message": "Permission denied (publickey).",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "message": "Host key verification failed.",
+    "severity": "error",
+    "type": "diagnostic"
+  }
+]

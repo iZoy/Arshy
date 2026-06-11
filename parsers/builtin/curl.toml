@@ -1,0 +1,40 @@
+[meta]
+name = "curl"
+description = "curl HTTP client"
+detect = ["curl"]
+priority = 50
+
+[[pattern]]
+name = "curl-error"
+regex = '^curl: \((\d+)\) (.+)$'
+event_type = "diagnostic"
+severity = "error"
+fields = { code = 1, message = 2 }
+
+[[pattern]]
+name = "curl-http-error"
+regex = '^(HTTP/[0-9.]+)\s+(\d{3})\s*(.*)$'
+event_type = "diagnostic"
+severity = "error"
+fields = { code = 1, message = 3 }
+
+[[pattern]]
+name = "curl-ssl-error"
+regex = '^curl: \(60\) (.+)$'
+event_type = "diagnostic"
+severity = "error"
+fields = { message = 1 }
+
+[[pattern]]
+name = "curl-connect-error"
+regex = '^curl: \(7\) (.+)$'
+event_type = "diagnostic"
+severity = "error"
+fields = { message = 1 }
+
+[[pattern]]
+name = "curl-timeout"
+regex = '^curl: \(28\) (.+)$'
+event_type = "diagnostic"
+severity = "error"
+fields = { message = 1 }

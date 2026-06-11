@@ -1,0 +1,54 @@
+[meta]
+name = "ssh"
+description = "SSH remote access"
+detect = ["ssh", "scp", "rsync"]
+priority = 55
+
+[[pattern]]
+name = "ssh-connection-refused"
+regex = '^ssh: connect to host (.+) port (\d+): (.+)$'
+event_type = "diagnostic"
+severity = "error"
+fields = { file = 1, code = 2, message = 3 }
+
+[[pattern]]
+name = "ssh-permission-denied"
+regex = '^Permission denied .+'
+event_type = "diagnostic"
+severity = "error"
+fields = { message = 0 }
+
+[[pattern]]
+name = "ssh-host-key-changed"
+regex = '^@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@'
+event_type = "diagnostic"
+severity = "error"
+fields = { message = 0 }
+
+[[pattern]]
+name = "ssh-host-key-verification"
+regex = '^Host key verification failed\.'
+event_type = "diagnostic"
+severity = "error"
+fields = { message = 0 }
+
+[[pattern]]
+name = "ssh-auth-failed"
+regex = '^(\w+)@(.+): Permission denied .+'
+event_type = "diagnostic"
+severity = "error"
+fields = { file = 2, message = 0 }
+
+[[pattern]]
+name = "ssh-no-route"
+regex = '^(ssh|scp|rsync): (.+): (.+)$'
+event_type = "diagnostic"
+severity = "error"
+fields = { file = 2, message = 3 }
+
+[[pattern]]
+name = "ssh-warning"
+regex = '^Warning: (.+)$'
+event_type = "diagnostic"
+severity = "warning"
+fields = { message = 1 }

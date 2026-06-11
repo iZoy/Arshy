@@ -35,8 +35,10 @@ pub fn version_command(tool: &str) -> Option<&'static str> {
 /// Parse a semver-like version from command output.
 /// Matches patterns like "1.2.3", "v1.2.3", "version 1.2.3".
 pub fn parse_version(output: &str) -> Option<String> {
-    let re = regex::Regex::new(r"\d+\.\d+\.\d+").ok()?;
-    re.find(output).map(|m| m.as_str().to_string())
+    use std::sync::LazyLock;
+    static VERSION_RE: LazyLock<regex::Regex> =
+        LazyLock::new(|| regex::Regex::new(r"\d+\.\d+\.\d+").unwrap());
+    VERSION_RE.find(output).map(|m| m.as_str().to_string())
 }
 
 /// Check whether `actual` satisfies `min <= actual <= max`.

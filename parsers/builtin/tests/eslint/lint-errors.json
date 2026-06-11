@@ -1,4 +1,14 @@
 [
-  {"type": "diagnostic", "severity": "error", "code": "no-var", "message": "Unexpected var, use let or const instead"},
-  {"type": "diagnostic", "severity": "error", "code": "no-unused-vars", "message": "'foo' is defined but never used"}
+  {
+    "code": "no-var",
+    "message": "Unexpected var, use let or const instead",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "no-unused-vars",
+    "message": "'foo' is defined but never used",
+    "severity": "error",
+    "type": "diagnostic"
+  }
 ]

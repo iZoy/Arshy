@@ -24,7 +24,8 @@ async fn main() -> Result<()> {
 
     // Panic hook — log the panic message with backtrace before the process exits
     std::panic::set_hook(Box::new(|info| {
-        let location = info.location().map(|l| format!("{}:{}", l.file(), l.line())).unwrap_or_default();
+        let location =
+            info.location().map(|l| format!("{}:{}", l.file(), l.line())).unwrap_or_default();
         let payload = info.payload();
         let msg = if let Some(s) = payload.downcast_ref::<&str>() {
             *s

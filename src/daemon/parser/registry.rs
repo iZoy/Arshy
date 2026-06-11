@@ -9,6 +9,14 @@
 use arshy_lib::config::ParserConfig;
 use arshy_lib::Result;
 
+/// ASCII case-insensitive prefix check. Avoids heap allocation from `to_lowercase()`.
+fn starts_with_ignore_ascii_case(haystack: &str, prefix: &str) -> bool {
+    if prefix.len() > haystack.len() {
+        return false;
+    }
+    haystack.as_bytes()[..prefix.len()].eq_ignore_ascii_case(prefix.as_bytes())
+}
+
 use super::rhai::StatefulPattern;
 use super::toml::LinePattern;
 use super::toml_def;
@@ -169,7 +177,7 @@ impl ParserRegistry {
             }
             // Check detect_full patterns first (matched against full command)
             for pat in &entry.detect_full_patterns {
-                if cmd_lower.starts_with(&pat.to_lowercase()) {
+                if starts_with_ignore_ascii_case(cmd_lower, pat) {
                     return Some(ParsedTool {
                         tool_name: entry.tool_name.clone(),
                         parser_name: entry.name.clone(),
@@ -180,7 +188,7 @@ impl ParserRegistry {
             }
             // Then check detect patterns (matched against first word)
             for pat in &entry.detect_patterns {
-                if first_word.starts_with(&pat.to_lowercase()) {
+                if starts_with_ignore_ascii_case(first_word, pat) {
                     return Some(ParsedTool {
                         tool_name: entry.tool_name.clone(),
                         parser_name: entry.name.clone(),

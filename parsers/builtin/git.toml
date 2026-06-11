@@ -1,0 +1,61 @@
+[meta]
+name = "git"
+description = "Git version control"
+detect = ["git"]
+priority = 55
+
+[[pattern]]
+name = "git-fatal"
+regex = '^fatal: (.+)$'
+event_type = "diagnostic"
+severity = "error"
+fields = { message = 1 }
+
+[[pattern]]
+name = "git-error"
+regex = '^error: (.+)$'
+event_type = "diagnostic"
+severity = "error"
+fields = { message = 1 }
+
+[[pattern]]
+name = "git-conflict"
+regex = '^(CONFLICT \(.+?\)): (.+)$'
+event_type = "diagnostic"
+severity = "error"
+fields = { code = 1, message = 2 }
+
+[[pattern]]
+name = "git-conflict-file"
+regex = '^\t(?:both modified|both added|deleted by us|deleted by them|added by us|added by them): (.+)$'
+event_type = "diagnostic"
+severity = "error"
+fields = { file = 1 }
+
+[[pattern]]
+name = "git-warning"
+regex = '^warning: (.+)$'
+event_type = "diagnostic"
+severity = "warning"
+fields = { message = 1 }
+
+[[pattern]]
+name = "git-hint"
+regex = '^hint: (.+)$'
+event_type = "diagnostic"
+severity = "info"
+fields = { message = 1 }
+
+[[pattern]]
+name = "git-rejected"
+regex = '^!\s+\[rejected\]\s+(.+)\s+->\s+(.+)$'
+event_type = "diagnostic"
+severity = "error"
+fields = { file = 1, message = 2 }
+
+[[pattern]]
+name = "git-abort"
+regex = '^(Automatic merge failed|Could not apply|CONFLICT .+)$'
+event_type = "summary"
+severity = "error"
+fields = { message = 1 }

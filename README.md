@@ -72,9 +72,9 @@ Agents see just 2 tools instead of 5+ separate ones:
 
 No configuration needed. The agent just calls `arshy_exec` with `action:"run"` for everything.
 
-### 20 Built-in Parsers
+### 34 Built-in Parsers
 
-tsc, cargo, jest, vite, eslint, go, python, cc, npm, webpack, prettier, swc, esbuild, clippy, make, gradle, cargo-test, mocha, pip, pnpm — each extracts structured events (errors, warnings, file locations) from tool output.
+tsc, cargo, jest, vite, eslint, go, python, cc, npm, webpack, prettier, swc, esbuild, clippy, make, gradle, cargo-test, mocha, pip, pnpm, terraform, kubectl, helm, aws, docker, uv, ruff, turbo, nx, deno, bun, biome, oxlint, vitest — each extracts structured events (errors, warnings, file locations) from tool output.
 
 Plus: **generic JSON parser** (auto-detects `--json` output), **crash parser** (Go/Python/Rust/Node/Shell tracebacks), and **stderr error detection** for any command.
 
@@ -99,6 +99,48 @@ arshy daemon start/stop/restart   # process management
 arshy stats                       # execution metrics
 arshy install-launchd             # macOS auto-start
 arshy install-systemd             # Linux auto-start
+```
+
+### Terminal UI
+
+Pretty-print command results with structured visualization:
+
+```bash
+arshy run "cargo build" --format pretty
+```
+
+```
+╭──────────────────────────────────────────────────────────╮
+│ ✗ Failed   3 errors, 0 warnings  exit 1   370ms         │
+├──────────────────────────────────────────────────────────┤
+│ Root cause: mismatched types                              │
+├──────────────────────────────────────────────────────────┤
+│ ✗ Diagnostic  E0308                                       │
+│   mismatched types                                        │
+│   src/app.ts:42:10                                        │
+│                                                           │
+╰──────────────────────────────────────────────────────────╯
+```
+
+Formats: `--format pretty` (terminal UI), `--format json` (raw JSON), `--format auto` (default: TTY detection).
+
+### Parser Benchmark
+
+Run `arshy benchmark` to measure parser performance across all 34 builtin parsers:
+
+```
+Scope: 37 fixtures across 34 builtin parsers
+  Information Density:  3.5 actionable fields/event (structured) vs 0 (raw text)
+  Token Efficiency:     1.4x compression (up to 12x for webpack)
+  Error Location Speed: 24% of fixtures — structured faster
+  Parser Accuracy:      100% (37/37 fixtures)
+```
+
+### Parser Management
+
+```bash
+arshy parser reload   # hot-reload from disk + show diff
+arshy parser list     # list loaded parsers
 ```
 
 ## Architecture
@@ -168,6 +210,7 @@ Arshy ships with 3 prompt templates:
 - [Custom Parsers](docs/guides/custom-parser-toml.md) — write your own parser
 - [Security](docs/guides/security.md) — command filtering, sandboxing, audit
 - [Architecture](docs/explanation/architecture.md) — component deep dive
+- [Parser Specification v1.0](docs/spec/parser-spec.md) — open spec for parser definitions
 - [Full Reference](docs/index.md) — all docs
 
 ## License

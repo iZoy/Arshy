@@ -40,11 +40,11 @@ impl AuditLog {
     pub fn log(&self, entry: &AuditEntry) -> Result<()> {
         let mut line = serde_json::to_string(entry)?;
         line.push('\n');
-        let mut file = self.file.lock().map_err(|_| {
-            arshy_lib::ArshyError::Other("audit log mutex poisoned".into())
-        })?;
-        file.write_all(line.as_bytes())
-            .map_err(arshy_lib::ArshyError::Io)
+        let mut file = self
+            .file
+            .lock()
+            .map_err(|_| arshy_lib::ArshyError::Other("audit log mutex poisoned".into()))?;
+        file.write_all(line.as_bytes()).map_err(arshy_lib::ArshyError::Io)
     }
 
     /// Path to the audit log file. Reserved for audit log tooling.
