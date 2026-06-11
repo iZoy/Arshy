@@ -1,0 +1,17 @@
+[
+  {
+    "message": "user@server: Permission denied (publickey).",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "message": "rsync: host.example.com: Network is unreachable",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "message": "ssh: connect to host badhost port 22: Connection refused",
+    "severity": "error",
+    "type": "diagnostic"
+  }
+]

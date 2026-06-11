@@ -41,7 +41,7 @@ fields = { message = 0 }
 
 [[pattern]]
 name = "ssh-no-route"
-regex = '^(?:ssh|scp|rsync): (.+): (?:Network|No route|Connection) .+'
+regex = '^(?:ssh|scp|rsync): (.+): (?:Network|No route) .+'
 event_type = "diagnostic"
 severity = "error"
 fields = { message = 0 }
