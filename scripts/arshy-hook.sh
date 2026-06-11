@@ -66,7 +66,7 @@ import json, sys
 
 try:
     d = json.load(sys.stdin)
-except:
+except Exception:
     print('{\"decision\": \"approve\"}')
     sys.exit(0)
 
