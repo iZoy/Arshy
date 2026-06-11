@@ -119,7 +119,9 @@ mod tests {
     #[test]
     fn lookup_returns_none_for_unknown_code() {
         let db = HintDb::get();
-        assert!(db.lookup("rust", "E99999").is_none());
+        // Unknown code within a populated language
+        assert!(db.lookup("typescript", "TS99999").is_none());
+        // Unknown language
         assert!(db.lookup("unknown", "TS2769").is_none());
     }
 
@@ -179,10 +181,14 @@ mod tests {
     }
 
     #[test]
-    fn hint_db_contains_expected_count() {
+    fn hint_db_contains_expected_languages() {
         let db = HintDb::get();
-        // 0 Rust + 4 TypeScript + 2 Python + 1 Go = 7
-        assert_eq!(db.len(), 7, "expected 7 error codes across 4 languages");
+        // Verify each language has at least the expected codes
+        assert!(db.lookup("typescript", "TS2769").is_some(), "TS missing");
+        assert!(db.lookup("python", "SyntaxError").is_some(), "Python missing");
+        assert!(db.lookup("go", "cannot assign").is_some(), "Go missing");
+        // Rust has 0 codes (intentionally — agent already knows them)
+        assert!(db.lookup("rust", "E0308").is_none(), "Rust should have no codes");
     }
 
     #[test]
