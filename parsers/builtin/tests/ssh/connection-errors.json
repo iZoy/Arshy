@@ -1,9 +1,6 @@
 [
   {
-    "code": "22",
-    "file": "example.com",
-    "line": 0,
-    "message": "Connection refused",
+    "message": "ssh: connect to host example.com port 22: Connection refused",
     "severity": "error",
     "type": "diagnostic"
   },

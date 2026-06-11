@@ -72,9 +72,9 @@ Agents see just 2 tools instead of 5+ separate ones:
 
 No configuration needed. The agent just calls `arshy_exec` with `action:"run"` for everything.
 
-### 34 Built-in Parsers
+### 39 Built-in Parsers
 
-tsc, cargo, jest, vite, eslint, go, python, cc, npm, webpack, prettier, swc, esbuild, clippy, make, gradle, cargo-test, mocha, pip, pnpm, terraform, kubectl, helm, aws, docker, uv, ruff, turbo, nx, deno, bun, biome, oxlint, vitest — each extracts structured events (errors, warnings, file locations) from tool output.
+tsc, cargo, jest, vite, eslint, go, python, cc, npm, webpack, prettier, swc, esbuild, clippy, make, gradle, cargo-test, mocha, pip, pnpm, terraform, kubectl, helm, aws, docker, uv, ruff, turbo, nx, deno, bun, biome, oxlint, vitest, git, curl, ssh — each extracts structured events (errors, warnings, file locations) from tool output.
 
 Plus: **generic JSON parser** (auto-detects `--json` output), **crash parser** (Go/Python/Rust/Node/Shell tracebacks), and **stderr error detection** for any command.
 
