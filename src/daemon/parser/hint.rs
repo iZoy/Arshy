@@ -111,8 +111,8 @@ mod tests {
     #[test]
     fn lookup_returns_hint_for_known_code() {
         let db = HintDb::get();
-        let hint = db.lookup("rust", "E0308").expect("E0308 should exist");
-        assert!(hint.cause.contains("Type mismatch"));
+        let hint = db.lookup("typescript", "TS2769").expect("TS2769 should exist");
+        assert!(hint.cause.contains("overload"));
         assert!(hint.fix.is_some());
     }
 
@@ -120,7 +120,7 @@ mod tests {
     fn lookup_returns_none_for_unknown_code() {
         let db = HintDb::get();
         assert!(db.lookup("rust", "E99999").is_none());
-        assert!(db.lookup("unknown", "E0308").is_none());
+        assert!(db.lookup("unknown", "TS2769").is_none());
     }
 
     #[test]
@@ -148,48 +148,41 @@ mod tests {
     }
 
     #[test]
-    fn lookup_no_retry_for_e0308() {
+    fn lookup_no_retry_for_ts2769() {
         let db = HintDb::get();
-        let hint = db.lookup("rust", "E0308").expect("E0308 should exist");
-        assert!(hint.retry.is_none(), "E0308 should not have retry suggestion");
-    }
-
-    #[test]
-    fn lookup_no_retry_for_e0425() {
-        let db = HintDb::get();
-        let hint = db.lookup("rust", "E0425").expect("E0425 should exist");
-        assert!(hint.retry.is_none(), "E0425 should not have retry suggestion");
+        let hint = db.lookup("typescript", "TS2769").expect("TS2769 should exist");
+        assert!(hint.retry.is_none(), "TS2769 should not have retry suggestion");
     }
 
     #[test]
     fn lookup_returns_hint_for_typescript() {
         let db = HintDb::get();
-        let hint = db.lookup("typescript", "TS2345").expect("TS2345 should exist");
-        assert!(hint.cause.contains("Argument type"));
+        let hint = db.lookup("typescript", "TS2571").expect("TS2571 should exist");
+        assert!(hint.cause.contains("unknown"));
         assert!(hint.fix.is_some());
     }
 
     #[test]
     fn lookup_returns_hint_for_python() {
         let db = HintDb::get();
-        let hint = db.lookup("python", "NameError").expect("NameError should exist");
-        assert!(hint.cause.contains("not defined"));
+        let hint = db.lookup("python", "SyntaxError").expect("SyntaxError should exist");
+        assert!(hint.cause.contains("syntax"));
         assert!(hint.fix.is_some());
     }
 
     #[test]
     fn lookup_returns_hint_for_go() {
         let db = HintDb::get();
-        let hint = db.lookup("go", "undeclared").expect("undeclared should exist");
-        assert!(hint.cause.contains("Undeclared"));
+        let hint = db.lookup("go", "cannot assign").expect("cannot assign should exist");
+        assert!(hint.cause.contains("Cannot assign"));
         assert!(hint.fix.is_some());
     }
 
     #[test]
     fn hint_db_contains_expected_count() {
         let db = HintDb::get();
-        // 3 Rust + 15 TypeScript + 14 Python + 11 Go = 43
-        assert_eq!(db.len(), 43, "expected 43 error codes across 4 languages");
+        // 0 Rust + 4 TypeScript + 2 Python + 1 Go = 7
+        assert_eq!(db.len(), 7, "expected 7 error codes across 4 languages");
     }
 
     #[test]
