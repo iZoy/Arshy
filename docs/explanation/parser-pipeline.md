@@ -119,7 +119,7 @@ Git 关联：失败命令自动标记哪些错误文件在最近提交中被修�
 
 ## 错误码修复建议
 
-错误事件自动附带修复建议（基于 43 个常见错误码）：
+错误事件自动附带修复建议（基于 7 个精选错误码，仅保留修复建议非直观的）：
 
 ```json
 {
@@ -138,10 +138,9 @@ Git 关联：失败命令自动标记哪些错误文件在最近提交中被修�
 
 | 语言 | 工具 | 错误码数 |
 |------|------|---------|
-| Rust | cargo/rustc/clippy | 3 |
-| TypeScript | tsc/eslint/biome | 15 |
-| Python | python/pytest/ruff | 14 |
-| Go | go | 11 |
+| TypeScript | tsc/eslint/biome | 4 |
+| Python | python/pytest/ruff | 2 |
+| Go | go | 1 |
 
 实现：`HintDb` 从 `parsers/errors/*.toml` 加载，编译时通过 `include_str!` 嵌入二进制。
 

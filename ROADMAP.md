@@ -288,7 +288,7 @@ Agent 加载 Skill → 知道用哪个 CLI → 执行命令 → arshy (shell) �
 |------|------|------|
 | V1 | **EventHint 结构** — TaskEvent 新增 hint 字段 (cause, fix, retry) | ✅ |
 | V2 | **HintDb 加载** — parsers/errors/*.toml 编译时加载，LazyLock 单例 | ✅ 7 tests |
-| V3 | **4 语言错误码** — Rust (3), TypeScript (15), Python (14), Go (11) 共 43 个 | ✅ |
+| V3 | **4 语言精选错误码** — TypeScript (4), Python (2), Go (1) 共 7 个（仅保留 LLM 不易识别的） | ✅ |
 | V4 | **Executor 集成** — sync 路径自动查表附加 hint | ✅ |
 
 ---

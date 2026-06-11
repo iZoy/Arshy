@@ -96,7 +96,7 @@ The executor distinguishes short vs long commands:
 
 ### Error Code Hints
 
-43 error codes across 4 languages in `parsers/errors/*.toml`. When a parser extracts an error code, the executor automatically attaches `hint: {cause, fix}` to the event. The `HintDb` is loaded at startup via `include_str!`.
+7 error codes across 4 languages in `parsers/errors/*.toml`. When a parser extracts an error code, the executor automatically attaches `hint: {cause, fix}` to the event. The `HintDb` is loaded at startup via `include_str!`. Only codes with non-obvious fixes are included (common codes like E0308, TS2345 are excluded since LLMs already know them).
 
 ### Adding a Parser
 
