@@ -78,19 +78,25 @@ arshy tail <TASK_ID>
 
 ### arshy stats
 
-聚合统计：总任务数、状态分布、数据库大小、Token 节省量。
+聚合统计：任务数、事件数、性能指标、功能使用情况。
 
 输出示例：
 ```
-┌─ arshy stats ─────────────────────────────────────┐
-│ Tasks:     1,247 total (1,180 ok / 67 failed)     │
-│ Events:    18,432 (892 errors)                     │
-│ Duration:  p50=1.2s  p99=45.3s                     │
-│                                                    │
-│ Token savings:  ~73% (est. 890K → 240K tokens)     │
-│ Parser coverage: 82% lines matched parsers         │
-│ DB size:        12.4 MB                            │
-└────────────────────────────────────────────────────┘
+┌─ ARSHY DAEMON STATS ────────────────────────────────────┐
+│ Tasks:   1247 total (3 running, 1180 done, 67 failed)   │
+│ Events:  18432 total (892 errors)                        │
+│ Failure rate:  5%                                        │
+│ Avg duration:  1200ms                                    │
+│ DB size:       12871680 bytes                            │
+├──────────────────────────────────────────────────────────┤
+│ Intelligence                                             │
+│  Parser coverage: 82% events structured (not raw log)    │
+│  Hints attached:  45 error events with fix suggestions   │
+│  Context enriched: 312 events with source code           │
+│  Dedup saved:     89 duplicate events collapsed          │
+│  Git correlation:  12 errors linked to recent changes    │
+│  Top parsers:     tsc(120), cargo(89), eslint(45)        │
+└──────────────────────────────────────────────────────────┘
 ```
 
 ### arshy prune

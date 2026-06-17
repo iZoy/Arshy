@@ -823,6 +823,12 @@ mod benchmark {
         accuracy: f64,
         /// Per-field accuracy percentages.
         field_accuracy: FieldAcc,
+        /// Events with file:line location (structured advantage over raw text).
+        events_with_location: usize,
+        /// Events with error/warning code extracted.
+        events_with_code: usize,
+        /// Diagnostic events (not raw log fallback).
+        diagnostic_events: usize,
     }
 
     #[derive(serde::Serialize)]
@@ -852,6 +858,12 @@ mod benchmark {
         error_speed_advantage_pct: f64,
         /// Average parser accuracy across all fixtures.
         avg_accuracy: f64,
+        /// Total events with file:line location across all fixtures.
+        total_events_with_location: usize,
+        /// Total events with error code extracted.
+        total_events_with_code: usize,
+        /// Total diagnostic events (not raw log fallback).
+        total_diagnostic_events: usize,
         /// Per-parser results.
         details: Vec<FixtureResult>,
     }
@@ -991,6 +1003,11 @@ mod benchmark {
         let fields_per_event =
             if !events.is_empty() { structured_fields as f64 / events.len() as f64 } else { 0.0 };
 
+        // Feature value metrics
+        let events_with_location = events.iter().filter(|e| e.location.is_some()).count();
+        let events_with_code = events.iter().filter(|e| e.code.is_some()).count();
+        let diagnostic_events = events.iter().filter(|e| e.event_type != "log").count();
+
         FixtureResult {
             parser: parser_name.to_string(),
             fixture: txt_path.file_stem().unwrap().to_str().unwrap().to_string(),
@@ -1006,6 +1023,9 @@ mod benchmark {
             error_faster,
             accuracy,
             field_accuracy,
+            events_with_location,
+            events_with_code,
+            diagnostic_events,
         }
     }
 
@@ -1069,6 +1089,11 @@ mod benchmark {
             0.0
         };
 
+        let total_events_with_location: usize =
+            all_results.iter().map(|r| r.events_with_location).sum();
+        let total_events_with_code: usize = all_results.iter().map(|r| r.events_with_code).sum();
+        let total_diagnostic_events: usize = all_results.iter().map(|r| r.diagnostic_events).sum();
+
         let bench = BenchmarkResult {
             total_fixtures,
             total_raw_lines,
@@ -1080,6 +1105,9 @@ mod benchmark {
             avg_fields_per_event,
             error_speed_advantage_pct,
             avg_accuracy,
+            total_events_with_location,
+            total_events_with_code,
+            total_diagnostic_events,
             details: all_results,
         };
 

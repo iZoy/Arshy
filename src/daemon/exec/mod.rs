@@ -576,6 +576,17 @@ impl Executor {
                             }
                         }
 
+                        // Store git correlation counter
+                        let correlated_count = project_context
+                            .as_ref()
+                            .and_then(|ctx| ctx.get("correlated_errors"))
+                            .and_then(|v| v.as_array())
+                            .map(|a| a.len() as u64)
+                            .unwrap_or(0);
+                        if correlated_count > 0 {
+                            let _ = self.store.update_task_counters(&task_id, 0, correlated_count);
+                        }
+
                         Ok(RunResult {
                             task_id: task_id.clone(),
                             status: info.status.clone(),
@@ -916,7 +927,7 @@ async fn run_background(mut t: BackgroundTask) -> Result<()> {
 
     // 3-way select: output reading, timeout, or kill signal
     // After this select, handle.wait() is called to get the exit code.
-    let (timed_out, killed, mut seq, error_count, raw_output) = tokio::select! {
+    let (timed_out, killed, mut seq, error_count, raw_output, dedup_collapsed) = tokio::select! {
         result = async {
             let mut seq: u64 = 0;
             let mut total_bytes: u64 = 0;
@@ -1071,15 +1082,15 @@ async fn run_background(mut t: BackgroundTask) -> Result<()> {
                 }
             }
             // Output channel closed — process exited, readers finished
-            (seq, error_count, full_output)
+            (seq, error_count, full_output, dedup.collapsed_count())
         } => {
-            (false, false, result.0, result.1, result.2)
+            (false, false, result.0, result.1, result.2, result.3)
         }
         _ = tokio::time::sleep(timeout_dur) => {
             tracing::warn!("task {} timed out after {}ms", t.task_id, timeout_dur.as_millis());
             let _ = handle.force_kill();
             let _ = t.store.update_task(&t.task_id, &TaskStatus::Timeout, Some(-2), None);
-            (true, false, 0u64, 0u64, String::new())
+            (true, false, 0u64, 0u64, String::new(), 0u64)
         }
         _ = t.kill_rx.recv() => {
             tracing::info!("task {} received kill signal, initiating graceful kill", t.task_id);
@@ -1091,7 +1102,7 @@ async fn run_background(mut t: BackgroundTask) -> Result<()> {
                 Ok(false) => tracing::warn!("task {} was force-killed", t.task_id),
                 Err(e) => tracing::error!("task {} kill error: {}", t.task_id, e),
             }
-            (false, true, 0u64, 0u64, String::new())
+            (false, true, 0u64, 0u64, String::new(), 0u64)
         }
     };
 
@@ -1145,6 +1156,49 @@ async fn run_background(mut t: BackgroundTask) -> Result<()> {
         t.store.update_task(&t.task_id, &final_status, Some(exit_code_val), Some(duration_ms))
     {
         tracing::error!("task {} failed to update final status: {}", t.task_id, e);
+    }
+
+    // Store feature usage counters
+    if dedup_collapsed > 0 {
+        if let Err(e) = t.store.update_task_counters(&t.task_id, dedup_collapsed, 0) {
+            tracing::warn!("failed to store dedup counter for task {}: {}", t.task_id, e);
+        }
+    }
+
+    // Git correlation: count errors linked to recently changed files.
+    // This runs for all tasks (sync and async), so correlated_errors is always tracked.
+    if let Some(ref cwd_path) = t.cwd {
+        let store = t.store.clone();
+        let task_id = t.task_id.clone();
+        let cwd = cwd_path.clone();
+        tokio::task::spawn_blocking(move || {
+            let params = arshy_lib::ipc::QueryParams {
+                task_id: task_id.clone(),
+                event_type: None,
+                severity: Some("error".into()),
+                code: None,
+                file: None,
+                limit: 200,
+                offset: 0,
+            };
+            if let Ok((events, _)) = store.query_events(&params) {
+                if let Some(gc) =
+                    super::context::git_correlator::GitCorrelation::detect(Some(cwd.as_path()))
+                {
+                    let count = events
+                        .iter()
+                        .filter(|e| {
+                            e.location.as_ref().is_some_and(|loc| {
+                                gc.changed_files().iter().any(|f| f == &loc.file)
+                            })
+                        })
+                        .count() as u64;
+                    if count > 0 {
+                        let _ = store.update_task_counters(&task_id, 0, count);
+                    }
+                }
+            }
+        });
     }
 
     // Publish completion event

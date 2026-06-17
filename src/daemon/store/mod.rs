@@ -1,4 +1,4 @@
-//! SQLite storage — tasks, events, tool versions, parser registry.
+//! JSONL file-based storage — tasks, events, tool versions.
 
 mod events;
 mod prune;
@@ -6,38 +6,201 @@ mod schema;
 mod tasks;
 mod versions;
 
+use arshy_lib::ipc::TaskStatus;
 use arshy_lib::Result;
-use std::path::Path;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::io::Write as _;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-/// Thread-safe SQLite store wrapper.
+/// Internal task record extending the public Task with storage-only fields.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+struct TaskRecord {
+    #[serde(flatten)]
+    task: arshy_lib::ipc::Task,
+    raw_output: Option<String>,
+    dedup_collapsed: u64,
+    correlated_errors: u64,
+}
+
+impl Default for TaskRecord {
+    fn default() -> Self {
+        Self {
+            task: arshy_lib::ipc::Task {
+                task_id: String::new(),
+                command: String::new(),
+                cwd: None,
+                status: TaskStatus::Running,
+                exit_code: None,
+                pid: None,
+                parser_name: None,
+                started_at: String::new(),
+                finished_at: None,
+                duration_ms: None,
+                events_count: 0,
+                error_count: 0,
+            },
+            raw_output: None,
+            dedup_collapsed: 0,
+            correlated_errors: 0,
+        }
+    }
+}
+
+/// Thread-safe JSONL file-based store.
 pub struct Store {
-    conn: Mutex<rusqlite::Connection>,
+    dir: PathBuf,
+    tasks: Mutex<HashMap<String, TaskRecord>>,
+    versions: Mutex<HashMap<String, (String, chrono::DateTime<chrono::Utc>)>>,
 }
 
 impl Store {
-    /// Open (or create) the SQLite database at `path`.
-    pub fn open(path: &Path, wal_mode: bool) -> Result<Self> {
-        let conn = rusqlite::Connection::open(path)?;
-        if wal_mode {
-            conn.execute_batch("PRAGMA journal_mode=WAL;")?;
-        }
-        conn.execute_batch("PRAGMA foreign_keys=ON;")?;
-        Ok(Self { conn: Mutex::new(conn) })
-    }
-
-    /// Run `PRAGMA integrity_check` and return the result.
+    /// Open (or create) the store at `path`.
     ///
-    /// Returns `Ok(())` if the database is healthy, or an error with details.
-    pub fn integrity_check(&self) -> Result<String> {
-        let conn = self.lock();
-        let result: String = conn.query_row("PRAGMA integrity_check", [], |row| row.get(0))?;
-        Ok(result)
+    /// If `path` ends in `.db` (legacy SQLite path), the store directory is
+    /// derived as a sibling: e.g. `/foo/arshyd.db` -> `/foo/arshy-store/`.
+    /// Otherwise the path is used directly as the store directory.
+    pub fn open(path: &Path, _wal_mode: bool) -> Result<Self> {
+        let dir = if path.extension().is_some_and(|e| e == "db") {
+            path.with_extension("").with_file_name(format!(
+                "{}-store",
+                path.file_stem().unwrap_or_default().to_string_lossy()
+            ))
+        } else {
+            path.to_path_buf()
+        };
+
+        // If path is a directory, use it directly; if it looks like a file, use parent
+        let store_dir = if dir.extension().is_some() {
+            dir.parent()
+                .unwrap_or(Path::new("."))
+                .join(format!("{}-store", dir.file_stem().unwrap_or_default().to_string_lossy()))
+        } else {
+            dir
+        };
+
+        std::fs::create_dir_all(&store_dir)?;
+
+        let tasks_map = load_tasks_from_disk(&store_dir)?;
+        let versions_map = load_versions_from_disk(&store_dir)?;
+
+        Ok(Self {
+            dir: store_dir,
+            tasks: Mutex::new(tasks_map),
+            versions: Mutex::new(versions_map),
+        })
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, rusqlite::Connection> {
-        self.conn.lock().expect("store mutex poisoned")
+    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, TaskRecord>> {
+        self.tasks.lock().expect("store mutex poisoned")
     }
+
+    /// Write the full tasks HashMap to tasks.jsonl atomically.
+    fn persist_tasks(&self) -> Result<()> {
+        let tasks = self.tasks.lock().unwrap();
+        let path = self.dir.join("tasks.jsonl");
+        let tmp = self.dir.join("tasks.jsonl.tmp");
+        let mut file = std::fs::File::create(&tmp)?;
+        for task in tasks.values() {
+            serde_json::to_writer(&mut file, task)?;
+            file.write_all(b"\n")?;
+        }
+        file.sync_all()?;
+        std::fs::rename(&tmp, &path)?;
+        Ok(())
+    }
+
+    /// Append a single event JSON line to the per-task file.
+    fn append_event_line(&self, task_id: &str, line: &str) -> Result<()> {
+        let events_dir = self.dir.join("events");
+        std::fs::create_dir_all(&events_dir)?;
+        let path = events_dir.join(format!("{}.jsonl", task_id));
+        let mut file = std::fs::OpenOptions::new().create(true).append(true).open(&path)?;
+        file.write_all(line.as_bytes())?;
+        file.write_all(b"\n")?;
+        file.flush()?;
+        Ok(())
+    }
+
+    /// Run `integrity_check` — verify tasks.jsonl is parseable.
+    pub fn integrity_check(&self) -> Result<String> {
+        let tasks = self.lock();
+        // If we loaded successfully, the data is intact
+        // Verify that the events directory is accessible
+        let events_dir = self.dir.join("events");
+        if events_dir.exists() {
+            // Try to read each event file
+            for entry in std::fs::read_dir(&events_dir)? {
+                let entry = entry?;
+                let path = entry.path();
+                if path.extension().is_some_and(|e| e == "jsonl") {
+                    let content = std::fs::read_to_string(&path)?;
+                    for line in content.lines() {
+                        if !line.trim().is_empty() {
+                            let _: serde_json::Value = serde_json::from_str(line).map_err(|e| {
+                                arshy_lib::ArshyError::Other(format!(
+                                    "corrupt event in {}: {}",
+                                    path.display(),
+                                    e
+                                ))
+                            })?;
+                        }
+                    }
+                }
+            }
+        }
+        drop(tasks);
+        Ok("ok".to_string())
+    }
+
+    /// Persist versions map to disk.
+    fn persist_versions(&self) -> Result<()> {
+        let versions = self.versions.lock().unwrap();
+        let path = self.dir.join("versions.json");
+        let tmp = self.dir.join("versions.json.tmp");
+        let map: HashMap<String, (String, String)> =
+            versions.iter().map(|(k, (v, t))| (k.clone(), (v.clone(), t.to_rfc3339()))).collect();
+        let data = serde_json::to_string_pretty(&map)?;
+        std::fs::write(&tmp, &data)?;
+        std::fs::rename(&tmp, &path)?;
+        Ok(())
+    }
+}
+
+fn load_tasks_from_disk(dir: &Path) -> Result<HashMap<String, TaskRecord>> {
+    let path = dir.join("tasks.jsonl");
+    let mut map = HashMap::new();
+    if path.exists() {
+        let content = std::fs::read_to_string(&path)?;
+        for line in content.lines() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            let record: TaskRecord = serde_json::from_str(line)?;
+            map.insert(record.task.task_id.clone(), record);
+        }
+    }
+    Ok(map)
+}
+
+fn load_versions_from_disk(
+    dir: &Path,
+) -> Result<HashMap<String, (String, chrono::DateTime<chrono::Utc>)>> {
+    let path = dir.join("versions.json");
+    let mut map = HashMap::new();
+    if path.exists() {
+        let content = std::fs::read_to_string(&path)?;
+        let raw: HashMap<String, (String, String)> = serde_json::from_str(&content)?;
+        for (k, (version, timestamp)) in raw {
+            if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(&timestamp) {
+                map.insert(k, (version, dt.with_timezone(&chrono::Utc)));
+            }
+        }
+    }
+    Ok(map)
 }
 
 // ── Store Tests ─────────────────────────────────────────────────────────────
@@ -130,7 +293,7 @@ mod tests {
         let (store, _tmp) = test_store();
         let task = make_task("dup-1", "echo a", TaskStatus::Running);
         store.insert_task(&task).unwrap();
-        // Second insert with same ID should error (PRIMARY KEY)
+        // Second insert with same ID should error (duplicate)
         let result = store.insert_task(&task);
         assert!(result.is_err());
     }

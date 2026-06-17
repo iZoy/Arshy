@@ -1,104 +1,15 @@
 use arshy_lib::Result;
 
 impl super::Store {
-    /// Create all tables and indexes if they don't exist, then run migrations.
+    /// Ensure storage directories exist. Replaces the old CREATE TABLE statements.
     pub fn initialize_schema(&self) -> Result<()> {
-        self.lock().execute_batch(
-            "
-            CREATE TABLE IF NOT EXISTS tasks (
-                task_id      TEXT PRIMARY KEY,
-                command      TEXT NOT NULL,
-              cwd          TEXT,
-                status       TEXT NOT NULL,
-                exit_code    INTEGER,
-                pid          INTEGER,
-                parser_name  TEXT,
-                started_at   TEXT NOT NULL,
-                finished_at  TEXT,
-                duration_ms  INTEGER,
-                events_count INTEGER DEFAULT 0,
-                error_count  INTEGER DEFAULT 0
-            );
-
-            CREATE TABLE IF NOT EXISTS events (
-                id           INTEGER PRIMARY KEY AUTOINCREMENT,
-                task_id      TEXT NOT NULL REFERENCES tasks(task_id),
-                seq          INTEGER NOT NULL,
-                type         TEXT NOT NULL,
-                severity     TEXT,
-                code         TEXT,
-                message      TEXT NOT NULL,
-                payload      TEXT NOT NULL,
-                created_at   TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS tool_versions (
-                tool_name   TEXT PRIMARY KEY,
-                version     TEXT NOT NULL,
-                detected_at TEXT NOT NULL DEFAULT (datetime('now')),
-                expires_at  TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS parser_registry (
-                parser_name TEXT PRIMARY KEY,
-                tool_name   TEXT NOT NULL,
-                min_version TEXT,
-                max_version TEXT,
-                parser_type TEXT NOT NULL,
-                source      TEXT NOT NULL,
-                loaded_at   TEXT
-            );
-
-            CREATE TABLE IF NOT EXISTS schema_version (
-                version INTEGER NOT NULL
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_events_task ON events(task_id, seq);
-            CREATE INDEX IF NOT EXISTS idx_events_type_sev ON events(task_id, type, severity);
-            ",
-        )?;
-
-        self.run_migrations()?;
+        let events_dir = self.dir.join("events");
+        std::fs::create_dir_all(&events_dir)?;
         Ok(())
     }
 
-    /// Apply any pending migrations.
-    fn run_migrations(&self) -> Result<()> {
-        let conn = self.lock();
-        let current: i64 = conn
-            .query_row("SELECT COALESCE(MAX(version), 0) FROM schema_version", [], |r| r.get(0))
-            .unwrap_or(0);
-
-        if current < 2 {
-            // v2: add index on tasks.started_at for efficient pruning
-            conn.execute_batch(
-                "CREATE INDEX IF NOT EXISTS idx_tasks_started ON tasks(started_at);
-                 INSERT INTO schema_version (version) VALUES (2);",
-            )?;
-        }
-
-        if current < 3 {
-            // v3: add index on tasks.status for fast status-filtered listing
-            conn.execute_batch(
-                "CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
-                 INSERT INTO schema_version (version) VALUES (3);",
-            )?;
-        }
-
-        if current < 4 {
-            // v4: add raw_output column for tee / failure recovery
-            conn.execute_batch(
-                "ALTER TABLE tasks ADD COLUMN raw_output TEXT;
-                 INSERT INTO schema_version (version) VALUES (4);",
-            )?;
-        }
-
-        Ok(())
-    }
-
-    /// Run a WAL checkpoint to reclaim space. No-op if WAL mode is not active.
+    /// No-op — WAL mode is SQLite-specific.
     pub fn wal_checkpoint(&self) -> Result<()> {
-        self.lock().execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")?;
         Ok(())
     }
 
@@ -108,52 +19,84 @@ impl super::Store {
         db_path: Option<&std::path::Path>,
     ) -> Result<arshy_lib::ipc::StatsResponse> {
         use arshy_lib::ipc::StatusCounts;
-        let conn = self.lock();
 
-        let total_tasks: u64 =
-            conn.query_row("SELECT COUNT(*) FROM tasks", [], |r| r.get(0)).unwrap_or(0);
+        let tasks = self.lock().clone();
+        let total_tasks = tasks.len() as u64;
 
         let mut counts = StatusCounts::default();
-        let mut stmt = conn.prepare("SELECT status, COUNT(*) FROM tasks GROUP BY status")?;
-        let rows =
-            stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, u64>(1)?)))?;
-        for row in rows {
-            let (status, count) = row?;
-            // Status is stored as JSON-quoted string (e.g. "\"completed\"")
-            let trimmed = status.trim_matches('"');
-            match trimmed {
-                "running" => counts.running = count,
-                "completed" => counts.completed = count,
-                "failed" => counts.failed = count,
-                "killed" => counts.killed = count,
-                "timeout" => counts.timeout = count,
-                _ => {}
+        let mut durations: Vec<u64> = Vec::new();
+        let mut total_events: u64 = 0;
+        let mut total_errors: u64 = 0;
+        let mut parser_coverage_non_log: u64 = 0;
+        let mut hints_count: u64 = 0;
+        let mut context_count: u64 = 0;
+        let mut dedup_total: u64 = 0;
+        let mut correlated_total: u64 = 0;
+        let mut parser_usage: std::collections::HashMap<String, u64> =
+            std::collections::HashMap::new();
+
+        for record in tasks.values() {
+            match &record.task.status {
+                arshy_lib::ipc::TaskStatus::Running => counts.running += 1,
+                arshy_lib::ipc::TaskStatus::Completed => counts.completed += 1,
+                arshy_lib::ipc::TaskStatus::Failed => counts.failed += 1,
+                arshy_lib::ipc::TaskStatus::Killed => counts.killed += 1,
+                arshy_lib::ipc::TaskStatus::Timeout => counts.timeout += 1,
+            }
+            if let Some(d) = record.task.duration_ms {
+                durations.push(d);
+            }
+            total_events += record.task.events_count;
+            total_errors += record.task.error_count;
+            dedup_total += record.dedup_collapsed;
+            correlated_total += record.correlated_errors;
+            if let Some(ref parser) = record.task.parser_name {
+                *parser_usage.entry(parser.clone()).or_insert(0) += 1;
             }
         }
 
-        let total_events: u64 =
-            conn.query_row("SELECT COUNT(*) FROM events", [], |r| r.get(0)).unwrap_or(0);
-        let total_errors: u64 = conn
-            .query_row("SELECT COUNT(*) FROM events WHERE severity = 'error'", [], |r| r.get(0))
-            .unwrap_or(0);
+        // Scan event files for parser_coverage, hints, and context metrics
+        let events_dir = self.dir.join("events");
+        if events_dir.exists() {
+            for entry in std::fs::read_dir(&events_dir)? {
+                let entry = entry?;
+                let path = entry.path();
+                if path.extension().is_none_or(|e| e != "jsonl") {
+                    continue;
+                }
+                let content = std::fs::read_to_string(&path)?;
+                for line in content.lines() {
+                    let line = line.trim();
+                    if line.is_empty() {
+                        continue;
+                    }
+                    if let Ok(event) = serde_json::from_str::<arshy_lib::ipc::TaskEvent>(line) {
+                        if event.event_type != "log" {
+                            parser_coverage_non_log += 1;
+                        }
+                        if event.hint.is_some() {
+                            hints_count += 1;
+                        }
+                        if event.context.is_some() {
+                            context_count += 1;
+                        }
+                    }
+                }
+            }
+        }
 
-        let avg_duration: Option<f64> = conn
-            .query_row(
-                "SELECT AVG(duration_ms) FROM tasks WHERE duration_ms IS NOT NULL",
-                [],
-                |r| r.get(0),
-            )
-            .ok();
+        let parser_coverage_pct = if total_events == 0 {
+            None
+        } else {
+            Some(parser_coverage_non_log as f64 * 100.0 / total_events as f64)
+        };
 
-        // Percentiles via ordered list
-        let durations: Vec<u64> = conn
-            .prepare(
-                "SELECT duration_ms FROM tasks WHERE duration_ms IS NOT NULL ORDER BY duration_ms",
-            )?
-            .query_map([], |r| r.get(0))?
-            .filter_map(|r| r.ok())
-            .collect();
-
+        durations.sort_unstable();
+        let avg_duration = if durations.is_empty() {
+            None
+        } else {
+            Some(durations.iter().sum::<u64>() as f64 / durations.len() as f64)
+        };
         let p50 = percentile(&durations, 50);
         let p99 = percentile(&durations, 99);
 
@@ -164,36 +107,48 @@ impl super::Store {
             None
         };
 
-        let db_size = db_path.and_then(|p| std::fs::metadata(p).ok()).map(|m| m.len());
+        // db_size: sum of all store files
+        let db_size = if let Some(p) = db_path {
+            // Legacy: use the provided path size if it exists
+            std::fs::metadata(p).ok().map(|m| m.len())
+        } else {
+            // Compute total store size
+            let mut total: u64 = 0;
+            let tasks_file = self.dir.join("tasks.jsonl");
+            if let Ok(m) = std::fs::metadata(&tasks_file) {
+                total += m.len();
+            }
+            let versions_file = self.dir.join("versions.json");
+            if let Ok(m) = std::fs::metadata(&versions_file) {
+                total += m.len();
+            }
+            let events_dir = self.dir.join("events");
+            if events_dir.exists() {
+                if let Ok(entries) = std::fs::read_dir(&events_dir) {
+                    for entry in entries.flatten() {
+                        if let Ok(m) = entry.metadata() {
+                            total += m.len();
+                        }
+                    }
+                }
+            }
+            Some(total)
+        };
 
-        let parser_coverage_pct: Option<f64> = conn
-            .query_row(
-                "SELECT CASE WHEN COUNT(*) = 0 THEN 0.0 \
-                 ELSE CAST(COUNT(CASE WHEN type != 'log' THEN 1 END) AS REAL) \
-                     * 100.0 / COUNT(*) END \
-                 FROM events",
-                [],
-                |r| r.get::<_, f64>(0),
-            )
-            .ok();
+        let hints_attached = if hints_count > 0 { Some(hints_count) } else { None };
+        let context_enriched = if context_count > 0 { Some(context_count) } else { None };
 
-        // Count events that received fix hints (hint field stored in payload JSON)
-        let hints_attached: Option<u64> = conn
-            .query_row("SELECT COUNT(*) FROM events WHERE payload LIKE '%\"hint\":%'", [], |r| {
-                r.get::<_, i64>(0)
-            })
-            .ok()
-            .map(|v| v as u64);
-
-        // Count events enriched with source context (context field with before/after)
-        let context_enriched: Option<u64> = conn
-            .query_row(
-                "SELECT COUNT(*) FROM events WHERE payload LIKE '%\"context\":%' AND payload NOT LIKE '%\"context\":null%'",
-                [],
-                |r| r.get::<_, i64>(0),
-            )
-            .ok()
-            .map(|v| v as u64);
+        let per_parser_usage = if parser_usage.is_empty() {
+            None
+        } else {
+            let mut list: Vec<arshy_lib::ipc::ParserCount> = parser_usage
+                .into_iter()
+                .map(|(parser, count)| arshy_lib::ipc::ParserCount { parser, count })
+                .collect();
+            list.sort_by(|a, b| b.count.cmp(&a.count));
+            list.truncate(10);
+            Some(list)
+        };
 
         Ok(arshy_lib::ipc::StatsResponse {
             total_tasks,
@@ -208,6 +163,9 @@ impl super::Store {
             parser_coverage_pct,
             hints_attached,
             context_enriched,
+            dedup_collapsed: Some(dedup_total),
+            correlated_errors: Some(correlated_total),
+            per_parser_usage,
         })
     }
 }
@@ -337,6 +295,38 @@ mod tests {
         assert!(coverage > 30.0 && coverage < 40.0); // ~33.3%
                                                      // 1 event has hint
         assert_eq!(stats.hints_attached, Some(1));
+    }
+
+    #[test]
+    fn stats_feature_usage_counters() {
+        let (store, _tmp) = test_store();
+        let mut task = make_task("t1", "cargo build", TaskStatus::Completed);
+        task.parser_name = Some("cargo".into());
+        store.insert_task(&task).unwrap();
+        let mut task2 = make_task("t2", "tsc", TaskStatus::Completed);
+        task2.parser_name = Some("tsc".into());
+        store.insert_task(&task2).unwrap();
+
+        store.update_task_counters("t1", 5, 2).unwrap();
+        store.update_task_counters("t2", 0, 0).unwrap();
+
+        let stats = store.get_stats(None).unwrap();
+        assert_eq!(stats.dedup_collapsed, Some(5));
+        assert_eq!(stats.correlated_errors, Some(2));
+
+        let parsers = stats.per_parser_usage.unwrap();
+        assert_eq!(parsers.len(), 2);
+        // Both have count 1, order may vary
+        let names: Vec<&str> = parsers.iter().map(|p| p.parser.as_str()).collect();
+        assert!(names.contains(&"cargo"));
+        assert!(names.contains(&"tsc"));
+    }
+
+    #[test]
+    fn update_task_counters_noop_for_missing() {
+        let (store, _tmp) = test_store();
+        // Should not error for nonexistent task
+        store.update_task_counters("nonexistent", 10, 5).unwrap();
     }
 
     #[test]

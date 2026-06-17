@@ -1,0 +1,406 @@
+[
+  {
+    "file": "home/user/project/src/app.ts",
+    "line": 0,
+    "message": "/home/user/project/src/app.ts",
+    "severity": "info",
+    "type": "location"
+  },
+  {
+    "code": "@typescript-eslint/no-explicit-any",
+    "message": "Unexpected any, specify a different type",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "no-unused-vars",
+    "message": "'x' is defined but never used",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "@typescript-eslint/explicit-function-return-type",
+    "message": "Missing return type on function",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "@typescript-eslint/no-non-null-assertion",
+    "message": "Forbidden non-null assertion",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "import/newline-after-import",
+    "message": "Expected 1 empty line after import statement",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "quotes",
+    "message": "Strings must use singlequote",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "semi",
+    "message": "Missing semicolon",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "eqeqeq",
+    "message": "Expected '===' and instead saw '=='",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "no-console",
+    "message": "Unexpected console statement",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "prefer-const",
+    "message": "'arr' is never reassigned, use 'const' instead",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "no-var",
+    "message": "Unexpected var, use let or const instead",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "no-prototype-builtins",
+    "message": "Do not access Object.prototype method 'hasOwnProperty' directly",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "max-statements",
+    "message": "Function 'processData' has too many statements (52). Maximum allowed is 50",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "no-warning-comments",
+    "message": "Unexpected todo comment",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "import/no-self-import",
+    "message": "File 'app.ts' must be the sole module",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "max-nested-callbacks",
+    "message": "Avoid deep nesting of callbacks",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "parse-error",
+    "message": "Parsing error: Unexpected token",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "no-undef",
+    "message": "'setTimeout' is not defined",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "prefer-template",
+    "message": "Prefer template literals over string concatenation",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "no-return-assign",
+    "message": "Arrow function should not return assignment",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "no-trailing-spaces",
+    "message": "This line has a trailing whitespace",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "file": "home/user/project/src/utils.ts",
+    "line": 0,
+    "message": "/home/user/project/src/utils.ts",
+    "severity": "info",
+    "type": "location"
+  },
+  {
+    "code": "import/first",
+    "message": "Default export of a module must be the first statement",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "@typescript-eslint/no-explicit-any",
+    "message": "Unexpected any, specify a different type",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "no-unused-vars",
+    "message": "'debug' is defined but never used",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "@typescript-eslint/explicit-function-return-type",
+    "message": "Missing return type on function",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "@typescript-eslint/no-non-null-assertion",
+    "message": "Forbidden non-null assertion",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "import/newline-after-import",
+    "message": "Expected 1 empty line after import statement",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "quotes",
+    "message": "Strings must use singlequote",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "semi",
+    "message": "Missing semicolon",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "eqeqeq",
+    "message": "Expected '===' and instead saw '=='",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "no-console",
+    "message": "Unexpected console statement",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "prefer-const",
+    "message": "'result' is never reassigned, use 'const' instead",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "no-var",
+    "message": "Unexpected var, use let or const instead",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "no-prototype-builtins",
+    "message": "Do not access Object.prototype method 'hasOwnProperty' directly",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "max-params",
+    "message": "Arrow function has too many parameters (5). Maximum allowed is 3",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "no-warning-comments",
+    "message": "Unexpected todo comment",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "no-await-in-loop",
+    "message": "Avoid using await inside loops",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "parse-error",
+    "message": "Parsing error: Unexpected token",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "no-undef",
+    "message": "'setTimeout' is not defined",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "prefer-template",
+    "message": "Prefer template literals over string concatenation",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "no-return-assign",
+    "message": "Arrow function should not return assignment",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "no-trailing-spaces",
+    "message": "This line has a trailing whitespace",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "file": "home/user/project/src/types.ts",
+    "line": 0,
+    "message": "/home/user/project/src/types.ts",
+    "severity": "info",
+    "type": "location"
+  },
+  {
+    "code": "import/first",
+    "message": "Default export of a module must be the first statement",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "@typescript-eslint/no-explicit-any",
+    "message": "Unexpected any, specify a different type",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "no-unused-vars",
+    "message": "'cache' is defined but never used",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "@typescript-eslint/explicit-function-return-type",
+    "message": "Missing return type on function",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "@typescript-eslint/no-non-null-assertion",
+    "message": "Forbidden non-null assertion",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "import/newline-after-import",
+    "message": "Expected 1 empty line after import statement",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "quotes",
+    "message": "Strings must use singlequote",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "semi",
+    "message": "Missing semicolon",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "eqeqeq",
+    "message": "Expected '===' and instead saw '=='",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "no-console",
+    "message": "Unexpected console statement",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "prefer-const",
+    "message": "'config' is never reassigned, use 'const' instead",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "no-var",
+    "message": "Unexpected var, use let or const instead",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "no-prototype-builtins",
+    "message": "Do not access Object.prototype method 'hasOwnProperty' directly",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "max-params",
+    "message": "Arrow function has too many parameters (5). Maximum allowed is 3",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "no-warning-comments",
+    "message": "Unexpected todo comment",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "import/prefer-default-export",
+    "message": "Prefer default export for the module",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "parse-error",
+    "message": "Parsing error: Unexpected token",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "no-undef",
+    "message": "'fetch' is not defined",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "prefer-template",
+    "message": "Prefer template literals over string concatenation",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "no-return-assign",
+    "message": "Arrow function should not return assignment",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "no-trailing-spaces",
+    "message": "This line has a trailing whitespace",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "message": "✖ 63 problems (57 errors, 6 warnings)",
+    "severity": "error",
+    "type": "summary"
+  }
+]

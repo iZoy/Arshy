@@ -475,6 +475,9 @@ pub fn render_stats(result: &serde_json::Value) {
     let parser_coverage_pct = result.get("parser_coverage_pct").and_then(|v| v.as_f64());
     let hints_attached = result.get("hints_attached").and_then(|v| v.as_u64());
     let context_enriched = result.get("context_enriched").and_then(|v| v.as_u64());
+    let dedup_collapsed = result.get("dedup_collapsed").and_then(|v| v.as_u64());
+    let correlated_errors = result.get("correlated_errors").and_then(|v| v.as_u64());
+    let per_parser_usage = result.get("per_parser_usage").and_then(|v| v.as_array());
 
     eprintln!();
     box_top();
@@ -498,8 +501,12 @@ pub fn render_stats(result: &serde_json::Value) {
     }
 
     // Intelligence section
-    let has_intelligence =
-        parser_coverage_pct.is_some() || hints_attached.is_some() || context_enriched.is_some();
+    let has_intelligence = parser_coverage_pct.is_some()
+        || hints_attached.is_some()
+        || context_enriched.is_some()
+        || dedup_collapsed.is_some()
+        || correlated_errors.is_some()
+        || per_parser_usage.is_some();
     if has_intelligence {
         box_divider();
         box_line(&format!("{}Intelligence{}", BOLD, RESET));
@@ -511,6 +518,32 @@ pub fn render_stats(result: &serde_json::Value) {
         }
         if let Some(ctx) = context_enriched {
             box_line(&format!("  Context enriched: {} events with source code", ctx));
+        }
+        if let Some(dedup) = dedup_collapsed {
+            if dedup > 0 {
+                box_line(&format!("  Dedup saved:     {} duplicate lines suppressed", dedup));
+            }
+        }
+        if let Some(corr) = correlated_errors {
+            if corr > 0 {
+                box_line(&format!("  Git correlation:  {} errors linked to recent changes", corr));
+            }
+        }
+        if let Some(parsers) = per_parser_usage {
+            if !parsers.is_empty() {
+                let top: Vec<String> = parsers
+                    .iter()
+                    .take(5)
+                    .filter_map(|p| {
+                        let name = p.get("parser")?.as_str()?;
+                        let count = p.get("count")?.as_u64()?;
+                        Some(format!("{}({})", name, count))
+                    })
+                    .collect();
+                if !top.is_empty() {
+                    box_line(&format!("  Top parsers:     {}", top.join(", ")));
+                }
+            }
         }
     }
 

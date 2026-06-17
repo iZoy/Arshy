@@ -48,8 +48,11 @@ async fn proxy_main(config_path: Option<PathBuf>) -> Result<()> {
     let cfg = Config::load(arshy_lib::config::CliOverrides { config_path, ..Default::default() })?;
 
     let socket_path = cfg.daemon.expanded_socket_path();
-    let stream = connect_or_start(&cfg, &socket_path).await?;
-    let (mut daemon, mut notif_rx) = DaemonConnection::new(stream);
+
+    // Retry connection on startup — daemon may be restarting (launchd KeepAlive).
+    // 5 attempts with auto-cd validation ensures the connection is alive.
+    let (mut daemon, mut notif_rx) =
+        connect_with_retry(&cfg, &socket_path, 5, &[500, 500, 500, 500], true).await?;
 
     let mut stdin = BufReader::new(tokio::io::stdin());
     let mut stdout = BufWriter::new(tokio::io::stdout());
@@ -61,13 +64,6 @@ async fn proxy_main(config_path: Option<PathBuf>) -> Result<()> {
     let mut pending_notifs: Vec<Notification> = Vec::with_capacity(max_batch);
     let mut batch_deadline: Option<tokio::time::Instant> = None;
     let mut request_tasks: HashMap<u64, String> = HashMap::new();
-
-    // Idle timeout: shut down daemon after 5 min of inactivity.
-    // Override with ARSHY_IDLE_TIMEOUT_SECS.
-    let idle_timeout_secs: u64 =
-        std::env::var("ARSHY_IDLE_TIMEOUT_SECS").ok().and_then(|v| v.parse().ok()).unwrap_or(300);
-    let idle_timeout = tokio::time::Duration::from_secs(idle_timeout_secs);
-    let mut last_activity = tokio::time::Instant::now();
 
     // Periodic health check tracking — ensures checks happen even under
     // continuous activity (the select! health branch only fires when idle).
@@ -163,7 +159,7 @@ async fn proxy_main(config_path: Option<PathBuf>) -> Result<()> {
                                     }
                                     Err(e) if is_connection_error(&e) && cfg.daemon.auto_start => {
                                         tracing::warn!("daemon connection lost, attempting reconnect...");
-                                        match reconnect(&cfg, &socket_path).await {
+                                        match connect_with_retry(&cfg, &socket_path, 3, &[500, 1000, 2000], false).await {
                                             Ok((new_conn, new_notif_rx)) => {
                                                 daemon = new_conn;
                                                 notif_rx = new_notif_rx;
@@ -179,10 +175,9 @@ async fn proxy_main(config_path: Option<PathBuf>) -> Result<()> {
                                                 }
                                             }
                                             Err(re) => {
-                                                tracing::error!("reconnect failed: {}", re);
                                                 record_daemon_crash();
                                                 write_structured_error(&mut stdout, id, arshy_lib::ArshyError::DaemonUnreachable(
-                                                    format!("connection lost: {}", e))).await
+                                                    format!("connection lost after retries: {}", re))).await
                                             }
                                         }
                                     }
@@ -191,7 +186,6 @@ async fn proxy_main(config_path: Option<PathBuf>) -> Result<()> {
                                             format!("daemon error: {}", e))).await
                                     }
                                 };
-                                last_activity = tokio::time::Instant::now();
                                 result
                             }
                             "notifications/initialized" => Ok(()),
@@ -265,20 +259,6 @@ async fn proxy_main(config_path: Option<PathBuf>) -> Result<()> {
                 }
             }
 
-            // ── Idle timeout branch ─────────────────────────────────────
-            // After 5 min of no tool calls, shut down the daemon to save resources.
-            // The proxy stays alive; the next tool call will auto-restart the daemon.
-            _ = tokio::time::sleep_until(last_activity + idle_timeout) => {
-                tracing::info!(
-                    "daemon idle for {}s, sending shutdown",
-                    idle_timeout_secs
-                );
-                let _ = daemon.send_request(ipc::METHOD_SHUTDOWN, serde_json::json!({})).await;
-                // Reset timer so we don't immediately fire again in a spin loop.
-                last_activity = tokio::time::Instant::now();
-                continue;
-            }
-
             // ── Health check branch ─────────────────────────────────────
             // Fires after 30s of inactivity to detect daemon crashes.
             // Backs off on consecutive failures to avoid thundering herd.
@@ -343,7 +323,7 @@ async fn perform_health_check(
         }
         Err(e) if is_connection_error(&e) && cfg.daemon.auto_start => {
             tracing::warn!("health check failed, reconnecting...");
-            match reconnect(cfg, socket_path).await {
+            match connect_with_retry(cfg, socket_path, 3, &[500, 1000, 2000], false).await {
                 Ok((new_conn, new_notif_rx)) => {
                     *daemon = new_conn;
                     *notif_rx = new_notif_rx;
@@ -351,8 +331,7 @@ async fn perform_health_check(
                     tracing::info!("reconnected via health check");
                     true
                 }
-                Err(re) => {
-                    tracing::error!("health reconnect failed: {}", re);
+                Err(_) => {
                     record_daemon_crash();
                     false
                 }
@@ -920,13 +899,53 @@ fn is_connection_error(e: &arshy_lib::ArshyError) -> bool {
         || msg.contains("No such file")
 }
 
-/// Attempt to reconnect to the daemon.
-async fn reconnect(
+/// Connect to daemon with retry and optional auto-cd validation.
+///
+/// Used for both startup and reconnection. When `validate_with_cd` is true,
+/// sends a METHOD_CD to verify the connection is alive; retries if it fails.
+async fn connect_with_retry(
     cfg: &Config,
     socket_path: &std::path::Path,
+    attempts: usize,
+    backoff_ms: &[u64],
+    validate_with_cd: bool,
 ) -> Result<(DaemonConnection, mpsc::Receiver<Notification>)> {
-    let stream = connect_or_start(cfg, socket_path).await?;
-    Ok(DaemonConnection::new(stream))
+    let mut last_err = None;
+    for attempt in 0..attempts {
+        if attempt > 0 {
+            let delay = backoff_ms.get(attempt - 1).unwrap_or(backoff_ms.last().unwrap_or(&500));
+            tokio::time::sleep(Duration::from_millis(*delay)).await;
+        }
+        match connect_or_start(cfg, socket_path).await {
+            Ok(stream) => {
+                let (mut d, nr) = DaemonConnection::new(stream);
+                if validate_with_cd {
+                    let cd_ok = if let Ok(cwd) = std::env::current_dir() {
+                        let cwd_str = cwd.to_string_lossy().to_string();
+                        let params = serde_json::json!({ "command": cwd_str });
+                        d.send_request_with_timeout(ipc::METHOD_CD, params, Duration::from_secs(3))
+                            .await
+                            .is_ok()
+                    } else {
+                        true
+                    };
+                    if !cd_ok {
+                        tracing::warn!("auto-cd failed (attempt {})", attempt + 1);
+                        last_err =
+                            Some(arshy_lib::ArshyError::DaemonUnreachable("auto-cd failed".into()));
+                        continue;
+                    }
+                }
+                return Ok((d, nr));
+            }
+            Err(e) => {
+                tracing::warn!("connection attempt {}/{} failed: {}", attempt + 1, attempts, e);
+                last_err = Some(e);
+            }
+        }
+    }
+    Err(last_err
+        .unwrap_or_else(|| arshy_lib::ArshyError::DaemonUnreachable("connection failed".into())))
 }
 
 /// Map MCP tool name to IPC method.

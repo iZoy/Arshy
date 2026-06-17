@@ -266,6 +266,21 @@ pub struct StatsResponse {
     /// Number of error/warning events enriched with source context.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context_enriched: Option<u64>,
+    /// Total duplicate events collapsed by deduplicator.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dedup_collapsed: Option<u64>,
+    /// Total errors correlated with recent git changes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub correlated_errors: Option<u64>,
+    /// Per-parser usage counts (top parsers by task count).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub per_parser_usage: Option<Vec<ParserCount>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ParserCount {
+    pub parser: String,
+    pub count: u64,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

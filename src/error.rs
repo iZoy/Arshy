@@ -23,9 +23,6 @@ pub enum ArshyError {
     #[error("parser error: {0}")]
     Parser(String),
 
-    #[error("sqlite error: {0}")]
-    Sqlite(String),
-
     #[error("exec error: {0}")]
     Exec(String),
 
@@ -71,12 +68,6 @@ impl ArshyError {
             Self::Io(_) => true,
             _ => false,
         }
-    }
-}
-
-impl From<rusqlite::Error> for ArshyError {
-    fn from(e: rusqlite::Error) -> Self {
-        ArshyError::Sqlite(e.to_string())
     }
 }
 

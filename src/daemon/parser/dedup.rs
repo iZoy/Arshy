@@ -15,6 +15,7 @@ pub struct Deduplicator {
     last_context: Option<arshy_lib::ipc::EventContext>,
     repeat_count: u64,
     first_seq: u64,
+    total_collapsed: u64,
 }
 
 impl Deduplicator {
@@ -28,7 +29,13 @@ impl Deduplicator {
             last_context: None,
             repeat_count: 0,
             first_seq: 0,
+            total_collapsed: 0,
         }
+    }
+
+    /// Total number of duplicate events collapsed so far.
+    pub fn collapsed_count(&self) -> u64 {
+        self.total_collapsed
     }
 
     /// Feed an event. Returns Some if the event should be stored (either
@@ -41,6 +48,7 @@ impl Deduplicator {
 
         if is_dup {
             self.repeat_count += 1;
+            self.total_collapsed += 1;
             return None;
         }
 
@@ -275,5 +283,23 @@ mod tests {
         let flushed = d.finish().expect("should flush");
         assert_eq!(flushed.message, "mismatched types (repeated 2 times)");
         assert_eq!(flushed.context, ctx, "context from first event should be preserved");
+    }
+
+    #[test]
+    fn collapsed_count_tracks_duplicates() {
+        let mut d = Deduplicator::new();
+        assert_eq!(d.collapsed_count(), 0);
+        d.feed(make_event("log", "info", "hello", 0));
+        assert_eq!(d.collapsed_count(), 0);
+        d.feed(make_event("log", "info", "hello", 1));
+        assert_eq!(d.collapsed_count(), 1);
+        d.feed(make_event("log", "info", "hello", 2));
+        assert_eq!(d.collapsed_count(), 2);
+        d.feed(make_event("log", "info", "world", 3));
+        assert_eq!(d.collapsed_count(), 2);
+        d.feed(make_event("log", "info", "world", 4));
+        assert_eq!(d.collapsed_count(), 3);
+        d.finish();
+        assert_eq!(d.collapsed_count(), 3);
     }
 }

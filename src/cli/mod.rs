@@ -814,8 +814,31 @@ fn install_launchd() -> Result<()> {
 
     std::fs::create_dir_all(&plist_dir)?;
     std::fs::write(&plist_path, plist_content)?;
-    println!("Installed launchd plist to {}", plist_path.display());
-    println!("To load:   launchctl load {}", plist_path.display());
+
+    // Auto-load the plist so daemon starts immediately
+    let load_result =
+        std::process::Command::new("launchctl").args(["load", "-w"]).arg(&plist_path).output();
+    match load_result {
+        Ok(output) if output.status.success() => {
+            println!("Installed and loaded launchd plist: {}", plist_path.display());
+        }
+        Ok(output) => {
+            // load -w may fail if already loaded — that's fine
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            if stderr.contains("already loaded") || stderr.contains("already exists") {
+                println!("Installed launchd plist (already loaded): {}", plist_path.display());
+            } else {
+                println!("Installed launchd plist to {}", plist_path.display());
+                println!("  ⚠ auto-load failed: {}", stderr.trim());
+                println!("  Load manually: launchctl load -w {}", plist_path.display());
+            }
+        }
+        Err(e) => {
+            println!("Installed launchd plist to {}", plist_path.display());
+            println!("  ⚠ could not run launchctl: {}", e);
+            println!("  Load manually: launchctl load -w {}", plist_path.display());
+        }
+    }
     println!("To unload: launchctl unload {}", plist_path.display());
     Ok(())
 }

@@ -126,14 +126,15 @@ Formats: `--format pretty` (terminal UI), `--format json` (raw JSON), `--format 
 
 ### Parser Benchmark
 
-Run `arshy benchmark` to measure parser performance across all 34 builtin parsers:
+Run `arshy benchmark` to measure parser performance across all 37 builtin parsers:
 
 ```
-Scope: 37 fixtures across 34 builtin parsers
+Scope: 43 fixtures across 37 builtin parsers
   Information Density:  3.5 actionable fields/event (structured) vs 0 (raw text)
   Token Efficiency:     1.4x compression (up to 12x for webpack)
   Error Location Speed: 24% of fixtures — structured faster
-  Parser Accuracy:      100% (37/37 fixtures)
+  Parser Accuracy:      100% (43/43 fixtures)
+  Feature Value:        85% events with file:line, 60% with error codes
 ```
 
 ### Parser Management
