@@ -576,17 +576,6 @@ impl Executor {
                             }
                         }
 
-                        // Store git correlation counter
-                        let correlated_count = project_context
-                            .as_ref()
-                            .and_then(|ctx| ctx.get("correlated_errors"))
-                            .and_then(|v| v.as_array())
-                            .map(|a| a.len() as u64)
-                            .unwrap_or(0);
-                        if correlated_count > 0 {
-                            let _ = self.store.update_task_counters(&task_id, 0, correlated_count);
-                        }
-
                         Ok(RunResult {
                             task_id: task_id.clone(),
                             status: info.status.clone(),

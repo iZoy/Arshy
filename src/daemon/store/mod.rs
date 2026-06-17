@@ -163,7 +163,9 @@ impl Store {
         let map: HashMap<String, (String, String)> =
             versions.iter().map(|(k, (v, t))| (k.clone(), (v.clone(), t.to_rfc3339()))).collect();
         let data = serde_json::to_string_pretty(&map)?;
-        std::fs::write(&tmp, &data)?;
+        let mut file = std::fs::File::create(&tmp)?;
+        std::io::Write::write_all(&mut file, data.as_bytes())?;
+        file.sync_all()?;
         std::fs::rename(&tmp, &path)?;
         Ok(())
     }
@@ -174,13 +176,19 @@ fn load_tasks_from_disk(dir: &Path) -> Result<HashMap<String, TaskRecord>> {
     let mut map = HashMap::new();
     if path.exists() {
         let content = std::fs::read_to_string(&path)?;
-        for line in content.lines() {
+        for (lineno, line) in content.lines().enumerate() {
             let line = line.trim();
             if line.is_empty() {
                 continue;
             }
-            let record: TaskRecord = serde_json::from_str(line)?;
-            map.insert(record.task.task_id.clone(), record);
+            match serde_json::from_str::<TaskRecord>(line) {
+                Ok(record) => {
+                    map.insert(record.task.task_id.clone(), record);
+                }
+                Err(e) => {
+                    tracing::warn!("tasks.jsonl line {} corrupt, skipping: {}", lineno + 1, e);
+                }
+            }
         }
     }
     Ok(map)

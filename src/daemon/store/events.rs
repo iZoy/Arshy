@@ -62,6 +62,12 @@ impl super::Store {
                         return false;
                     }
                 }
+                if let Some(f) = &params.file {
+                    match &e.location {
+                        Some(loc) if loc.file.contains(f.as_str()) => {}
+                        _ => return false,
+                    }
+                }
                 true
             })
             .collect();
