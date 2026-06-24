@@ -14,13 +14,6 @@ PASS=0
 FAIL=0
 TOTAL=0
 
-# --json flag: redirect stdout to stderr so only JSON goes to stdout
-_JSON_MODE=0
-if [ "${1:-}" = "--json" ]; then
-    _JSON_MODE=1
-    exec 3>&1 1>&2
-fi
-
 check() {
     local name="$1"
     local result="$2"
@@ -256,11 +249,6 @@ STATUS=$(echo "$OUTPUT" | python3 -c "import json,sys; print(json.load(sys.stdin
 # ── Summary ───────────────────────────────────────────────────────────
 echo ""
 echo "=== Results: $PASS/$TOTAL passed, $FAIL failed ==="
-
-# --json mode: output clean JSON on original stdout (fd 3)
-if [ "$_JSON_MODE" = "1" ]; then
-    printf '{"pass":%d,"fail":%d,"total":%d}\n' "$PASS" "$FAIL" "$TOTAL" >&3
-fi
 
 if [ "$FAIL" -gt 0 ]; then
     exit 1

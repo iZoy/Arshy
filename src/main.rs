@@ -83,10 +83,6 @@ pub enum CliCommand {
     Install,
     /// Remove MCP registration
     Uninstall,
-    /// Install shell wrapper for transparent bash takeover
-    InstallShell,
-    /// Remove shell wrapper
-    UninstallShell,
     /// Prune old task history
     Prune {
         #[arg(long)]
@@ -108,12 +104,6 @@ pub enum CliCommand {
     },
     /// Show aggregate statistics
     Stats,
-    /// Show dogfood watchdog history
-    Dogfood {
-        /// Number of runs to show
-        #[arg(long, default_value = "10")]
-        limit: usize,
-    },
     /// Install macOS launchd plist for auto-start
     InstallLaunchd,
     /// Install Linux systemd user unit for auto-start

@@ -50,8 +50,6 @@ pub async fn dispatch(cli: Cli) -> Result<()> {
         }
         Some(CliCommand::Install) => install(),
         Some(CliCommand::Uninstall) => uninstall(),
-        Some(CliCommand::InstallShell) => install_shell(),
-        Some(CliCommand::UninstallShell) => uninstall_shell(),
         Some(CliCommand::Prune { keep, older_than }) => {
             prune(config_path, log_level, keep, older_than).await
         }
@@ -65,7 +63,6 @@ pub async fn dispatch(cli: Cli) -> Result<()> {
         Some(CliCommand::Benchmark) => run_benchmark(),
         Some(CliCommand::Analyze { format }) => analyze(config_path, log_level, &format).await,
         Some(CliCommand::Parser { action }) => parser_action(action, config_path, log_level).await,
-        Some(CliCommand::Dogfood { limit }) => show_dogfood(limit),
         None => {
             println!("Arshy — AI Agent native shell execution layer");
             println!("Usage: arshy [--from-mcp] [OPTIONS] <COMMAND>");
@@ -304,107 +301,6 @@ fn install() -> Result<()> {
     println!("  Claude Code: {}", claude_json_path.display());
     println!("  Cursor:      {}", cursor_mcp_path.display());
     println!("  Permissions: {}", settings_path.display());
-    Ok(())
-}
-
-/// Install shell wrapper for transparent bash takeover.
-/// Copies wrapper to ~/.arshy/shell.sh and adds source line to shell rc file.
-fn install_shell() -> Result<()> {
-    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("~"));
-    let install_dir = home.join(".arshy");
-    let install_path = install_dir.join("shell.sh");
-    let source_line = "[ -f ~/.arshy/shell.sh ] && source ~/.arshy/shell.sh";
-
-    // Find wrapper.sh relative to the binary or current dir
-    let wrapper_candidates = [
-        PathBuf::from("shell/wrapper.sh"),
-        PathBuf::from("../shell/wrapper.sh"),
-        home.join("Documents/arshy/shell/wrapper.sh"),
-    ];
-    let wrapper_src = wrapper_candidates.iter().find(|p| p.exists());
-    let Some(src) = wrapper_src else {
-        println!("  ⚠ Could not find shell/wrapper.sh");
-        println!("    Run from the arshy repo directory, or copy manually.");
-        return Ok(());
-    };
-
-    // Copy wrapper
-    std::fs::create_dir_all(&install_dir)?;
-    std::fs::copy(src, &install_path)?;
-    println!("  ✓ Installed wrapper to {}", install_path.display());
-
-    // Detect shell rc file
-    let shell = std::env::var("SHELL").unwrap_or_default();
-    let rc_file = if shell.contains("zsh") {
-        home.join(".zshrc")
-    } else if shell.contains("bash") {
-        home.join(".bashrc")
-    } else {
-        println!("  ⚠ Unknown shell: {}", shell);
-        println!("    Manually add to your shell rc: {}", source_line);
-        return Ok(());
-    };
-
-    // Check if already installed
-    if rc_file.exists() {
-        let content = std::fs::read_to_string(&rc_file).unwrap_or_default();
-        if content.contains("shell.sh") {
-            println!("  ✓ Already configured in {}", rc_file.display());
-            println!();
-            println!("Restart your shell or run: source {}", rc_file.display());
-            println!("Then use: a <command>  (e.g., a cargo build --release)");
-            return Ok(());
-        }
-    }
-
-    // Append source line
-    use std::io::Write;
-    let mut file = std::fs::OpenOptions::new().create(true).append(true).open(&rc_file)?;
-    writeln!(file)?;
-    writeln!(file, "# arshy shell wrapper — route commands through arshy daemon")?;
-    writeln!(file, "{}", source_line)?;
-    println!("  ✓ Added to {}", rc_file.display());
-
-    println!();
-    println!("Restart your shell or run: source {}", rc_file.display());
-    println!("Then use: a <command>  (e.g., a cargo build --release)");
-    Ok(())
-}
-
-/// Remove shell wrapper from shell rc file.
-fn uninstall_shell() -> Result<()> {
-    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("~"));
-    let install_path = home.join(".arshy").join("shell.sh");
-
-    // Remove the wrapper file
-    if install_path.exists() {
-        std::fs::remove_file(&install_path)?;
-        println!("  ✓ Removed {}", install_path.display());
-    } else {
-        println!("  ⚠ Wrapper not found at {}", install_path.display());
-    }
-
-    // Remove source line from rc files
-    for rc_name in &[".zshrc", ".bashrc"] {
-        let rc_path = home.join(rc_name);
-        if !rc_path.exists() {
-            continue;
-        }
-        let content = std::fs::read_to_string(&rc_path)?;
-        if !content.contains("shell.sh") {
-            continue;
-        }
-        let filtered: String = content
-            .lines()
-            .filter(|line| !line.contains("shell.sh") && !line.contains("arshy shell wrapper"))
-            .collect::<Vec<_>>()
-            .join("\n");
-        std::fs::write(&rc_path, filtered)?;
-        println!("  ✓ Removed from {}", rc_path.display());
-    }
-
-    println!();
-    println!("Shell wrapper uninstalled. Restart your shell to take effect.");
     Ok(())
 }
 
@@ -1440,75 +1336,5 @@ async fn analyze(
             }
         }
     }
-    Ok(())
-}
-
-/// Show dogfood watchdog history.
-fn show_dogfood(limit: usize) -> Result<()> {
-    use arshy_lib::config::{expand_path, Config};
-
-    let cfg = Config::load(arshy_lib::config::CliOverrides::default())?;
-    let db_path = expand_path(&cfg.store.db_path);
-    // Derive store dir: if db is "arshy.db", store is "arshy-store/"
-    let store_dir = if db_path.extension().is_some_and(|e| e == "db") {
-        db_path.with_extension("").with_file_name(format!(
-            "{}-store",
-            db_path.file_stem().unwrap_or_default().to_string_lossy()
-        ))
-    } else {
-        db_path.with_file_name(format!(
-            "{}-store",
-            db_path.file_stem().unwrap_or_default().to_string_lossy()
-        ))
-    };
-    let dogfood_path = store_dir.join("dogfood.jsonl");
-
-    if !dogfood_path.exists() {
-        println!("No dogfood runs recorded yet.");
-        println!("The daemon runs dogfood checks every 30 minutes when enabled.");
-        println!("To trigger a manual run: bash scripts/dogfood.sh");
-        return Ok(());
-    }
-
-    let content = std::fs::read_to_string(&dogfood_path)?;
-    let mut runs: Vec<serde_json::Value> = content
-        .lines()
-        .filter(|l| !l.trim().is_empty())
-        .filter_map(|line| serde_json::from_str(line).ok())
-        .collect();
-    runs.reverse();
-    runs.truncate(limit);
-
-    if runs.is_empty() {
-        println!("No dogfood runs recorded yet.");
-        return Ok(());
-    }
-
-    println!("{:<22} {:>6} {:>6} {:>6} Status", "Timestamp", "Pass", "Fail", "Total");
-    println!("{}", "-".repeat(60));
-    for run in &runs {
-        let ts = run["timestamp"].as_str().unwrap_or("?");
-        // Truncate to just date+time for display
-        let short_ts = if ts.len() > 19 { &ts[..19] } else { ts };
-        let pass = run["pass"].as_u64().unwrap_or(0);
-        let fail = run["fail"].as_u64().unwrap_or(0);
-        let total = run["total"].as_u64().unwrap_or(0);
-        let status = if fail == 0 { "PASS" } else { "FAIL" };
-        println!("{:<22} {:>6} {:>6} {:>6} {}", short_ts, pass, fail, total, status);
-    }
-
-    // Show trend
-    if runs.len() >= 2 {
-        let recent_pass = runs[0]["pass"].as_u64().unwrap_or(0);
-        let older_pass = runs[1]["pass"].as_u64().unwrap_or(0);
-        if recent_pass > older_pass {
-            println!("\nTrend: improving (+{} pass)", recent_pass - older_pass);
-        } else if recent_pass < older_pass {
-            println!("\nTrend: degrading (-{} pass)", older_pass - recent_pass);
-        } else {
-            println!("\nTrend: stable");
-        }
-    }
-
     Ok(())
 }
