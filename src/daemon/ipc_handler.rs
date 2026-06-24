@@ -349,7 +349,20 @@ async fn dispatch(
                     params.errors_only,
                 )
                 .await?;
-            Ok(serde_json::to_value(&result)?)
+            let mut resp = serde_json::to_value(&result)?;
+            // Include structured events in the run response so agents get everything
+            // in one round-trip (no separate arshy_query needed).
+            let query = QueryParams {
+                task_id: result.task_id.clone(),
+                limit: 200,
+                include_logs: false,
+                ..Default::default()
+            };
+            if let Ok((events, total)) = store.query_events(&query) {
+                resp["events"] = serde_json::to_value(&events).unwrap_or_default();
+                resp["event_count"] = serde_json::json!(total);
+            }
+            Ok(resp)
         }
         METHOD_QUERY => {
             let params: QueryParams = serde_json::from_value(request.params.clone())?;

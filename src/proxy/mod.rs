@@ -666,6 +666,27 @@ async fn handle_tool_call(
         result_obj["isError"] = serde_json::json!(true);
     }
 
+    // Include full result metadata so agents (and scripts) can access structured data.
+    // The MCP content[] has the human-readable summary; these fields give machines
+    // programmatic access without a second round-trip to arshy_query.
+    if !is_short {
+        for key in &["task_id", "status", "exit_code", "duration_ms", "error_count", "warning_count", "root_cause", "project_context"] {
+            if let Some(val) = result.get(*key) {
+                result_obj[*key] = val.clone();
+            }
+        }
+        // Include raw_output for agents that need the full command output
+        if let Some(raw) = result.get("raw_output") {
+            result_obj["raw_output"] = raw.clone();
+        }
+        // Forward events and event_count from the daemon's run response
+        for key in &["events", "event_count"] {
+            if let Some(val) = result.get(*key) {
+                result_obj[*key] = val.clone();
+            }
+        }
+    }
+
     let mcp_response = serde_json::json!({
         "jsonrpc": "2.0",
         "id": id,
