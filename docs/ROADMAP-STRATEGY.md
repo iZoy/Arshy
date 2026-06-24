@@ -1,7 +1,7 @@
 # arshy 战略路线图与北极星
 
-**版本:** 1.2
-**日期:** 2026-06-24
+**版本:** 1.3
+**日期:** 2026-06-25
 **状态:** 发布就绪
 
 ---
@@ -119,7 +119,7 @@ arshy 是**执行层**——控制命令的整个生命周期。
 | 多 agent 支持 (Cursor, Codex, Copilot, Gemini) | P0 | ✅ Cursor |
 | Hook 拦截模式 (零配置透明接入) | P0 | ⬜ |
 | 发布 v0.2.0 (GitHub Release) | P0 | 🔄 待发 |
-| Dogfooding 一周 (自己用 arshy 开发 arshy) | P0 | ⬜ |
+| Dogfooding (永久实践：所有开发命令走 arshy，积累 stats 数据) | P0 | ✅ 进行中 |
 | 社区发布 (README 完善 + 社区推广) | P1 | ✅ README 重写 |
 | 收集 10 个用户的反馈 | P1 | ⬜ |
 | **发布清单** | | |
@@ -141,6 +141,7 @@ arshy 是**执行层**——控制命令的整个生命周期。
 - 不加新 parser（等用户反馈）
 - 不做 ML 压缩（不是我们的方向）
 - 不做跨 agent 记忆（不是我们的方向）
+- 不做人用的 shell wrapper（arshy 是 agent 的 shell）
 
 ### Phase 3.5: 性能与质量 ✅ (已完成)
 
@@ -194,6 +195,7 @@ arshy 是**执行层**——控制命令的整个生命周期。
 - 不做通用文本压缩
 - 不做跨 agent 记忆共享
 - 不做 CLI 替代品（arshy 是 agent 的 shell，不是人的 shell）
+- 不做人用的 shell wrapper
 
 ---
 
@@ -215,7 +217,7 @@ arshy 是**执行层**——控制命令的整个生命周期。
 |------|------|
 | **不做 ML 压缩** | Headroom 已经做了，且需要训练数据 |
 | **不做通用文本压缩** | 不是我们的核心价值 |
-| **不做 CLI 替代品** | arshy 是 agent 的 shell，不是人的 shell |
+| **不做 CLI 替代品** | arshy 是 agent 的 shell，不是人的 shell。不做人用的 shell wrapper |
 | **不做跨 agent 记忆** | Headroom 的方向，与我们的定位不同 |
 | **不过度工程** | 只做用户需要的，不做我们觉得酷的 |
 
@@ -282,8 +284,14 @@ arshy 是**执行层**——控制命令的整个生命周期。
 - Agent 可见事件率从 53.2% 提升到 71.8%
 - Daemon 内存从 30.3MB 降到 21.6MB
 - 37 个 parser 全量审计并修复 9 个 bug
-- 16 个 code review bug 修复
+- 22+ 个 code review bug 修复
 - 性能优化：脏标记、内存优化、IPC 稳定性
+
+**Dogfooding 已成为永久实践：**
+- 所有开发命令通过 MCP 走 arshy（CLAUDE.md 强制要求）
+- `arshy stats` 积累数据用于分析 parser 覆盖率、错误检测率
+- `scripts/dogfood.sh` 作为提交前回归验证工具（21/21 通过）
+- 不做人用 shell wrapper——arshy 是 agent 的 shell，不是人的 shell
 
 **下一步：发布 v0.2.0，开始收集用户反馈。**
 
