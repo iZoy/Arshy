@@ -1,0 +1,35 @@
+[
+  {
+    "file": "docs/superpowers/",
+    "line": 0,
+    "message": "?? docs/superpowers/",
+    "severity": "info",
+    "type": "summary"
+  },
+  {
+    "file": "src/daemon/exec/mod.rs",
+    "line": 0,
+    "message": "M src/daemon/exec/mod.rs",
+    "severity": "info",
+    "type": "summary"
+  },
+  {
+    "file": "src/daemon/analytics.rs",
+    "line": 0,
+    "message": "A src/daemon/analytics.rs",
+    "severity": "info",
+    "type": "summary"
+  },
+  {
+    "file": "src/main.rs",
+    "line": 0,
+    "message": "+++ b/src/main.rs",
+    "severity": "info",
+    "type": "summary"
+  },
+  {
+    "message": " 3 files changed, 150 insertions(+), 20 deletions(-)",
+    "severity": "info",
+    "type": "log"
+  }
+]

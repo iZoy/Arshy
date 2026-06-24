@@ -611,7 +611,7 @@
   {
     "message": "error: aborting due to 17 previous errors; 4 warnings emitted",
     "severity": "error",
-    "type": "log"
+    "type": "diagnostic"
   },
   {
     "message": "Some errors have detailed explanations: E0308, E0277, E0599.",

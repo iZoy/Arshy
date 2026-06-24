@@ -1,0 +1,82 @@
+[
+  {
+    "message": "target/debug/deps/arshy_lib-d0b7338d8b7229d0",
+    "severity": "info",
+    "type": "summary"
+  },
+  {
+    "message": "31",
+    "severity": "info",
+    "type": "summary"
+  },
+  {
+    "message": "test handler::test_parse ... ok",
+    "severity": "info",
+    "type": "test_result"
+  },
+  {
+    "message": "test handler::test_invalid ... FAILED",
+    "severity": "error",
+    "type": "test_result"
+  },
+  {
+    "message": "test handler::test_ignored ... ignored",
+    "severity": "info",
+    "type": "test_result"
+  },
+  {
+    "message": "target/debug/deps/arshy-3888e7c2aaac9a6e",
+    "severity": "info",
+    "type": "summary"
+  },
+  {
+    "message": "23",
+    "severity": "info",
+    "type": "summary"
+  },
+  {
+    "message": "test main::test_cli ... ok",
+    "severity": "info",
+    "type": "test_result"
+  },
+  {
+    "message": "test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.45s",
+    "severity": "info",
+    "type": "summary"
+  },
+  {
+    "message": "target/debug/deps/arshyd-173e531ba30dab72",
+    "severity": "info",
+    "type": "summary"
+  },
+  {
+    "message": "54",
+    "severity": "info",
+    "type": "summary"
+  },
+  {
+    "message": "test daemon::test_start ... ok",
+    "severity": "info",
+    "type": "test_result"
+  },
+  {
+    "message": "test result: FAILED. 53 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.10s",
+    "severity": "error",
+    "type": "summary"
+  },
+  {
+    "message": "arshy_lib",
+    "severity": "info",
+    "type": "summary"
+  },
+  {
+    "message": "3",
+    "severity": "info",
+    "type": "summary"
+  },
+  {
+    "message": "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s",
+    "severity": "info",
+    "type": "summary"
+  }
+]

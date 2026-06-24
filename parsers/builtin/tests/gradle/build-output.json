@@ -1,6 +1,26 @@
 [
-  {"type": "diagnostic", "severity": "error", "file": "Main.java", "line": 42},
-  {"type": "diagnostic", "severity": "warning", "file": "Main.java", "line": 10},
-  {"type": "summary", "severity": "error"},
-  {"type": "summary", "severity": "info"}
+  {
+    "file": "Main.java",
+    "line": 42,
+    "message": "cannot find symbol",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "file": "Main.java",
+    "line": 10,
+    "message": "unused import",
+    "severity": "warning",
+    "type": "diagnostic"
+  },
+  {
+    "message": "FAILURE: Build failed with an exception.",
+    "severity": "error",
+    "type": "summary"
+  },
+  {
+    "message": "BUILD SUCCESSFUL in 5s",
+    "severity": "info",
+    "type": "summary"
+  }
 ]

@@ -6,14 +6,14 @@ priority = 50
 
 [[pattern]]
 name = "gradle-error"
-regex = '^(\w+\.java):(\d+): error: (.+)$'
+regex = '^(.+?\.java):(\d+): error: (.+)$'
 event_type = "diagnostic"
 severity = "error"
 fields = { file = 1, line = 2, message = 3 }
 
 [[pattern]]
 name = "gradle-warning"
-regex = '^(\w+\.java):(\d+): warning: (.+)$'
+regex = '^(.+?\.java):(\d+): warning: (.+)$'
 event_type = "diagnostic"
 severity = "warning"
 fields = { file = 1, line = 2, message = 3 }

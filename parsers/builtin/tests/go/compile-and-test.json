@@ -1,6 +1,24 @@
 [
-  {"type": "diagnostic", "severity": "error", "file": "src/handler.go", "line": 42, "column": 15},
-  {"type": "test_result", "severity": "error", "message": "TestLogin"},
-  {"type": "test_result", "severity": "info", "message": "mypackage/auth"},
-  {"type": "test_result", "severity": "error", "message": "mypackage/broken"}
+  {
+    "file": "src/handler.go",
+    "line": 42,
+    "message": "undefined: fmt.Printf",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "message": "TestLogin",
+    "severity": "error",
+    "type": "test_result"
+  },
+  {
+    "message": "mypackage/auth",
+    "severity": "info",
+    "type": "test_result"
+  },
+  {
+    "message": "mypackage/broken",
+    "severity": "error",
+    "type": "test_result"
+  }
 ]

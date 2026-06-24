@@ -21,21 +21,18 @@
     "type": "diagnostic"
   },
   {
-    "code": "✓",
     "message": "should add two numbers",
     "severity": "info",
     "type": "test_result"
   },
   {
-    "code": "✓",
     "message": "should handle zero",
     "severity": "info",
     "type": "test_result"
   },
   {
-    "code": "✗",
     "message": "should divide by zero",
-    "severity": "info",
+    "severity": "error",
     "type": "test_result"
   },
   {

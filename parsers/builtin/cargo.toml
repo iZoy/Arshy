@@ -24,3 +24,31 @@ regex = '^warning: (.+)$'
 event_type = "diagnostic"
 severity = "warning"
 fields = { message = 1 }
+
+[[pattern]]
+name = "cargo-finished"
+regex = '^Finished\s+`\S+`\s+profile\s+\[.+?\]\s+target\(s\)\s+in\s+([\d.]+)s$'
+event_type = "summary"
+severity = "info"
+fields = { message = 0, duration_s = 1 }
+
+[[pattern]]
+name = "cargo-compiling"
+regex = '^Compiling\s+(\S+)\s+v([\d.]+(?:\S*)?)\s*(?:\((.+?)\))?$'
+event_type = "summary"
+severity = "info"
+fields = { message = 0, crate_name = 1, version = 2 }
+
+[[pattern]]
+name = "cargo-checking"
+regex = '^Checking\s+(\S+)\s+v([\d.]+(?:\S*)?)\s*(?:\((.+?)\))?$'
+event_type = "summary"
+severity = "info"
+fields = { message = 0, crate_name = 1, version = 2 }
+
+[[pattern]]
+name = "cargo-downloading"
+regex = '^Downloading\s+(\S+)\s+v?([\d.]+)?'
+event_type = "summary"
+severity = "info"
+fields = { message = 0, crate_name = 1 }

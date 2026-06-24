@@ -24,6 +24,29 @@ regex = '^\s*(✓|✗|○)\s+(.+?)(?:\s+\((\d+)ms\))?$'
 event_type = "test_result"
 severity = "info"
 fields = { code = 1, message = 2 }
+deprecated = true
+replaced_by = "bun-test-pass"
+
+[[pattern]]
+name = "bun-test-pass"
+regex = '^\s*✓\s+(.+?)(?:\s+\((\d+)ms\))?$'
+event_type = "test_result"
+severity = "info"
+fields = { message = 1 }
+
+[[pattern]]
+name = "bun-test-fail"
+regex = '^\s*✗\s+(.+?)(?:\s+\((\d+)ms\))?$'
+event_type = "test_result"
+severity = "error"
+fields = { message = 1 }
+
+[[pattern]]
+name = "bun-test-skip"
+regex = '^\s*○\s+(.+?)(?:\s+\((\d+)ms\))?$'
+event_type = "test_result"
+severity = "info"
+fields = { message = 1 }
 
 [[pattern]]
 name = "bun-test-summary"

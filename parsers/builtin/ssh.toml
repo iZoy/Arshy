@@ -9,7 +9,7 @@ name = "ssh-auth-failed"
 regex = '^(\w+)@(\S+): Permission denied .+'
 event_type = "diagnostic"
 severity = "error"
-fields = { message = 0 }
+fields = { message = 0, user = 1, host = 2 }
 
 [[pattern]]
 name = "ssh-permission-denied"
@@ -23,7 +23,7 @@ name = "ssh-connection-refused"
 regex = '^ssh: connect to host (\S+) port (\d+): (.+)$'
 event_type = "diagnostic"
 severity = "error"
-fields = { message = 0 }
+fields = { message = 3, host = 1, port = 2 }
 
 [[pattern]]
 name = "ssh-host-key-changed"
@@ -44,7 +44,7 @@ name = "ssh-no-route"
 regex = '^(?:ssh|scp|rsync): (.+): (?:Network|No route) .+'
 event_type = "diagnostic"
 severity = "error"
-fields = { message = 0 }
+fields = { message = 1 }
 
 [[pattern]]
 name = "ssh-warning"

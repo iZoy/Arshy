@@ -1,9 +1,45 @@
 [
-  {"type": "location", "severity": "error", "file": "tests/test_login.py", "line": 15},
-  {"type": "diagnostic", "severity": "error"},
-  {"type": "test_result", "severity": "error", "file": "tests/test_login.py::test_login_success"},
-  {"type": "location", "severity": "error", "file": "tests/test_api.py", "line": 42},
-  {"type": "diagnostic", "severity": "error"},
-  {"type": "test_result", "severity": "error", "file": "tests/test_api.py::test_get_user"},
-  {"type": "summary", "severity": "info"}
+  {
+    "file": "tests/test_login.py",
+    "line": 15,
+    "message": "    File \"tests/test_login.py\", line 15",
+    "severity": "error",
+    "type": "location"
+  },
+  {
+    "message": "AssertionError: expected 200, got 500",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "file": "tests/test_login.py::test_login_success",
+    "line": 0,
+    "message": "FAILED tests/test_login.py::test_login_success",
+    "severity": "error",
+    "type": "test_result"
+  },
+  {
+    "file": "tests/test_api.py",
+    "line": 42,
+    "message": "    File \"tests/test_api.py\", line 42",
+    "severity": "error",
+    "type": "location"
+  },
+  {
+    "message": "KeyError: 'user_id'",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "file": "tests/test_api.py::test_get_user",
+    "line": 0,
+    "message": "FAILED tests/test_api.py::test_get_user",
+    "severity": "error",
+    "type": "test_result"
+  },
+  {
+    "message": "========================= 2 failed, 1 passed in 0.15s =========================",
+    "severity": "info",
+    "type": "summary"
+  }
 ]

@@ -19,8 +19,8 @@
     "code": "F841",
     "file": "src/utils.py",
     "line": 23,
-    "message": "[fixable] local variable `x` is assigned to but never used",
-    "severity": "error",
+    "message": "local variable `x` is assigned to but never used",
+    "severity": "warning",
     "type": "diagnostic"
   },
   {
@@ -35,8 +35,8 @@
     "code": "I001",
     "file": "src/handlers.py",
     "line": 8,
-    "message": "[fixable] Import block is un-sorted or un-formatted",
-    "severity": "error",
+    "message": "Import block is un-sorted or un-formatted",
+    "severity": "warning",
     "type": "diagnostic"
   },
   {

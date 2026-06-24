@@ -1,6 +1,22 @@
 [
-  {"type": "summary", "severity": "info"},
-  {"type": "summary", "severity": "error"},
-  {"type": "test_result", "severity": "error"},
-  {"type": "diagnostic", "severity": "error"}
+  {
+    "message": "  1 passing (100ms)",
+    "severity": "info",
+    "type": "summary"
+  },
+  {
+    "message": "  1 failing",
+    "severity": "error",
+    "type": "summary"
+  },
+  {
+    "message": "Login",
+    "severity": "error",
+    "type": "test_result"
+  },
+  {
+    "message": "expected 200 to equal 500:",
+    "severity": "error",
+    "type": "diagnostic"
+  }
 ]

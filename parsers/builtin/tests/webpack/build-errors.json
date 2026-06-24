@@ -1,6 +1,22 @@
 [
-  {"type": "diagnostic", "severity": "warning", "message": "./src/utils.ts"},
-  {"type": "diagnostic", "severity": "warning", "message": "./src/components/old.ts"},
-  {"type": "diagnostic", "severity": "error", "message": "./src/index.ts"},
-  {"type": "diagnostic", "severity": "error", "message": "./src/app.ts"}
+  {
+    "message": "./src/utils.ts",
+    "severity": "warning",
+    "type": "diagnostic"
+  },
+  {
+    "message": "./src/components/old.ts",
+    "severity": "warning",
+    "type": "diagnostic"
+  },
+  {
+    "message": "./src/index.ts",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "message": "./src/app.ts",
+    "severity": "error",
+    "type": "diagnostic"
+  }
 ]

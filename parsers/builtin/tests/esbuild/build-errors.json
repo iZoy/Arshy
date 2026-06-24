@@ -1,7 +1,29 @@
 [
-  {"type": "diagnostic", "severity": "error"},
-  {"type": "location", "severity": "info", "file": "src/app.ts", "line": 5},
-  {"type": "log"},
-  {"type": "log"},
-  {"type": "diagnostic", "severity": "error"}
+  {
+    "message": "Could not resolve \"missing-module\"",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "file": "src/app.ts",
+    "line": 5,
+    "message": "    src/app.ts:5:1:",
+    "severity": "info",
+    "type": "location"
+  },
+  {
+    "message": "      5 │ import { foo } from \"missing-module\";",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": "        ╵ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": "build failed with 2 errors",
+    "severity": "error",
+    "type": "diagnostic"
+  }
 ]

@@ -1,6 +1,6 @@
 [
   {
-    "message": "ssh: connect to host example.com port 22: Connection refused",
+    "message": "Connection refused",
     "severity": "error",
     "type": "diagnostic"
   },

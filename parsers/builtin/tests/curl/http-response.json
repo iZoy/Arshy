@@ -1,0 +1,63 @@
+[
+  {
+    "code": "200",
+    "message": "OK",
+    "severity": "info",
+    "type": "diagnostic"
+  },
+  {
+    "code": "Content-Type",
+    "message": "application/json; charset=utf-8",
+    "severity": "info",
+    "type": "data"
+  },
+  {
+    "code": "Content-Length",
+    "message": "42",
+    "severity": "info",
+    "type": "data"
+  },
+  {
+    "code": "Date",
+    "message": "Mon, 23 Jun 2026 12:00:00 GMT",
+    "severity": "info",
+    "type": "data"
+  },
+  {
+    "message": "{",
+    "severity": "info",
+    "type": "data"
+  },
+  {
+    "message": "  \"name\": \"test\",",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": "  \"value\": 42",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": "}",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "code": "404",
+    "message": "",
+    "severity": "info",
+    "type": "diagnostic"
+  },
+  {
+    "code": "Content-Type",
+    "message": "text/plain",
+    "severity": "info",
+    "type": "data"
+  },
+  {
+    "message": "Failed to connect to example.com port 443: Connection refused",
+    "severity": "error",
+    "type": "diagnostic"
+  }
+]

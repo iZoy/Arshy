@@ -1,6 +1,28 @@
 [
-  {"type": "test_result", "severity": "info", "file": "src/components/Button.test.tsx"},
-  {"type": "test_result", "severity": "error", "file": "src/components/Modal.test.tsx"},
-  {"type": "test_result", "severity": "error", "file": "src/utils/format.test.ts"},
-  {"type": "summary", "severity": "info"}
+  {
+    "file": "src/components/Button.test.tsx",
+    "line": 0,
+    "message": "PASS src/components/Button.test.tsx",
+    "severity": "info",
+    "type": "test_result"
+  },
+  {
+    "file": "src/components/Modal.test.tsx",
+    "line": 0,
+    "message": "FAIL src/components/Modal.test.tsx",
+    "severity": "error",
+    "type": "test_result"
+  },
+  {
+    "file": "src/utils/format.test.ts",
+    "line": 0,
+    "message": "FAIL src/utils/format.test.ts",
+    "severity": "error",
+    "type": "test_result"
+  },
+  {
+    "message": "Tests:       2 failed, 1 passed, 3 total",
+    "severity": "info",
+    "type": "summary"
+  }
 ]

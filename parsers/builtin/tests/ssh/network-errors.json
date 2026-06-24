@@ -5,12 +5,12 @@
     "type": "diagnostic"
   },
   {
-    "message": "rsync: host.example.com: Network is unreachable",
+    "message": "host.example.com",
     "severity": "error",
     "type": "diagnostic"
   },
   {
-    "message": "ssh: connect to host badhost port 22: Connection refused",
+    "message": "Connection refused",
     "severity": "error",
     "type": "diagnostic"
   }

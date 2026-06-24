@@ -1,6 +1,22 @@
 [
-  {"type": "summary", "severity": "info"},
-  {"type": "log"},
-  {"type": "diagnostic", "severity": "warning"},
-  {"type": "diagnostic", "severity": "info"}
+  {
+    "message": "  Packages: +10",
+    "severity": "info",
+    "type": "summary"
+  },
+  {
+    "message": "+++++++++++",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": "foo is deprecated",
+    "severity": "warning",
+    "type": "diagnostic"
+  },
+  {
+    "message": "Progress: resolved 100, reused 90",
+    "severity": "info",
+    "type": "diagnostic"
+  }
 ]

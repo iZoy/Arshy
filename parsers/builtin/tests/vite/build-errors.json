@@ -1,4 +1,12 @@
 [
-  {"type": "diagnostic", "severity": "error"},
-  {"type": "summary", "severity": "error"}
+  {
+    "message": "Module not found \"missing-pkg\"",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "message": "Build failed",
+    "severity": "error",
+    "type": "summary"
+  }
 ]

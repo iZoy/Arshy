@@ -1,6 +1,31 @@
 [
-  {"type": "diagnostic", "severity": "error", "code": "TS2322", "file": "src/app.ts", "line": 10, "column": 5},
-  {"type": "diagnostic", "severity": "warning", "code": "TS6133", "file": "src/app.ts", "line": 15, "column": 3},
-  {"type": "diagnostic", "severity": "error", "code": "TS2339", "file": "src/utils.ts", "line": 22, "column": 10},
-  {"type": "summary", "severity": "error"}
+  {
+    "code": "TS2322",
+    "file": "src/app.ts",
+    "line": 10,
+    "message": "Type 'string' is not assignable to type 'number'.",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "TS6133",
+    "file": "src/app.ts",
+    "line": 15,
+    "message": "'x' is declared but never used.",
+    "severity": "warning",
+    "type": "diagnostic"
+  },
+  {
+    "code": "TS2339",
+    "file": "src/utils.ts",
+    "line": 22,
+    "message": "Property 'foo' does not exist on type 'Bar'.",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "message": "Found 3 errors.",
+    "severity": "error",
+    "type": "summary"
+  }
 ]

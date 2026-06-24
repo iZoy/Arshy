@@ -1,5 +1,17 @@
 [
-  {"type": "summary", "severity": "info"},
-  {"type": "diagnostic", "severity": "warning"},
-  {"type": "summary", "severity": "info"}
+  {
+    "message": "added 3 packages",
+    "severity": "info",
+    "type": "summary"
+  },
+  {
+    "message": "deprecated foo@1.0.0",
+    "severity": "warning",
+    "type": "diagnostic"
+  },
+  {
+    "message": "audited 50 packages",
+    "severity": "info",
+    "type": "summary"
+  }
 ]

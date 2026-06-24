@@ -1,4 +1,16 @@
 [
-  {"type": "diagnostic", "severity": "error", "file": "main.c", "line": 42},
-  {"type": "diagnostic", "severity": "warning", "file": "main.c", "line": 10}
+  {
+    "file": "main.c",
+    "line": 42,
+    "message": "implicit declaration of function 'printf'",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "file": "main.c",
+    "line": 10,
+    "message": "unused variable 'x'",
+    "severity": "warning",
+    "type": "diagnostic"
+  }
 ]

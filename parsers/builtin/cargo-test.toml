@@ -45,3 +45,24 @@ name = "failure-header"
 regex = '^\s*---- .+ stdout ----$'
 event_type = "diagnostic"
 severity = "info"
+
+[[pattern]]
+name = "running-unittests"
+regex = '^Running unittests \S+ \((.+)\)$'
+event_type = "summary"
+severity = "info"
+fields = { message = 1 }
+
+[[pattern]]
+name = "running-tests"
+regex = '^running (\d+) tests?$'
+event_type = "summary"
+severity = "info"
+fields = { message = 1 }
+
+[[pattern]]
+name = "doc-tests"
+regex = '^Doc-tests\s+(\S+)$'
+event_type = "summary"
+severity = "info"
+fields = { message = 1 }

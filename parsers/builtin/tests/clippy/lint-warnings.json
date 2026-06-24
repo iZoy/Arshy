@@ -1,6 +1,26 @@
 [
-  {"type": "diagnostic", "severity": "warning"},
-  {"type": "location", "severity": "info", "file": "src/lib.rs", "line": 15},
-  {"type": "diagnostic", "severity": "error"},
-  {"type": "location", "severity": "info", "file": "src/main.rs", "line": 42}
+  {
+    "message": "unneeded return statement",
+    "severity": "warning",
+    "type": "diagnostic"
+  },
+  {
+    "file": "src/lib.rs",
+    "line": 15,
+    "message": " --> src/lib.rs:15:5",
+    "severity": "info",
+    "type": "location"
+  },
+  {
+    "message": "mismatched types",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "file": "src/main.rs",
+    "line": 42,
+    "message": " --> src/main.rs:42:5",
+    "severity": "info",
+    "type": "location"
+  }
 ]
