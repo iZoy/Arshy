@@ -25,10 +25,11 @@
 | Agent 可见事件率 | `arshy analyze` 中 agent_visible_events / total | **71.8%** | ≥ 80% |
 | Token 节省率 | `arshy analyze` 中 noise_pct | **28.2%** | ≥ 50% |
 | 事件准确率 | Fixture 测试字段匹配率 | **100%** | ≥ 95% |
-| Context 丰富率 | 有 context 的 error 事件 | **65/688** | ≥ 90% |
-| Parser 覆盖率 | `arshy stats` 中 parser_coverage_pct | **53.8%** | ≥ 80% |
-| Daemon 内存 | RSS (589 任务) | **21.6 MB** | ≤ 30 MB |
+| Context 丰富率 | 有 context 的 error 事件 | **175/853** | ≥ 90% |
+| Parser 覆盖率 | `arshy stats` 中 parser_coverage_pct | **71%** | ≥ 80% |
+| Daemon 内存 | RSS (758 任务) | **21.6 MB** | ≤ 30 MB |
 | MCP 启动延迟 | 首次工具调用时间 | **4ms** | ≤ 100ms |
+| 任务总数 | Dogfooding 积累 | **758** | 持续增长 |
 
 ---
 
