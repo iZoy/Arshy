@@ -11,7 +11,7 @@ use arshy_lib::ipc::{
     METHOD_SHUTDOWN, METHOD_STATS, METHOD_STATUS, METHOD_STDIN, METHOD_SUBSCRIBE, METHOD_TAIL,
 };
 use arshy_lib::Result;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, BufReader, BufWriter};
 use tokio::net::UnixStream;
@@ -30,39 +30,22 @@ enum Outbound {
 }
 
 /// Result returned from the executor after scheduling a task.
-/// Summary statistics for completed task events.
-/// Helps agents understand results without reading every event.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ResultSummary {
-    pub by_type: std::collections::HashMap<String, u64>,
-    pub by_severity: std::collections::HashMap<String, u64>,
-}
-
 #[derive(Debug, Clone, Serialize)]
 pub struct RunResult {
     pub task_id: String,
     pub status: arshy_lib::ipc::TaskStatus,
-    pub pid: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub exit_code: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub duration_ms: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub event_count: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub error_count: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub warning_count: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub raw_output: Option<String>,
     #[serde(default)]
     pub short_command: bool,
-    /// Structured events from the completed task (sync paths only).
-    /// Allows agent to get full result + events in a single MCP call.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub events: Option<Vec<serde_json::Value>>,
-    /// Event statistics: counts by type and severity.
-    /// Agent can use summary.by_severity.error to judge success without reading all events.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub summary: Option<ResultSummary>,
     /// The first error-level diagnostic event (if any).
     /// Agent can use this to immediately identify the root cause of failure.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -71,9 +54,6 @@ pub struct RunResult {
     /// Helps agent understand what changed before the command ran.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub project_context: Option<serde_json::Value>,
-    /// Task ID for retrieving full raw output via `arshy run --format raw`.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub raw_output_ref: Option<String>,
 }
 
 // ── Main handler entry ──────────────────────────────────────────────────────
@@ -100,10 +80,87 @@ pub async fn handle(
 
     let mut bus_rx = event_bus.subscribe();
     let tx_notif = tx.clone();
+    let enrichment_store = store.clone();
     let notif_handle = tokio::spawn(async move {
         while let Ok(event) = bus_rx.recv().await {
+            // Enrich async tasks on TaskComplete (sync tasks are enriched inline)
+            if let BusEventKind::TaskComplete { ref task_id, .. } = event.kind {
+                let task_id = task_id.clone();
+                let store = enrichment_store.clone();
+                // If sync path already enriched, skip async enrichment entirely.
+                // Mark enriched immediately to prevent concurrent re-enrichment.
+                if store.is_enriched(&task_id) {
+                    continue;
+                }
+                let _ = store.mark_enriched(&task_id);
+                tokio::task::spawn(async move {
+                    // Small delay to let sync path's spawn_blocking finish if it started
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                    // Query events from store (non-log only)
+                    let params = QueryParams {
+                        task_id: task_id.clone(),
+                        event_type: None,
+                        severity: None,
+                        code: None,
+                        file: None,
+                        limit: 200,
+                        offset: 0,
+                        include_logs: false,
+                    };
+                    let events_json: Vec<serde_json::Value> = store
+                        .query_events(&params)
+                        .ok()
+                        .map(|(evts, _total)| {
+                            evts.into_iter()
+                                .map(|e| serde_json::to_value(&e).unwrap_or_default())
+                                .collect()
+                        })
+                        .unwrap_or_default();
+
+                    if events_json.is_empty() {
+                        return;
+                    }
+
+                    // Use cwd from task record, or default to "."
+                    let cwd = store
+                        .get_task(&task_id)
+                        .ok()
+                        .flatten()
+                        .and_then(|t| t.cwd)
+                        .map(std::path::PathBuf::from)
+                        .unwrap_or_else(|| std::path::PathBuf::from("."));
+
+                    // Enrich in blocking context
+                    // Use stored detected_tool for HintDb lookup (Bug #2 fix)
+                    let tool_name = store.get_detected_tool(&task_id);
+                    let store_clone = store.clone();
+                    let enriched = tokio::task::spawn_blocking(move || {
+                        super::exec::enrich_events(events_json, &cwd, tool_name.as_deref())
+                    })
+                    .await
+                    .unwrap_or_default();
+
+                    // Persist enriched events
+                    let task_events: Vec<arshy_lib::ipc::TaskEvent> = enriched
+                        .iter()
+                        .filter_map(|e| serde_json::from_value(e.clone()).ok())
+                        .collect();
+                    if !task_events.is_empty() {
+                        if let Err(e) =
+                            store_clone.merge_enriched_events(&task_id, &task_events)
+                        {
+                            tracing::warn!(
+                                "async enrichment: failed to persist for {}: {}",
+                                task_id,
+                                e
+                            );
+                        }
+                    }
+                });
+            }
             if let Some(notification) = bus_event_to_notification(&event) {
-                if tx_notif.send(Outbound::Notification(notification)).await.is_err() {
+                if tx_notif.try_send(Outbound::Notification(notification)).is_err() {
+                    tracing::warn!("notification dropped (channel full or closed)");
                     break;
                 }
             }
@@ -153,7 +210,7 @@ pub async fn handle(
                     req.params["cwd"] = serde_json::json!(cwd);
                 }
             }
-            dispatch(&req, &executor, &store, &shutdown_tx).await
+            dispatch(&req, &executor, store.clone(), &shutdown_tx).await
         } else if request.method.as_str() == METHOD_CD {
             let dir =
                 request.params.get("command").and_then(|v| v.as_str()).unwrap_or(".").to_string();
@@ -222,7 +279,7 @@ pub async fn handle(
                 }
             }
         } else {
-            dispatch(&request, &executor, &store, &shutdown_tx).await
+            dispatch(&request, &executor, store.clone(), &shutdown_tx).await
         };
         let outbound = match response {
             Ok(result) => {
@@ -272,7 +329,7 @@ pub async fn handle(
 async fn dispatch(
     request: &Request,
     executor: &Executor,
-    store: &Store,
+    store: Arc<Store>,
     shutdown_tx: &watch::Sender<bool>,
 ) -> Result<serde_json::Value> {
     match request.method.as_str() {
@@ -387,6 +444,16 @@ async fn dispatch(
         ipc::METHOD_PARSER_RELOAD => {
             let diff = executor.reload_parsers()?;
             Ok(serde_json::json!({ "diff": diff }))
+        }
+        ipc::METHOD_ANALYZE => {
+            let store_clone = store.clone();
+            let report = tokio::task::spawn_blocking(move || {
+                let analytics = super::analytics::Analytics::new(&store_clone);
+                analytics.generate_report()
+            })
+            .await
+            .map_err(|e| arshy_lib::ArshyError::Other(format!("analytics panic: {}", e)))??;
+            Ok(serde_json::to_value(&report)?)
         }
         _ => Err(arshy_lib::ArshyError::Ipc(format!("unknown method: {}", request.method))),
     }
@@ -532,7 +599,7 @@ mod tests {
             .send_request(
                 METHOD_QUERY,
                 serde_json::json!({
-                    "task_id": task_id, "limit": 100,
+                    "task_id": task_id, "limit": 100, "include_logs": true,
                 }),
             )
             .await

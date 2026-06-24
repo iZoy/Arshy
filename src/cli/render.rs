@@ -3,8 +3,6 @@
 //! Renders structured build/test output as a visual terminal UI with
 //! box-drawing characters, color coding, and source context display.
 
-use std::fmt::Write;
-
 // ── ANSI colors ──────────────────────────────────────────────────────────────
 
 const RESET: &str = "\x1b[0m";
@@ -89,83 +87,85 @@ fn render_short(result: &serde_json::Value) {
 fn render_completed(result: &serde_json::Value) {
     let duration = result.get("duration_ms").and_then(|v| v.as_u64());
     let exit_code = result.get("exit_code").and_then(|v| v.as_i64()).unwrap_or(0);
-    let events = result.get("events").and_then(|v| v.as_array());
-
-    let summary = result.get("summary");
-    let error_count = summary
-        .and_then(|s| s.get("by_severity"))
-        .and_then(|s| s.get("error"))
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
-    let warning_count = summary
-        .and_then(|s| s.get("by_severity"))
-        .and_then(|s| s.get("warning"))
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
+    let error_count = result.get("error_count").and_then(|v| v.as_u64()).unwrap_or(0);
+    let warning_count = result.get("warning_count").and_then(|v| v.as_u64()).unwrap_or(0);
 
     let success = exit_code == 0 && error_count == 0;
 
     eprintln!();
     box_top();
 
-    // Status line
+    // Status line — always show error/warning counts and duration
     if success {
         box_line(&format!(
-            "{}{}{}✓ Passed{}   {}",
+            "{}{}{}{} Completed{}   {} error{}, {} warning{}, {}",
             BOLD,
             GREEN,
             BG_GREEN,
+            "\u{2713}", // checkmark
             RESET,
+            error_count,
+            if error_count == 1 { "" } else { "s" },
+            warning_count,
+            if warning_count == 1 { "" } else { "s" },
             duration_str(duration)
         ));
     } else {
         box_line(&format!(
-            "{}{}✗ Failed{}   {} errors, {} warnings   {}",
+            "{}{}✗ Failed{}   {} error{}, {} warning{}, {}",
             BOLD,
             RED,
             RESET,
             error_count,
+            if error_count == 1 { "" } else { "s" },
             warning_count,
+            if warning_count == 1 { "" } else { "s" },
             duration_str(duration)
         ));
     }
 
     box_divider();
 
-    // Show events
-    if let Some(evts) = events {
-        let diagnostic_events: Vec<_> = evts
-            .iter()
-            .filter(|e| {
-                let t = e.get("type").and_then(|v| v.as_str()).unwrap_or("");
-                t == "diagnostic" || t == "test_result"
-            })
-            .collect();
-
-        if diagnostic_events.is_empty() {
-            box_line(&format!("{}No diagnostic events{}", DIM, RESET));
-        } else {
-            for event in &diagnostic_events {
-                render_event_in_box(event);
+    if let Some(project_context) = result.get("project_context") {
+        if let Some(git_diff) = project_context.get("git_diff_stat").and_then(|v| v.as_str()) {
+            if !git_diff.is_empty() {
+                box_divider();
+                box_line(&format!("{}Recent changes{}", DIM, RESET));
+                box_line(&truncate(git_diff, INNER_W - 2));
             }
         }
 
-        // Show summary events
-        let summary_events: Vec<_> = evts
-            .iter()
-            .filter(|e| e.get("type").and_then(|v| v.as_str()) == Some("summary"))
-            .collect();
-
-        if !summary_events.is_empty() {
-            box_divider();
-            for event in &summary_events {
-                let msg = event.get("message").and_then(|v| v.as_str()).unwrap_or("");
-                if !msg.is_empty() {
-                    box_line(&format!("{}{}{}", DIM, msg, RESET));
+        if let Some(correlated) =
+            project_context.get("correlated_errors").and_then(|v| v.as_array())
+        {
+            if !correlated.is_empty() {
+                box_divider();
+                for item in correlated.iter().take(5) {
+                    let file = item.get("file").and_then(|v| v.as_str()).unwrap_or("");
+                    let recently =
+                        item.get("recently_changed").and_then(|v| v.as_bool()).unwrap_or(false);
+                    let marker = if recently { "!" } else { " " };
+                    box_line(&format!(
+                        "  {}{}{} {}",
+                        marker,
+                        file,
+                        RESET,
+                        if recently { "(recently changed)" } else { "" }
+                    ));
                 }
             }
         }
-    } else {
+    }
+
+    if let Some(root_cause) = result.get("root_cause") {
+        box_divider();
+        let msg = root_cause.get("message").and_then(|v| v.as_str()).unwrap_or("");
+        if !msg.is_empty() {
+            box_line(&format!("{}{}{}", DIM, msg, RESET));
+        }
+    }
+
+    if success {
         box_line(&format!("{}Command completed successfully{}", DIM, RESET));
     }
 
@@ -178,34 +178,25 @@ fn render_completed(result: &serde_json::Value) {
 fn render_failed(result: &serde_json::Value) {
     let duration = result.get("duration_ms").and_then(|v| v.as_u64());
     let exit_code = result.get("exit_code").and_then(|v| v.as_i64());
-    let events = result.get("events").and_then(|v| v.as_array());
-
-    let summary = result.get("summary");
-    let error_count = summary
-        .and_then(|s| s.get("by_severity"))
-        .and_then(|s| s.get("error"))
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
-    let warning_count = summary
-        .and_then(|s| s.get("by_severity"))
-        .and_then(|s| s.get("warning"))
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
+    let error_count = result.get("error_count").and_then(|v| v.as_u64()).unwrap_or(0);
+    let warning_count = result.get("warning_count").and_then(|v| v.as_u64()).unwrap_or(0);
 
     eprintln!();
     box_top();
 
-    // Status line
-    let exit_str = exit_code.map(|c| format!("  exit {}", c)).unwrap_or_default();
+    // Status line — show error/warning counts, exit code, and duration
+    let exit_str = exit_code.map(|c| format!(" (exit {})", c)).unwrap_or_default();
     box_line(&format!(
-        "{}{}✗ Failed{}   {} errors, {} warnings{}   {}",
+        "{}{}✗ Failed{}   {} error{}, {} warning{}   {}{}",
         BOLD,
         RED,
         RESET,
         error_count,
+        if error_count == 1 { "" } else { "s" },
         warning_count,
+        if warning_count == 1 { "" } else { "s" },
+        duration_str(duration),
         exit_str,
-        duration_str(duration)
     ));
 
     // Root cause
@@ -221,29 +212,57 @@ fn render_failed(result: &serde_json::Value) {
             truncate(msg, INNER_W - 13),
             RESET
         ));
+
+        // File location (if available from root cause)
+        if let Some(file) = root_cause.get("file").and_then(|v| v.as_str()) {
+            let line = root_cause.get("line").and_then(|v| v.as_u64());
+            let loc = match line {
+                Some(l) => format!("{}:{}", file, l),
+                None => file.to_string(),
+            };
+            box_line(&format!("  {}Location: {}{}", DIM, loc, RESET));
+        }
     }
 
-    box_divider();
-
-    // Show error/warning events
-    if let Some(evts) = events {
-        let diagnostic_events: Vec<_> = evts
-            .iter()
-            .filter(|e| {
-                let sev = e.get("severity").and_then(|v| v.as_str()).unwrap_or("");
-                sev == "error" || sev == "warning"
-            })
-            .collect();
-
-        if diagnostic_events.is_empty() {
-            box_line(&format!("{}No diagnostic events{}", DIM, RESET));
-        } else {
-            for event in &diagnostic_events {
-                render_event_in_box(event);
+    // Project context
+    if let Some(project_context) = result.get("project_context") {
+        if let Some(git_diff) = project_context.get("git_diff_stat").and_then(|v| v.as_str()) {
+            if !git_diff.is_empty() {
+                box_divider();
+                box_line(&format!("{}Recent changes{}", DIM, RESET));
+                box_line(&truncate(git_diff, INNER_W - 2));
             }
         }
-    } else {
-        box_line(&format!("{}No structured events available{}", DIM, RESET));
+
+        if let Some(correlated) =
+            project_context.get("correlated_errors").and_then(|v| v.as_array())
+        {
+            if !correlated.is_empty() {
+                box_divider();
+                let changed: Vec<_> = correlated
+                    .iter()
+                    .filter_map(|item| {
+                        let file = item.get("file").and_then(|v| v.as_str())?;
+                        let recently = item.get("recently_changed").and_then(|v| v.as_bool())?;
+                        Some((file, recently))
+                    })
+                    .collect();
+
+                if !changed.is_empty() {
+                    box_line(&format!("{}Error correlation{}", DIM, RESET));
+                    for (file, recently_changed) in changed.iter().take(5) {
+                        let marker = if *recently_changed { "!" } else { " " };
+                        box_line(&format!(
+                            "  {}{}{} {}",
+                            marker,
+                            file,
+                            RESET,
+                            if *recently_changed { "(recently changed)" } else { "" }
+                        ));
+                    }
+                }
+            }
+        }
     }
 
     box_bottom();
@@ -274,54 +293,6 @@ fn render_running(result: &serde_json::Value) {
 
 fn render_unknown(result: &serde_json::Value) {
     eprintln!("{}", serde_json::to_string_pretty(result).unwrap_or_default());
-}
-
-// ── Event rendering ──────────────────────────────────────────────────────────
-
-fn render_event_in_box(event: &serde_json::Value) {
-    let sev = event.get("severity").and_then(|v| v.as_str()).unwrap_or("info");
-    let msg = event.get("message").and_then(|v| v.as_str()).unwrap_or("");
-    let code = event.get("code").and_then(|v| v.as_str());
-    let location = event.get("location");
-    let event_type = event.get("type").and_then(|v| v.as_str()).unwrap_or("");
-
-    let sev_color = severity_color(sev);
-    let sev_icon = severity_icon(sev);
-    let type_label = event_type_label(event_type);
-
-    // Line 1: icon + code + type label
-    let mut header = format!("{}{} {}{}", sev_color, sev_icon, type_label, RESET);
-    if let Some(c) = code {
-        let _ = write!(header, " {}{}{}", DIM, c, RESET);
-    }
-    box_line(&header);
-
-    // Line 2: message (wrapped if needed)
-    if !msg.is_empty() {
-        let wrapped = wrap_text(msg, INNER_W - 2);
-        for line in wrapped {
-            box_line(&format!("  {}{}{}", WHITE, line, RESET));
-        }
-    }
-
-    // Line 3: file location
-    if let Some(loc) = location {
-        let file = loc.get("file").and_then(|v| v.as_str()).unwrap_or("");
-        let line_no = loc.get("line").and_then(|v| v.as_u64());
-        let col = loc.get("column").and_then(|v| v.as_u64());
-
-        if !file.is_empty() {
-            let loc_str = match (line_no, col) {
-                (Some(l), Some(c)) => format!("{}:{}:{}", file, l, c),
-                (Some(l), None) => format!("{}:{}", file, l),
-                _ => file.to_string(),
-            };
-            box_line(&format!("  {}{}{}{}", CYAN, DIM, loc_str, RESET));
-        }
-    }
-
-    // Blank separator
-    box_line("");
 }
 
 // ── Box drawing helpers ──────────────────────────────────────────────────────
@@ -364,58 +335,12 @@ fn severity_color(sev: &str) -> &'static str {
     }
 }
 
-fn severity_icon(sev: &str) -> &'static str {
-    match sev {
-        "error" => "✗",
-        "warning" => "⚠",
-        "info" => "●",
-        _ => "·",
-    }
-}
-
-fn event_type_label(event_type: &str) -> &'static str {
-    match event_type {
-        "diagnostic" => "Diagnostic",
-        "test_result" => "Test",
-        "location" => "Location",
-        "summary" => "Summary",
-        "crash" => "Crash",
-        "log" => "Log",
-        _ => "Event",
-    }
-}
-
 fn truncate(s: &str, max: usize) -> String {
     if s.len() <= max {
         return s.to_string();
     }
     let end = s.char_indices().nth(max.saturating_sub(3)).map(|(i, _)| i).unwrap_or(s.len());
     format!("{}...", &s[..end])
-}
-
-fn wrap_text(text: &str, width: usize) -> Vec<String> {
-    if text.len() <= width {
-        return vec![text.to_string()];
-    }
-
-    let mut lines = Vec::new();
-    let mut current = String::new();
-
-    for word in text.split_whitespace() {
-        if current.is_empty() {
-            current = word.to_string();
-        } else if current.len() + 1 + word.len() <= width {
-            current.push(' ');
-            current.push_str(word);
-        } else {
-            lines.push(current);
-            current = word.to_string();
-        }
-    }
-    if !current.is_empty() {
-        lines.push(current);
-    }
-    lines
 }
 
 /// Calculate visible width of a string, ignoring ANSI escape sequences.
@@ -645,4 +570,207 @@ pub fn render_benchmark(result: &serde_json::Value) {
         eprintln!("  └──────────────┴───────┴────────┴────────┴──────────┴───────────┘");
     }
     eprintln!();
+}
+
+// ── Analyze renderer ──────────────────────────────────────────────────────
+
+/// Format a number with commas (e.g. 12276 -> "12,276").
+fn fmt_commas(n: u64) -> String {
+    let s = n.to_string();
+    let mut result = String::with_capacity(s.len() + s.len() / 3);
+    for (i, ch) in s.chars().enumerate() {
+        if i > 0 && (s.len() - i).is_multiple_of(3) {
+            result.push(',');
+        }
+        result.push(ch);
+    }
+    result
+}
+
+/// Truncate a command name to `width` chars, adding "..." if needed.
+fn truncate_name(s: &str, width: usize) -> String {
+    if s.chars().count() <= width {
+        s.to_string()
+    } else {
+        let end = s.char_indices().nth(width.saturating_sub(3)).map(|(i, _)| i).unwrap_or(s.len());
+        format!("{}...", &s[..end])
+    }
+}
+
+/// Render a horizontal bar, scaled so that `max` fills `max_bar` columns.
+fn render_bar(count: u64, max: u64, max_bar: usize) -> String {
+    if max == 0 {
+        return String::new();
+    }
+    let width = ((count as f64 / max as f64) * max_bar as f64).round() as usize;
+    "\u{2588}".repeat(width.max(1))
+}
+
+/// Render an ImpactReport as a formatted terminal table.
+pub fn render_analyze(result: &serde_json::Value) {
+    // ── Extract fields ──────────────────────────────────────────────────
+    let summary = result.get("summary");
+    let total_tasks =
+        summary.and_then(|s| s.get("total_tasks")).and_then(|v| v.as_u64()).unwrap_or(0);
+    let total_events =
+        summary.and_then(|s| s.get("total_events")).and_then(|v| v.as_u64()).unwrap_or(0);
+    let total_errors =
+        summary.and_then(|s| s.get("total_errors")).and_then(|v| v.as_u64()).unwrap_or(0);
+    let date_range_days =
+        summary.and_then(|s| s.get("date_range_days")).and_then(|v| v.as_u64()).unwrap_or(1);
+    let avg_tasks_per_day =
+        summary.and_then(|s| s.get("avg_tasks_per_day")).and_then(|v| v.as_f64()).unwrap_or(0.0);
+
+    let token_eff = result.get("token_efficiency");
+    let agent_visible =
+        token_eff.and_then(|t| t.get("agent_visible_events")).and_then(|v| v.as_u64()).unwrap_or(0);
+    let agent_skipped =
+        token_eff.and_then(|t| t.get("agent_skipped_events")).and_then(|v| v.as_u64()).unwrap_or(0);
+    let savings_pct = token_eff
+        .and_then(|t| t.get("estimated_token_savings_pct"))
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
+
+    let info = result.get("information_density");
+    let avg_fields =
+        info.and_then(|i| i.get("avg_fields_per_event")).and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let with_location =
+        info.and_then(|i| i.get("events_with_location")).and_then(|v| v.as_u64()).unwrap_or(0);
+    let with_code =
+        info.and_then(|i| i.get("events_with_code")).and_then(|v| v.as_u64()).unwrap_or(0);
+    let with_context =
+        info.and_then(|i| i.get("events_with_context")).and_then(|v| v.as_u64()).unwrap_or(0);
+    let with_hint =
+        info.and_then(|i| i.get("events_with_hint")).and_then(|v| v.as_u64()).unwrap_or(0);
+
+    let patterns = result.get("command_patterns");
+    let short_pct =
+        patterns.and_then(|p| p.get("short_cmd_pct")).and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let long_pct =
+        patterns.and_then(|p| p.get("long_cmd_pct")).and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let total_retries =
+        patterns.and_then(|p| p.get("total_retry_runs")).and_then(|v| v.as_u64()).unwrap_or(0);
+    let top_retried = patterns.and_then(|p| p.get("top_retried")).and_then(|v| v.as_array());
+
+    // Derived percentages for token efficiency
+    let total_data_events = agent_visible + agent_skipped;
+    let visible_pct = if total_data_events > 0 {
+        agent_visible as f64 / total_data_events as f64 * 100.0
+    } else {
+        0.0
+    };
+    let skipped_pct = if total_data_events > 0 {
+        agent_skipped as f64 / total_data_events as f64 * 100.0
+    } else {
+        0.0
+    };
+
+    // ── Title banner (hardcoded widths to match ANSI-invisible content) ──
+    eprintln!();
+    eprintln!("╔═══════════════════════════════════════════════════════════════╗");
+    eprintln!("║               {}{}ARSHY IMPACT REPORT{}                 ║", BOLD, CYAN, RESET);
+    eprintln!("╚═══════════════════════════════════════════════════════════════╝");
+    eprintln!();
+    eprintln!(
+        "  Summary: {} tasks over {} days ({:.1} tasks/day)",
+        fmt_commas(total_tasks),
+        date_range_days,
+        avg_tasks_per_day
+    );
+    eprintln!(
+        "           {} events, {} errors",
+        fmt_commas(total_events),
+        fmt_commas(total_errors)
+    );
+    eprintln!();
+
+    // ── Token Efficiency box ────────────────────────────────────────────
+    box_top();
+    box_line(&format!("{}TOKEN EFFICIENCY{}", BOLD, RESET));
+    box_divider();
+    box_line(&format!(
+        "  Agent-visible events:  {} ({:.1}%)",
+        fmt_commas(agent_visible),
+        visible_pct
+    ));
+    box_line(&format!(
+        "  Agent-skipped events:  {} ({:.1}%)   \u{2190} noise filtered",
+        fmt_commas(agent_skipped),
+        skipped_pct
+    ));
+    box_line(&format!("  Estimated savings:     ~{:.0}% tokens", savings_pct));
+    box_bottom();
+    eprintln!();
+
+    // ── Information Density box ─────────────────────────────────────────
+    box_top();
+    box_line(&format!("{}INFORMATION DENSITY{}", BOLD, RESET));
+    box_divider();
+    box_line(&format!("  Avg fields/event:      {:.2}", avg_fields));
+    box_line(&format!(
+        "  Events with location:  {} / {}",
+        fmt_commas(with_location),
+        fmt_commas(total_events)
+    ));
+    box_line(&format!(
+        "  Events with code:      {} / {}",
+        fmt_commas(with_code),
+        fmt_commas(total_events)
+    ));
+    box_line(&format!(
+        "  Events with context:   {} / {}",
+        fmt_commas(with_context),
+        fmt_commas(total_events)
+    ));
+    box_line(&format!(
+        "  Events with hint:      {} / {}",
+        fmt_commas(with_hint),
+        fmt_commas(total_events)
+    ));
+    box_bottom();
+    eprintln!();
+
+    // ── Command Patterns box ────────────────────────────────────────────
+    box_top();
+    box_line(&format!("{}COMMAND PATTERNS{}", BOLD, RESET));
+    box_divider();
+    box_line(&format!("  Short commands:        {:.1}%", short_pct));
+    box_line(&format!("  Long commands:         {:.1}%", long_pct));
+    box_line(&format!("  Total retries:         {}", fmt_commas(total_retries)));
+    box_line("");
+    let has_retried = top_retried.is_some_and(|arr| !arr.is_empty());
+    if has_retried {
+        box_line("  Top retried:");
+        for entry in top_retried.unwrap() {
+            let cmd = entry.get(0).and_then(|v| v.as_str()).unwrap_or("");
+            let count = entry.get(1).and_then(|v| v.as_u64()).unwrap_or(0);
+            let name = truncate_name(cmd, 18);
+            box_line(&format!("    {:<18} {}x", name, count));
+        }
+    }
+    box_bottom();
+    eprintln!();
+
+    // ── Top Retried box (bar chart from top_retried) ────────────────────
+    if let Some(parsers) = top_retried {
+        if !parsers.is_empty() {
+            let max_count =
+                parsers.iter().filter_map(|p| p.get(1).and_then(|v| v.as_u64())).max().unwrap_or(1);
+
+            box_top();
+            box_line(&format!("{}TOP RETRIED{}", BOLD, RESET));
+            box_divider();
+
+            for entry in parsers.iter().take(5) {
+                let cmd = entry.get(0).and_then(|v| v.as_str()).unwrap_or("");
+                let count = entry.get(1).and_then(|v| v.as_u64()).unwrap_or(0);
+                let bar = render_bar(count, max_count, 26);
+                let name = truncate_name(cmd, 12);
+                box_line(&format!("  {:<12} {:>4} {}", name, count, bar));
+            }
+
+            box_bottom();
+            eprintln!();
+        }
+    }
 }

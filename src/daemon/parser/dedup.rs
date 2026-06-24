@@ -6,6 +6,42 @@
 
 use arshy_lib::ipc::TaskEvent;
 
+/// Regex pattern matching ANSI escape sequences (SGR color/style codes).
+/// Strips sequences like `\x1b[0m`, `\x1b[32m`, `\x1b[2m`, etc.
+const ANSI_REGEX: &str = r"\x1b\[[0-9;]*m";
+
+/// Returns `true` if a message is pure noise that should be dropped before storage:
+/// - Blank or whitespace-only lines
+/// - Lines that are only ANSI escape sequences (nothing visible after stripping)
+/// - Single-character formatting noise: `:` (colon only — other chars are valid in diffs)
+/// - Diff markers: `+++`, `---`
+fn is_noise_line(message: &str) -> bool {
+    let stripped = strip_ansi(message);
+    let trimmed = stripped.trim();
+    if trimmed.is_empty() {
+        return true;
+    }
+    // Single-character formatting noise (only truly inert characters).
+    // Note: {, }, |, +, - are valid content in diff/JSON output and are NOT filtered.
+    if trimmed.len() == 1 && trimmed == ":" {
+        return true;
+    }
+    false
+}
+
+/// Strip all ANSI escape sequences from a string.
+fn strip_ansi(input: &str) -> std::borrow::Cow<'_, str> {
+    // Fast path: no ESC byte at all
+    if !input.as_bytes().contains(&0x1b) {
+        return std::borrow::Cow::Borrowed(input);
+    }
+    // Use a compiled regex for the general case
+    use std::sync::OnceLock;
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| regex::Regex::new(ANSI_REGEX).expect("invalid ANSI regex"));
+    re.replace_all(input, "")
+}
+
 pub struct Deduplicator {
     last_event_type: Option<String>,
     last_message: Option<String>,
@@ -40,8 +76,15 @@ impl Deduplicator {
 
     /// Feed an event. Returns Some if the event should be stored (either
     /// a new non-duplicate, or a flushed accumulated duplicate).
-    /// Returns None if the event is a duplicate (accumulated internally).
+    /// Returns None if the event is a duplicate (accumulated internally)
+    /// or is noise (blank/whitespace-only after stripping ANSI).
     pub fn feed(&mut self, event: TaskEvent) -> Option<TaskEvent> {
+        // Filter noise: blank lines and ANSI-only lines (common in daemon/tracing output)
+        if event.event_type == "log" && is_noise_line(&event.message) {
+            self.total_collapsed += 1;
+            return None;
+        }
+
         let is_dup = self.last_event_type.as_deref() == Some(&event.event_type)
             && self.last_message.as_deref() == Some(&event.message)
             && self.last_location == event.location;
@@ -301,5 +344,46 @@ mod tests {
         assert_eq!(d.collapsed_count(), 3);
         d.finish();
         assert_eq!(d.collapsed_count(), 3);
+    }
+
+    #[test]
+    fn blank_log_lines_filtered() {
+        let mut d = Deduplicator::new();
+        assert!(d.feed(make_event("log", "info", "", 0)).is_none());
+        assert!(d.feed(make_event("log", "info", "   ", 1)).is_none());
+        assert!(d.feed(make_event("log", "info", "\t\n", 2)).is_none());
+        assert_eq!(d.collapsed_count(), 3);
+        // Non-blank lines still pass through
+        assert!(d.feed(make_event("log", "info", "real message", 3)).is_some());
+    }
+
+    #[test]
+    fn ansi_only_log_lines_filtered() {
+        let mut d = Deduplicator::new();
+        // Only ANSI codes, no visible text
+        assert!(d.feed(make_event("log", "info", "\x1b[2m\x1b[0m", 0)).is_none());
+        assert!(d.feed(make_event("log", "info", "\x1b[32m\x1b[31m\x1b[0m", 1)).is_none());
+        assert_eq!(d.collapsed_count(), 2);
+        // ANSI codes with visible text should pass through
+        let r = d.feed(make_event("log", "info", "\x1b[32mhello\x1b[0m", 2));
+        assert!(r.is_some());
+        assert_eq!(r.unwrap().message, "\x1b[32mhello\x1b[0m");
+    }
+
+    #[test]
+    fn noise_filter_only_applies_to_log_type() {
+        let mut d = Deduplicator::new();
+        // Empty diagnostic events should NOT be filtered (they may carry location/context)
+        let diag = TaskEvent {
+            seq: 0,
+            event_type: "diagnostic".into(),
+            severity: Some("error".into()),
+            code: None,
+            message: String::new(),
+            location: None,
+            context: None,
+            hint: None,
+        };
+        assert!(d.feed(diag).is_some());
     }
 }

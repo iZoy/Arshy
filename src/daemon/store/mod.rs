@@ -12,7 +12,22 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+
+/// Per-task metrics tracking parser pipeline throughput and enrichment.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TaskMetrics {
+    pub raw_output_bytes: u64,
+    pub structured_events_bytes: u64,
+    pub agent_visible_events: u64,
+    pub agent_skipped_events: u64,
+    pub locations_extracted: u64,
+    pub codes_extracted: u64,
+    pub contexts_enriched: u64,
+    pub hints_attached: u64,
+}
 
 /// Internal task record extending the public Task with storage-only fields.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -23,6 +38,14 @@ struct TaskRecord {
     raw_output: Option<String>,
     dedup_collapsed: u64,
     correlated_errors: u64,
+    metrics: TaskMetrics,
+    /// Whether events have been enriched with context + hints.
+    #[serde(default)]
+    enriched: bool,
+    /// Detected tool name for async enrichment (e.g., "cargo", "tsc").
+    /// Stored so async enrichment can look up HintDb hints.
+    #[serde(default)]
+    detected_tool: Option<String>,
 }
 
 impl Default for TaskRecord {
@@ -45,6 +68,9 @@ impl Default for TaskRecord {
             raw_output: None,
             dedup_collapsed: 0,
             correlated_errors: 0,
+            metrics: TaskMetrics::default(),
+            enriched: false,
+            detected_tool: None,
         }
     }
 }
@@ -54,6 +80,7 @@ pub struct Store {
     dir: PathBuf,
     tasks: Mutex<HashMap<String, TaskRecord>>,
     versions: Mutex<HashMap<String, (String, chrono::DateTime<chrono::Utc>)>>,
+    dirty: AtomicBool,
 }
 
 impl Store {
@@ -83,6 +110,9 @@ impl Store {
 
         std::fs::create_dir_all(&store_dir)?;
 
+        // Ensure raw output directory exists
+        std::fs::create_dir_all(store_dir.join("raw"))?;
+
         let tasks_map = load_tasks_from_disk(&store_dir)?;
         let versions_map = load_versions_from_disk(&store_dir)?;
 
@@ -90,6 +120,7 @@ impl Store {
             dir: store_dir,
             tasks: Mutex::new(tasks_map),
             versions: Mutex::new(versions_map),
+            dirty: AtomicBool::new(false),
         })
     }
 
@@ -109,7 +140,38 @@ impl Store {
         }
         file.sync_all()?;
         std::fs::rename(&tmp, &path)?;
+        self.dirty.store(false, Ordering::Release);
         Ok(())
+    }
+
+    /// Mark the store as having unsaved changes.
+    pub fn mark_dirty(&self) {
+        self.dirty.store(true, Ordering::Release);
+    }
+
+    /// Flush pending changes to disk if dirty. Returns Ok(()) even if not dirty.
+    pub fn flush(&self) -> Result<()> {
+        if self.dirty.load(Ordering::Acquire) {
+            self.persist_tasks()?;
+        }
+        Ok(())
+    }
+
+    /// Spawn a background task that flushes dirty state to disk every second.
+    /// Call this once after the Store is wrapped in `Arc`.
+    pub fn start_flush_task(self: &Arc<Self>) -> tokio::task::JoinHandle<()> {
+        let store = Arc::clone(self);
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                if store.dirty.load(Ordering::Acquire) {
+                    // persist_tasks acquires the mutex internally, safe to call
+                    if let Err(e) = store.persist_tasks() {
+                        tracing::warn!("background flush failed: {}", e);
+                    }
+                }
+            }
+        })
     }
 
     /// Append a single event JSON line to the per-task file.
@@ -122,6 +184,27 @@ impl Store {
         file.write_all(b"\n")?;
         file.flush()?;
         Ok(())
+    }
+
+    /// Write raw output to a per-task file under `<store_dir>/raw/<task_id>.txt`.
+    fn write_raw_output(&self, task_id: &str, raw_output: &str) -> Result<()> {
+        let raw_dir = self.dir.join("raw");
+        std::fs::create_dir_all(&raw_dir)?;
+        let path = raw_dir.join(format!("{}.txt", task_id));
+        let tmp = raw_dir.join(format!("{}.txt.tmp", task_id));
+        std::fs::write(&tmp, raw_output)?;
+        std::fs::rename(&tmp, &path)?;
+        Ok(())
+    }
+
+    /// Read raw output from the per-task file, if it exists.
+    fn read_raw_output(&self, task_id: &str) -> Result<Option<String>> {
+        let path = self.dir.join("raw").join(format!("{}.txt", task_id));
+        if path.exists() {
+            Ok(Some(std::fs::read_to_string(&path)?))
+        } else {
+            Ok(None)
+        }
     }
 
     /// Run `integrity_check` — verify tasks.jsonl is parseable.
@@ -155,6 +238,11 @@ impl Store {
         Ok("ok".to_string())
     }
 
+    /// Return the on-disk store directory.
+    pub fn store_dir(&self) -> &Path {
+        &self.dir
+    }
+
     /// Persist versions map to disk.
     fn persist_versions(&self) -> Result<()> {
         let versions = self.versions.lock().unwrap();
@@ -182,7 +270,19 @@ fn load_tasks_from_disk(dir: &Path) -> Result<HashMap<String, TaskRecord>> {
                 continue;
             }
             match serde_json::from_str::<TaskRecord>(line) {
-                Ok(record) => {
+                Ok(mut record) => {
+                    // Migrate inline raw_output to file-based storage if present
+                    if let Some(ref raw) = record.raw_output {
+                        if !raw.is_empty() {
+                            let raw_dir = dir.join("raw");
+                            let _ = std::fs::create_dir_all(&raw_dir);
+                            let path = raw_dir.join(format!("{}.txt", record.task.task_id));
+                            if !path.exists() {
+                                let _ = std::fs::write(&path, raw);
+                            }
+                        }
+                    }
+                    record.raw_output = None;
                     map.insert(record.task.task_id.clone(), record);
                 }
                 Err(e) => {
@@ -410,6 +510,7 @@ mod tests {
             file: None,
             limit: 100,
             offset: 0,
+            include_logs: true,
         };
         let (events, total) = store.query_events(&params).unwrap();
         assert_eq!(total, 1);
@@ -453,6 +554,7 @@ mod tests {
             file: None,
             limit: 100,
             offset: 0,
+            include_logs: true,
         };
         let (events, _) = store.query_events(&params).unwrap();
         let loc = events[0].location.as_ref().unwrap();
@@ -477,6 +579,7 @@ mod tests {
             file: None,
             limit: 100,
             offset: 0,
+            include_logs: true,
         };
         let (events, total) = store.query_events(&params).unwrap();
         assert_eq!(total, 2);
@@ -499,6 +602,7 @@ mod tests {
             file: None,
             limit: 100,
             offset: 0,
+            include_logs: true,
         };
         let (events, total) = store.query_events(&params).unwrap();
         assert_eq!(total, 1);
@@ -521,6 +625,7 @@ mod tests {
             file: None,
             limit: 100,
             offset: 0,
+            include_logs: true,
         };
         let (events, total) = store.query_events(&params).unwrap();
         assert_eq!(total, 1);
@@ -546,6 +651,7 @@ mod tests {
             file: None,
             limit: 3,
             offset: 0,
+            include_logs: true,
         };
         let (events, total) = store.query_events(&params).unwrap();
         assert_eq!(total, 10);
@@ -561,6 +667,7 @@ mod tests {
             file: None,
             limit: 3,
             offset: 3,
+            include_logs: true,
         };
         let (events, _) = store.query_events(&params).unwrap();
         assert_eq!(events.len(), 3);
@@ -580,6 +687,7 @@ mod tests {
             file: None,
             limit: 100,
             offset: 0,
+            include_logs: true,
         };
         let (events, total) = store.query_events(&params).unwrap();
         assert_eq!(total, 0);
@@ -712,6 +820,54 @@ mod tests {
         let (dt, de) = store.prune_older_than(30).unwrap();
         assert_eq!(dt, 0);
         assert_eq!(de, 0);
+    }
+
+    // ── Enriched flag tests ───────────────────────────────────────────────────
+
+    #[test]
+    fn is_enriched_defaults_false() {
+        let (store, _tmp) = test_store();
+        store.insert_task(&make_task("enr-1", "cmd", TaskStatus::Running)).unwrap();
+        assert!(!store.is_enriched("enr-1"));
+    }
+
+    #[test]
+    fn mark_enriched_sets_flag() {
+        let (store, _tmp) = test_store();
+        store.insert_task(&make_task("enr-2", "cmd", TaskStatus::Running)).unwrap();
+        assert!(!store.is_enriched("enr-2"));
+        store.mark_enriched("enr-2").unwrap();
+        assert!(store.is_enriched("enr-2"));
+    }
+
+    #[test]
+    fn mark_enriched_nonexistent_is_noop() {
+        let (store, _tmp) = test_store();
+        // Should not error
+        store.mark_enriched("ghost").unwrap();
+    }
+
+    #[test]
+    fn mark_enriched_persists_across_reload() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let db_path = tmp.path().join("test.db");
+        let store = Store::open(&db_path, false).unwrap();
+        store.initialize_schema().unwrap();
+
+        store.insert_task(&make_task("enr-3", "cmd", TaskStatus::Running)).unwrap();
+        store.mark_enriched("enr-3").unwrap();
+        // Flush to disk — no background task in tests
+        store.flush().unwrap();
+
+        // Reload store from disk
+        let store2 = Store::open(&db_path, false).unwrap();
+        assert!(store2.is_enriched("enr-3"));
+    }
+
+    #[test]
+    fn is_enriched_unknown_task_returns_false() {
+        let (store, _tmp) = test_store();
+        assert!(!store.is_enriched("nonexistent"));
     }
 
     // ── Raw output tests ────────────────────────────────────────────────────

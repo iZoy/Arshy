@@ -12,6 +12,27 @@ severity = "error"
 fields = { file = 1, line = 2 }
 
 [[pattern]]
+name = "python-traceback-header"
+regex = '^Traceback \(most recent call last\):$'
+event_type = "diagnostic"
+severity = "error"
+fields = { message = 0 }
+
+[[pattern]]
+name = "python-syntax-error"
+regex = '^\s*SyntaxError: (.+)$'
+event_type = "diagnostic"
+severity = "error"
+fields = { message = 1 }
+
+[[pattern]]
+name = "python-import-error"
+regex = '^\s*(?:ImportError|ModuleNotFoundError): (.+)$'
+event_type = "diagnostic"
+severity = "error"
+fields = { message = 1 }
+
+[[pattern]]
 name = "python-assertion"
 regex = '^E\s+(.+)$'
 event_type = "diagnostic"

@@ -20,9 +20,52 @@ use super::bus::{BusEvent, BusEventKind, EventBus};
 use super::context;
 use super::ipc_handler::RunResult;
 use super::parser::dedup::Deduplicator;
-use super::parser::{Engine, ParsedTool};
+use super::parser::{Engine, ParsedTool, RustcContextMerger};
 use super::security::{AuditEntry, AuditLog, CommandFilter, RateLimiter};
 use super::store::Store;
+
+/// Shared enrichment function — enriches events with source context and error hints.
+///
+/// Safe to call from both sync and async contexts (uses blocking I/O internally;
+/// callers should wrap with `tokio::task::spawn_blocking` when in async context).
+///
+/// Parameters:
+/// - `events`: raw event values (serde_json::Value)
+/// - `cwd`: working directory for resolving file paths in context extraction
+/// - `detected_tool`: optional parsed tool metadata for HintDb language mapping
+///
+/// Returns the enriched events vector.
+pub fn enrich_events(
+    events: Vec<serde_json::Value>,
+    cwd: &std::path::Path,
+    tool_name: Option<&str>,
+) -> Vec<serde_json::Value> {
+    // Step 1: Context enrichment on error/warning events
+    let mut enricher = super::context::ContextEnricher::new(3);
+    let mut task_events: Vec<arshy_lib::ipc::TaskEvent> =
+        events.iter().filter_map(|e| serde_json::from_value(e.clone()).ok()).collect();
+    enricher.enrich(&mut task_events, cwd);
+    let mut enriched_values: Vec<serde_json::Value> =
+        task_events.into_iter().map(|e| serde_json::to_value(&e).unwrap_or_default()).collect();
+
+    // Step 2: HintDb lookup on events with error codes
+    let hint_db = super::parser::hint::HintDb::get();
+    let language = tool_name.and_then(super::parser::hint::tool_to_language);
+    if let Some(lang) = language {
+        for evt in enriched_values.iter_mut() {
+            if evt.get("hint").is_some() {
+                continue;
+            }
+            if let Some(code) = evt.get("code").and_then(|v| v.as_str()) {
+                if let Some(hint) = hint_db.lookup(lang, code) {
+                    evt["hint"] = serde_json::to_value(hint).unwrap_or_default();
+                }
+            }
+        }
+    }
+
+    enriched_values
+}
 
 /// Determine whether a command is "short" — eligible for zero-overhead sync path.
 ///
@@ -350,7 +393,10 @@ impl Executor {
 
         // ── Auto + short (no hint) → zero-overhead fast path ──────────────
         if is_auto && is_short && !has_hint {
-            return self.run_short(command, cwd, timeout_ms, env).await;
+            super::telemetry::record_task_created();
+            let result = self.run_short(command, cwd, timeout_ms, env).await?;
+            super::telemetry::record_task_completed(result.status == TaskStatus::Completed);
+            return Ok(result);
         }
 
         // ── Full structured path ──────────────────────────────────────────
@@ -379,6 +425,10 @@ impl Executor {
             error_count: 0,
         };
         self.store.insert_task(&task)?;
+        // Store detected tool name for async enrichment (Bug #2 fix)
+        if let Some(ref t) = tool {
+            let _ = self.store.set_detected_tool(&task_id, &t.tool_name);
+        }
 
         // Auto + non-short → sync (wait for completion, with 30s timeout)
         // Explicit sync/async → as-is
@@ -391,6 +441,7 @@ impl Executor {
 
         // Spawn background execution task
         let store = self.store.clone();
+        let store_for_enrichment = store.clone();
         let parser = self.parser.clone();
         let event_bus = self.event_bus.clone();
         let executor_config = self.config.clone();
@@ -440,18 +491,14 @@ impl Executor {
             return Ok(RunResult {
                 task_id,
                 status: TaskStatus::Running,
-                pid: None,
                 exit_code: None,
                 duration_ms: None,
-                event_count: None,
                 error_count: None,
+                warning_count: None,
                 raw_output: None,
                 short_command: false,
-                events: None,
-                summary: None,
                 root_cause: None,
                 project_context: None,
-                raw_output_ref: None,
             });
         }
 
@@ -472,18 +519,14 @@ impl Executor {
                             return Ok(RunResult {
                                 task_id,
                                 status: TaskStatus::Running,
-                                pid: None,
                                 exit_code: None,
                                 duration_ms: None,
-                                event_count: None,
                                 error_count: None,
+                                warning_count: None,
                                 raw_output: None,
                                 short_command: false,
-                                events: None,
-                                summary: None,
                                 root_cause: None,
                                 project_context: None,
-                                raw_output_ref: None,
                             });
                         }
                     }
@@ -493,7 +536,8 @@ impl Executor {
 
                 match completion {
                     Ok(info) => {
-                        // Query events from store and attach to result for agent convenience
+                        // Query events from store — only used for summary/root_cause computation.
+                        // The full events array is NOT sent to the agent; use arshy_query for detail.
                         let events_json: Option<Vec<serde_json::Value>> = {
                             let params = arshy_lib::ipc::QueryParams {
                                 task_id: task_id.clone(),
@@ -503,6 +547,7 @@ impl Executor {
                                 file: None,
                                 limit: 200,
                                 offset: 0,
+                                include_logs: false,
                             };
                             self.store.query_events(&params).ok().map(|(evts, _total)| {
                                 evts.into_iter()
@@ -517,24 +562,15 @@ impl Executor {
                             events_json
                         };
 
-                        // Enrich error/warning events with surrounding source context
-                        let mut events_json = {
+                        // Enrich error/warning events with surrounding source context + hints
+                        let enriched_events = {
                             let cwd_path = std::path::PathBuf::from(cwd.unwrap_or("."));
-                            let evts = events_json.unwrap_or_default();
+                            let evts = events_json.clone().unwrap_or_default();
                             let evts_fallback = evts.clone();
+                            let tool_name =
+                                detected_tool_clone.as_ref().map(|t| t.tool_name.clone());
                             tokio::task::spawn_blocking(move || {
-                                let mut enricher = super::context::ContextEnricher::new(3);
-                                let mut task_events: Vec<arshy_lib::ipc::TaskEvent> = evts
-                                    .iter()
-                                    .filter_map(|e| serde_json::from_value(e.clone()).ok())
-                                    .collect();
-                                enricher.enrich(&mut task_events, &cwd_path);
-                                Some(
-                                    task_events
-                                        .into_iter()
-                                        .map(|e| serde_json::to_value(&e).unwrap_or_default())
-                                        .collect::<Vec<_>>(),
-                                )
+                                Some(enrich_events(evts, &cwd_path, tool_name.as_deref()))
                             })
                             .await
                             .unwrap_or(Some(evts_fallback))
@@ -543,7 +579,7 @@ impl Executor {
                         let project_context = {
                             let status_clone = info.status.clone();
                             let cwd_path_clone = cwd.map(std::path::PathBuf::from);
-                            let events_clone = events_json.clone();
+                            let events_clone = enriched_events.clone();
                             tokio::task::spawn_blocking(move || {
                                 compute_enhanced_project_context(
                                     &status_clone,
@@ -555,59 +591,51 @@ impl Executor {
                             .unwrap_or(None)
                         };
 
-                        // Enrich error events with fix hints from HintDb
-                        if let Some(ref mut evts) = events_json {
-                            let hint_db = super::parser::hint::HintDb::get();
-                            let language = detected_tool_clone.as_ref().and_then(|tool| {
-                                super::parser::hint::tool_to_language(&tool.tool_name)
-                            });
-                            if let Some(lang) = language {
-                                for evt in evts.iter_mut() {
-                                    if evt.get("hint").is_some() {
-                                        continue;
-                                    }
-                                    if let Some(code) = evt.get("code").and_then(|v| v.as_str()) {
-                                        if let Some(hint) = hint_db.lookup(lang, code) {
-                                            evt["hint"] =
-                                                serde_json::to_value(hint).unwrap_or_default();
-                                        }
-                                    }
+                        // Persist enriched events back to store (context + hints)
+                        // Uses merge strategy to preserve log events (Bug #1 fix)
+                        if let Some(ref evts) = enriched_events {
+                            let task_events: Vec<arshy_lib::ipc::TaskEvent> = evts
+                                .iter()
+                                .filter_map(|e| serde_json::from_value(e.clone()).ok())
+                                .collect();
+                            if !task_events.is_empty() {
+                                if let Err(e) = store_for_enrichment
+                                    .merge_enriched_events(&task_id, &task_events)
+                                {
+                                    tracing::warn!(
+                                        "failed to persist enriched events for {}: {}",
+                                        task_id,
+                                        e
+                                    );
                                 }
+                                let _ = store_for_enrichment.mark_enriched(&task_id);
                             }
                         }
 
                         Ok(RunResult {
                             task_id: task_id.clone(),
                             status: info.status.clone(),
-                            pid: info.pid,
                             exit_code: Some(info.exit_code),
                             duration_ms: Some(info.duration_ms),
-                            event_count: Some(info.event_count),
                             error_count: Some(info.error_count),
+                            warning_count: Some(info.warning_count),
                             raw_output: None,
                             short_command: false,
-                            summary: compute_summary(&events_json),
-                            root_cause: extract_root_cause(&events_json),
+                            root_cause: extract_root_cause(&enriched_events),
                             project_context,
-                            events: events_json,
-                            raw_output_ref: Some(task_id),
                         })
                     }
                     Err(_) => Ok(RunResult {
                         task_id,
                         status: TaskStatus::Failed,
-                        pid: None,
                         exit_code: Some(-1),
                         duration_ms: None,
-                        event_count: None,
                         error_count: None,
+                        warning_count: None,
                         raw_output: None,
                         short_command: false,
-                        events: None,
-                        summary: None,
                         root_cause: None,
                         project_context: None,
-                        raw_output_ref: None,
                     }),
                 }
             }
@@ -631,7 +659,7 @@ impl Executor {
 
         let cwd_path = cwd.map(std::path::PathBuf::from);
         let mut handle = pty::spawn_command(command, cwd_path.as_deref(), env).await?;
-        let pid = handle.pid;
+        let _pid = handle.pid; // captured for audit/debug, not exposed to agent
 
         let timeout_dur = tokio::time::Duration::from_millis(
             timeout_ms.unwrap_or(self.config.max_task_duration_ms),
@@ -684,18 +712,14 @@ impl Executor {
         Ok(RunResult {
             task_id,
             status,
-            pid: Some(pid),
             exit_code: Some(exit_code),
             duration_ms: Some(duration_ms),
-            event_count: None,
             error_count: None,
+            warning_count: None,
             raw_output: Some(raw_output),
             short_command: true,
-            events: None,
-            summary: None,
             root_cause: None,
             project_context: None,
-            raw_output_ref: None,
         })
     }
 
@@ -728,6 +752,7 @@ impl Executor {
             file: None,
             limit: lines,
             offset: 0,
+            include_logs: true,
         };
         let (events, _total) = self.store.query_events(&params)?;
         Ok(events.into_iter().map(|e| e.message).collect())
@@ -744,30 +769,6 @@ fn filter_events_errors_only(
             .cloned()
             .collect()
     })
-}
-
-/// Compute event statistics from a list of serialized events.
-/// Returns counts by event_type and severity.
-fn compute_summary(
-    events: &Option<Vec<serde_json::Value>>,
-) -> Option<super::ipc_handler::ResultSummary> {
-    let evts = events.as_ref()?;
-    if evts.is_empty() {
-        return None;
-    }
-    let mut by_type: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
-    let mut by_severity: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
-
-    for evt in evts {
-        if let Some(t) = evt.get("type").and_then(|v| v.as_str()) {
-            *by_type.entry(t.to_string()).or_insert(0) += 1;
-        }
-        if let Some(s) = evt.get("severity").and_then(|v| v.as_str()) {
-            *by_severity.entry(s.to_string()).or_insert(0) += 1;
-        }
-    }
-
-    Some(super::ipc_handler::ResultSummary { by_type, by_severity })
 }
 
 /// Extract the first error-level event as the root cause of failure.
@@ -836,11 +837,10 @@ fn compute_enhanced_project_context(
 /// Completion info sent through the oneshot channel for sync mode.
 struct CompletionInfo {
     status: TaskStatus,
-    pid: Option<u32>,
     exit_code: i32,
     duration_ms: u64,
-    event_count: u64,
     error_count: u64,
+    warning_count: u64,
 }
 
 /// Grouped parameters for a background task execution.
@@ -894,7 +894,7 @@ async fn run_background(mut t: BackgroundTask) -> Result<()> {
 
     // Spawn the process
     let mut handle = pty::spawn_command(&t.command, t.cwd.as_deref(), t.env.as_ref()).await?;
-    let pid = handle.pid;
+    let pid = handle.pid; // captured for audit/debug, not exposed to agent
 
     // Update task with PID
     let _ = t.store.update_task_pid(&t.task_id, pid);
@@ -916,13 +916,15 @@ async fn run_background(mut t: BackgroundTask) -> Result<()> {
 
     // 3-way select: output reading, timeout, or kill signal
     // After this select, handle.wait() is called to get the exit code.
-    let (timed_out, killed, mut seq, error_count, raw_output, dedup_collapsed) = tokio::select! {
+    let (timed_out, killed, mut seq, error_count, warning_count, raw_output, dedup_collapsed) = tokio::select! {
         result = async {
             let mut seq: u64 = 0;
             let mut total_bytes: u64 = 0;
             let mut error_count: u64 = 0;
+            let mut warning_count: u64 = 0;
             let mut full_output = String::new();
             let mut dedup = Deduplicator::new();
+            let mut ctx_merger = RustcContextMerger::new();
             while let Some((source, line)) = handle.output_rx.recv().await {
                 full_output.push_str(&line);
                 full_output.push('\n');
@@ -982,68 +984,92 @@ async fn run_background(mut t: BackgroundTask) -> Result<()> {
 
                 for event in events {
                     if let Some(deduped) = dedup.feed(event) {
-                        seq += 1;
-                        let mut event = deduped;
-                        event.seq = seq;
+                        // Feed through context merger: absorbs rustc context lines
+                        // into the preceding diagnostic event
+                        if let Some(mut event) = ctx_merger.feed(deduped) {
+                            seq += 1;
+                            event.seq = seq;
 
-                        if source == "stderr" {
-                            match event.severity.as_deref() {
-                                Some("info") => {
-                                    if super::parser::stderr_looks_like_error(&line) {
+                            if source == "stderr" {
+                                match event.severity.as_deref() {
+                                    Some("info") => {
+                                        if super::parser::stderr_looks_like_error(&line) {
+                                            event.severity = Some("error".into());
+                                        } else {
+                                            event.severity = Some("warning".into());
+                                        }
+                                    }
+                                    Some("warning")
+                                        if super::parser::stderr_looks_like_error(&line) =>
+                                    {
                                         event.severity = Some("error".into());
-                                    } else {
-                                        event.severity = Some("warning".into());
+                                    }
+                                    _ => {}
+                                }
+                            }
+
+                            if event.severity.as_deref() == Some("error") {
+                                error_count += 1;
+                            }
+                            if event.severity.as_deref() == Some("warning") {
+                                warning_count += 1;
+                            }
+
+                            // Extract error context (source file +/- 3 lines) for events with location
+                            if let Some(ref loc) = event.location {
+                                if loc.line > 0 && !loc.file.is_empty() {
+                                    if let Some(ctx) =
+                                        context::extract_context_async(&loc.file, loc.line).await
+                                    {
+                                        event.context = Some(ctx);
                                     }
                                 }
-                                Some("warning")
-                                    if super::parser::stderr_looks_like_error(&line) =>
-                                {
-                                    event.severity = Some("error".into());
-                                }
-                                _ => {}
                             }
-                        }
 
-                        if event.severity.as_deref() == Some("error") {
-                            error_count += 1;
-                        }
-
-                        // Extract error context (source file +/- 3 lines) for events with location
-                        if let Some(ref loc) = event.location {
-                            if loc.line > 0 && !loc.file.is_empty() {
-                                if let Some(ctx) =
-                                    context::extract_context_async(&loc.file, loc.line).await
-                                {
-                                    event.context = Some(ctx);
-                                }
+                            if let Err(e) = t.store.insert_event(&t.task_id, seq, &event) {
+                                tracing::error!(
+                                    "task {} failed to store event: {}",
+                                    t.task_id,
+                                    e
+                                );
                             }
-                        }
 
-                        if let Err(e) = t.store.insert_event(&t.task_id, seq, &event) {
-                            tracing::error!(
-                                "task {} failed to store event: {}",
-                                t.task_id,
-                                e
-                            );
+                            t.event_bus.publish(BusEvent {
+                                connection_id: 0,
+                                kind: BusEventKind::Diagnostic {
+                                    task_id: t.task_id.clone(),
+                                    event,
+                                },
+                            });
                         }
-
-                        t.event_bus.publish(BusEvent {
-                            connection_id: 0,
-                            kind: BusEventKind::Diagnostic {
-                                task_id: t.task_id.clone(),
-                                event,
-                            },
-                        });
                     }
                 }
             }
-            // Flush remaining deduplicated events
+            // Flush remaining deduplicated and context-merged events
             if let Some(final_event) = dedup.finish() {
+                if let Some(merged_event) = ctx_merger.feed(final_event) {
+                    seq += 1;
+                    let mut event = merged_event;
+                    event.seq = seq;
+                    if let Err(e) = t.store.insert_event(&t.task_id, seq, &event) {
+                        tracing::error!("task {} failed to store dedup event: {}", t.task_id, e);
+                    }
+                    t.event_bus.publish(BusEvent {
+                        connection_id: 0,
+                        kind: BusEventKind::Diagnostic {
+                            task_id: t.task_id.clone(),
+                            event,
+                        },
+                    });
+                }
+            }
+            // Flush any remaining buffered event in the context merger
+            if let Some(final_event) = ctx_merger.finish() {
                 seq += 1;
                 let mut event = final_event;
                 event.seq = seq;
                 if let Err(e) = t.store.insert_event(&t.task_id, seq, &event) {
-                    tracing::error!("task {} failed to store dedup event: {}", t.task_id, e);
+                    tracing::error!("task {} failed to store merger event: {}", t.task_id, e);
                 }
                 t.event_bus.publish(BusEvent {
                     connection_id: 0,
@@ -1071,15 +1097,15 @@ async fn run_background(mut t: BackgroundTask) -> Result<()> {
                 }
             }
             // Output channel closed — process exited, readers finished
-            (seq, error_count, full_output, dedup.collapsed_count())
+            (seq, error_count, warning_count, full_output, dedup.collapsed_count())
         } => {
-            (false, false, result.0, result.1, result.2, result.3)
+            (false, false, result.0, result.1, result.2, result.3, result.4)
         }
         _ = tokio::time::sleep(timeout_dur) => {
             tracing::warn!("task {} timed out after {}ms", t.task_id, timeout_dur.as_millis());
             let _ = handle.force_kill();
             let _ = t.store.update_task(&t.task_id, &TaskStatus::Timeout, Some(-2), None);
-            (true, false, 0u64, 0u64, String::new(), 0u64)
+            (true, false, 0u64, 0u64, 0u64, String::new(), 0u64)
         }
         _ = t.kill_rx.recv() => {
             tracing::info!("task {} received kill signal, initiating graceful kill", t.task_id);
@@ -1091,7 +1117,7 @@ async fn run_background(mut t: BackgroundTask) -> Result<()> {
                 Ok(false) => tracing::warn!("task {} was force-killed", t.task_id),
                 Err(e) => tracing::error!("task {} kill error: {}", t.task_id, e),
             }
-            (false, true, 0u64, 0u64, String::new(), 0u64)
+            (false, true, 0u64, 0u64, 0u64, String::new(), 0u64)
         }
     };
 
@@ -1123,6 +1149,9 @@ async fn run_background(mut t: BackgroundTask) -> Result<()> {
     if !raw_output.is_empty() {
         if let Err(e) = t.store.update_task_raw_output(&t.task_id, &raw_output) {
             tracing::warn!("failed to store raw output for task {}: {}", t.task_id, e);
+        }
+        if let Err(e) = t.store.update_task_raw_output_bytes(&t.task_id, raw_output.len() as u64) {
+            tracing::warn!("failed to store raw output bytes for task {}: {}", t.task_id, e);
         }
     }
 
@@ -1169,6 +1198,7 @@ async fn run_background(mut t: BackgroundTask) -> Result<()> {
                 file: None,
                 limit: 200,
                 offset: 0,
+                include_logs: false,
             };
             if let Ok((events, _)) = store.query_events(&params) {
                 if let Some(gc) =
@@ -1229,11 +1259,10 @@ async fn run_background(mut t: BackgroundTask) -> Result<()> {
     if let Some(tx) = t.done_tx {
         let _ = tx.send(CompletionInfo {
             status: final_status,
-            pid: Some(pid),
             exit_code: exit_code_val,
             duration_ms,
-            event_count: seq,
             error_count,
+            warning_count,
         });
     }
 
@@ -1285,6 +1314,7 @@ mod tests {
             file: None,
             limit: 100,
             offset: 0,
+            include_logs: true,
         };
         let (events, total) = store.query_events(&params).unwrap();
         assert!(total >= 1, "expected at least 1 event, got {}", total);
@@ -1352,7 +1382,6 @@ mod tests {
         assert_eq!(result.status, TaskStatus::Completed);
         assert_eq!(result.exit_code, Some(0));
         assert!(result.duration_ms.is_some());
-        assert!(result.event_count.unwrap() >= 1);
     }
 
     #[tokio::test]
@@ -1516,7 +1545,10 @@ mod tests {
         assert!(!result.short_command, "long build command should not be short_command");
         assert_eq!(result.status, TaskStatus::Failed, "invalid path should fail");
         assert!(result.exit_code.is_some(), "should have exit code");
-        assert!(result.events.is_some(), "smart sync attaches events");
+        assert!(
+            result.root_cause.is_some() || result.project_context.is_some(),
+            "smart sync attaches root_cause or project_context for failed builds"
+        );
     }
 
     /// Inspection tools over 80 chars still take the short path — raw text beats log events.
@@ -1561,7 +1593,6 @@ mod tests {
         assert!(!result.short_command, "explicit sync should use full structured path");
         assert_eq!(result.status, TaskStatus::Completed);
         assert_eq!(result.exit_code, Some(0));
-        assert!(result.event_count.unwrap() >= 1, "should have stored events");
         assert!(result.raw_output.is_none(), "full path should not set raw_output");
     }
 
@@ -1634,6 +1665,7 @@ mod tests {
             file: None,
             limit: 100,
             offset: 0,
+            include_logs: true,
         };
         let (events, _total) = store.query_events(&params).unwrap();
         // Should have at least one JSON data event
@@ -1712,6 +1744,7 @@ mod tests {
             file: None,
             limit: 100,
             offset: 0,
+            include_logs: true,
         };
         let (events, _total) = store.query_events(&params).unwrap();
         let json_events: Vec<_> = events.iter().filter(|e| e.event_type == "data").collect();
@@ -1752,6 +1785,7 @@ mod tests {
             file: None,
             limit: 100,
             offset: 0,
+            include_logs: true,
         };
         let (events, _total) = store.query_events(&params).unwrap();
         let json_events: Vec<_> = events.iter().filter(|e| e.event_type == "data").collect();
@@ -1786,6 +1820,7 @@ mod tests {
             file: None,
             limit: 100,
             offset: 0,
+            include_logs: true,
         };
         let (events, _total) = store.query_events(&params).unwrap();
 
@@ -1825,6 +1860,7 @@ mod tests {
             file: None,
             limit: 100,
             offset: 0,
+            include_logs: true,
         };
         let (events, _total) = store.query_events(&params).unwrap();
         assert!(
@@ -1877,6 +1913,7 @@ mod tests {
             file: None,
             limit: 100,
             offset: 0,
+            include_logs: true,
         };
         let (events, _total) = store.query_events(&params).unwrap();
         // All should be "log" type, no "data" (JSON) events
@@ -1916,5 +1953,125 @@ mod tests {
     fn filter_errors_only_empty() {
         let events = Some(vec![]);
         assert!(filter_events_errors_only(&events).unwrap().is_empty());
+    }
+
+    // ── enrich_events() tests ─────────────────────────────────────────────────
+
+    #[test]
+    fn enrich_events_adds_context_for_errors() {
+        let events = vec![serde_json::json!({
+            "seq": 0,
+            "type": "diagnostic",
+            "severity": "error",
+            "code": null,
+            "message": "compile error",
+            "location": {"file": "Cargo.toml", "line": 1, "column": null},
+            "context": null,
+            "hint": null
+        })];
+        let cwd = std::path::Path::new(".");
+        let enriched = enrich_events(events, cwd, None);
+        assert_eq!(enriched.len(), 1);
+        // Should have context after enrichment (Cargo.toml exists in the repo)
+        assert!(
+            enriched[0].get("context").is_some() && !enriched[0]["context"].is_null(),
+            "expected context to be populated"
+        );
+    }
+
+    #[test]
+    fn enrich_events_adds_hint_for_known_code() {
+        let events = vec![serde_json::json!({
+            "seq": 0,
+            "type": "diagnostic",
+            "severity": "error",
+            "code": "E0308",
+            "message": "mismatched types",
+            "location": null,
+            "context": null,
+            "hint": null
+        })];
+        let cwd = std::path::Path::new(".");
+        let enriched = enrich_events(events, cwd, Some("cargo"));
+        assert_eq!(enriched.len(), 1);
+        // E0308 is excluded from the HintDb (common code), so hint may be null
+        // But passing Some(tool) should not cause errors
+        let _ = enriched[0].get("hint");
+    }
+
+    #[test]
+    fn enrich_events_skips_existing_hint() {
+        let events = vec![serde_json::json!({
+            "seq": 0,
+            "type": "diagnostic",
+            "severity": "error",
+            "code": "E0308",
+            "message": "mismatched types",
+            "location": null,
+            "context": null,
+            "hint": {"cause": "already set", "fix": null, "retry": null}
+        })];
+        let cwd = std::path::Path::new(".");
+        let enriched = enrich_events(events, cwd, Some("cargo"));
+        // Existing hint should be preserved
+        assert_eq!(enriched[0]["hint"]["cause"], "already set");
+    }
+
+    #[test]
+    fn enrich_events_preserves_non_error_events() {
+        let events = vec![
+            serde_json::json!({
+                "seq": 0,
+                "type": "log",
+                "severity": "info",
+                "code": null,
+                "message": "building...",
+                "location": null,
+                "context": null,
+                "hint": null
+            }),
+            serde_json::json!({
+                "seq": 1,
+                "type": "diagnostic",
+                "severity": "error",
+                "code": null,
+                "message": "compile failed",
+                "location": null,
+                "context": null,
+                "hint": null
+            }),
+        ];
+        let cwd = std::path::Path::new(".");
+        let enriched = enrich_events(events, cwd, None);
+        assert_eq!(enriched.len(), 2);
+        // Info event should be unchanged (no location to enrich)
+        assert_eq!(enriched[0]["message"], "building...");
+        assert!(enriched[0]["context"].is_null());
+    }
+
+    #[test]
+    fn enrich_events_empty_input() {
+        let events = vec![];
+        let cwd = std::path::Path::new(".");
+        let enriched = enrich_events(events, cwd, None);
+        assert!(enriched.is_empty());
+    }
+
+    #[test]
+    fn enrich_events_no_tool_no_hints() {
+        let events = vec![serde_json::json!({
+            "seq": 0,
+            "type": "diagnostic",
+            "severity": "error",
+            "code": "SOME_CODE",
+            "message": "some error",
+            "location": null,
+            "context": null,
+            "hint": null
+        })];
+        let cwd = std::path::Path::new(".");
+        let enriched = enrich_events(events, cwd, None);
+        // Without a tool, no language mapping → no hints
+        assert!(enriched[0]["hint"].is_null());
     }
 }

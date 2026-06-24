@@ -5,18 +5,19 @@ detect = ["ruff"]
 priority = 50
 
 [[pattern]]
-name = "ruff-diagnostic"
-regex = '^(.+?):(\d+):(\d+): ([A-Z]\d+) (.+)$'
-event_type = "diagnostic"
-severity = "error"
-fields = { file = 1, line = 2, column = 3, code = 4, message = 5 }
-
-[[pattern]]
 name = "ruff-fixable"
 regex = '^(.+?):(\d+):(\d+): ([A-Z]\d+) \[(.+?)\] (.+)$'
 event_type = "diagnostic"
 severity = "warning"
 fields = { file = 1, line = 2, column = 3, code = 4, message = 6 }
+
+[[pattern]]
+name = "ruff-diagnostic"
+regex = '^(.+?):(\d+):(\d+): ([A-Z]\d+) (.+)$'
+event_type = "diagnostic"
+severity = "error"
+fields = { file = 1, line = 2, column = 3, code = 4, message = 5 }
+since_version = "0.2.0"
 
 [[pattern]]
 name = "ruff-summary"

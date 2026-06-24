@@ -16,7 +16,7 @@ name = "deno-ts-error"
 regex = '^\[(.+?)\] (.+?):(\d+):(\d+) - error TS(\d+): (.+)$'
 event_type = "diagnostic"
 severity = "error"
-fields = { code = 1, file = 2, line = 3, column = 4, message = 6 }
+fields = { file = 2, line = 3, column = 4, code = 5, message = 6 }
 
 [[pattern]]
 name = "deno-location"
@@ -31,6 +31,22 @@ regex = '^(PASS|FAIL)\s+(.+)$'
 event_type = "test_result"
 severity = "info"
 fields = { code = 1, message = 2 }
+deprecated = true
+replaced_by = "deno-test-pass"
+
+[[pattern]]
+name = "deno-test-pass"
+regex = '^PASS\s+(.+)$'
+event_type = "test_result"
+severity = "info"
+fields = { message = 1 }
+
+[[pattern]]
+name = "deno-test-fail"
+regex = '^FAIL\s+(.+)$'
+event_type = "test_result"
+severity = "error"
+fields = { message = 1 }
 
 [[pattern]]
 name = "deno-test-summary"
