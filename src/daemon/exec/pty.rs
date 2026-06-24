@@ -3,6 +3,7 @@
 
 use arshy_lib::Result;
 use std::collections::HashMap;
+use std::sync::OnceLock;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Child;
 use tokio::sync::mpsc;
@@ -53,6 +54,84 @@ impl ProcessHandle {
     }
 }
 
+/// Detect the user's login shell from `/etc/passwd`, falling back to `$SHELL` or `/bin/sh`.
+fn detect_user_shell() -> String {
+    // Try /etc/passwd first (works even when $SHELL is unset, e.g. under launchd)
+    #[cfg(unix)]
+    {
+        if let Ok(passwd) = std::fs::read("/etc/passwd") {
+            if let Ok(uid) = std::env::var("USER").or_else(|_| {
+                // Get current username from libc
+                unsafe {
+                    let uid = libc::getuid();
+                    let pw = libc::getpwuid(uid);
+                    if pw.is_null() {
+                        return Err(std::env::VarError::NotPresent);
+                    }
+                    let name = std::ffi::CStr::from_ptr((*pw).pw_name);
+                    Ok(name.to_string_lossy().into_owned())
+                }
+            }) {
+                for line in String::from_utf8_lossy(&passwd).lines() {
+                    if let Some(shell) = line.split(':').nth(6) {
+                        if line.starts_with(&format!("{}:", uid)) {
+                            return shell.to_string();
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // Fallback: $SHELL or /bin/sh
+    std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into())
+}
+
+/// Probe the user's login shell for its full PATH. Cached globally so the shell
+/// is only spawned once per daemon lifetime.
+pub fn user_shell_path() -> Option<&'static str> {
+    static USER_PATH: OnceLock<Option<String>> = OnceLock::new();
+    USER_PATH
+        .get_or_init(|| {
+            let shell = detect_user_shell();
+            tracing::info!("detected user shell: {}", shell);
+            // Run the login shell to capture the profile-enriched PATH
+            let output = std::process::Command::new(&shell)
+                .args(["-lic", "echo $PATH"])
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::null())
+                .output();
+            match output {
+                Ok(out) if out.status.success() => {
+                    let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                    if !path.is_empty() && path != "/usr/bin:/bin:/usr/sbin:/sbin" {
+                        tracing::info!(
+                            "enriched PATH from user shell ({} chars)",
+                            path.len()
+                        );
+                        Some(path)
+                    } else {
+                        tracing::debug!("user shell PATH same as system — no enrichment needed");
+                        None
+                    }
+                }
+                Ok(out) => {
+                    tracing::warn!(
+                        "user shell PATH probe failed (exit {}): {}",
+                        out.status,
+                        String::from_utf8_lossy(&out.stderr).trim()
+                    );
+                    None
+                }
+                Err(e) => {
+                    tracing::warn!("could not run user shell for PATH probe: {}", e);
+                    None
+                }
+            }
+        })
+        .as_deref()
+}
+
 /// Spawn a command as a child process with piped stdout/stderr.
 ///
 /// The command is wrapped in `sh -c` to support shell features (pipes, redirects, etc).
@@ -77,6 +156,12 @@ pub async fn spawn_command(
 
     if let Some(dir) = cwd {
         cmd.current_dir(dir);
+    }
+
+    // Inject the user's profile-enriched PATH so tools in ~/.cargo/bin etc. are available.
+    // This is especially important for launchd daemons where the inherited PATH is minimal.
+    if let Some(upath) = user_shell_path() {
+        cmd.env("PATH", upath);
     }
 
     if let Some(env_vars) = env {

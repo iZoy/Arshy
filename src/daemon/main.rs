@@ -105,6 +105,10 @@ async fn main() -> Result<()> {
     // Clean up stale /tmp/.arshy-cwd/ symlinks from previous sessions
     store::prune::cleanup_stale_symlinks();
 
+    // Probe user's login shell PATH once (cached globally).
+    // Enriches the minimal launchd PATH with tools from ~/.cargo/bin, homebrew, etc.
+    let _ = exec::pty::user_shell_path();
+
     // WAL checkpoint
     if cfg.store.wal_mode {
         if let Err(e) = store.wal_checkpoint() {
