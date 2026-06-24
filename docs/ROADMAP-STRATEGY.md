@@ -1,8 +1,8 @@
 # arshy 战略路线图与北极星
 
-**版本:** 1.0
-**日期:** 2026-06-11
-**状态:** 活跃
+**版本:** 1.2
+**日期:** 2026-06-24
+**状态:** 发布就绪
 
 ---
 
@@ -20,12 +20,15 @@
 
 这不是我们能直接测量的，但可以通过代理指标追踪：
 
-| 代理指标 | 衡量方式 | 目标 |
-|---------|---------|------|
-| Parser 覆盖率 | `arshy stats` 中 parser_coverage_pct | ≥ 80% |
-| 事件准确率 | Fixture 测试字段匹配率 | ≥ 95% |
-| Context 丰富率 | 有 location 的 error 事件中附带 context 的比例 | ≥ 90% |
-| 采用率 | 周活跃任务数 | 持续增长 |
+| 代理指标 | 衡量方式 | 当前值 | 目标 |
+|---------|---------|--------|------|
+| Agent 可见事件率 | `arshy analyze` 中 agent_visible_events / total | **71.8%** | ≥ 80% |
+| Token 节省率 | `arshy analyze` 中 noise_pct | **28.2%** | ≥ 50% |
+| 事件准确率 | Fixture 测试字段匹配率 | **100%** | ≥ 95% |
+| Context 丰富率 | 有 context 的 error 事件 | **65/688** | ≥ 90% |
+| Parser 覆盖率 | `arshy stats` 中 parser_coverage_pct | **53.8%** | ≥ 80% |
+| Daemon 内存 | RSS (589 任务) | **21.6 MB** | ≤ 30 MB |
+| MCP 启动延迟 | 首次工具调用时间 | **4ms** | ≤ 100ms |
 
 ---
 
@@ -94,6 +97,18 @@ arshy 是**执行层**——控制命令的整个生命周期。
 | 启发式错误过滤器 | ✅ |
 | 事件去重 | ✅ |
 | 失败恢复 (tee) | ✅ |
+| Log 事件过滤 (include_logs 参数) | ✅ |
+| 增强遥测 (8 个 per-task 指标) | ✅ |
+| 分析模块 (arshy analyze) | ✅ |
+| 异步任务 Enrichment (所有任务) | ✅ |
+| Context 噪音行过滤 | ✅ |
+| RustcContextMerger 合并 | ✅ |
+| Parser 优化 (噪音/测试/cargo/git/curl) | ✅ |
+| 工具检测修复 (cd && tool) | ✅ |
+| 9 个 code review bug 修复 | ✅ |
+| 9 个 parser 审计 bug 修复 | ✅ |
+| 性能优化 (脏标记/内存/IPC 稳定性) | ✅ |
+| 7 个 code review bug 修复 | ✅ |
 
 ### Phase 3: 生态扩展 (当前)
 
@@ -101,12 +116,21 @@ arshy 是**执行层**——控制命令的整个生命周期。
 
 | 里程碑 | 优先级 | 状态 |
 |--------|--------|------|
-| 多 agent 支持 (Cursor, Codex, Copilot, Gemini) | P0 | ⬜ |
+| 多 agent 支持 (Cursor, Codex, Copilot, Gemini) | P0 | ✅ Cursor |
 | Hook 拦截模式 (零配置透明接入) | P0 | ⬜ |
-| 发布 v0.2.0 (GitHub Release) | P0 | ⬜ |
+| 发布 v0.2.0 (GitHub Release) | P0 | 🔄 待发 |
 | Dogfooding 一周 (自己用 arshy 开发 arshy) | P0 | ⬜ |
-| 社区发布 (README 完善 + 社区推广) | P1 | ⬜ |
+| 社区发布 (README 完善 + 社区推广) | P1 | ✅ README 重写 |
 | 收集 10 个用户的反馈 | P1 | ⬜ |
+| **发布清单** | | |
+| README 重写 (面向新用户) | P0 | ✅ |
+| 安装文档 (macOS/Linux/Windows WSL) | P0 | ✅ |
+| arshy doctor 命令 (诊断集成状态) | P0 | ✅ |
+| 错误处理 (daemon 崩溃友好提示) | P0 | ✅ |
+| MCP 自动配置 (Cursor 支持) | P0 | ✅ |
+| MCP Prompt 模板 (3 个 prompt) | P0 | ✅ |
+| MCP Resource (task output 暴露) | P0 | ✅ |
+| 错误输出美化 (成功/失败差异化) | P1 | ✅ |
 
 **成功标准：**
 - 至少 3 个非 Claude Code 的 AI 工具能用 arshy
@@ -118,6 +142,34 @@ arshy 是**执行层**——控制命令的整个生命周期。
 - 不做 ML 压缩（不是我们的方向）
 - 不做跨 agent 记忆（不是我们的方向）
 
+### Phase 3.5: 性能与质量 ✅ (已完成)
+
+**目标：生产级性能、数据质量、代码健壮性。**
+
+| 里程碑 | 状态 |
+|--------|------|
+| Daemon 内存优化 (30.3MB → 21.6MB, -29%) | ✅ |
+| 脏标记 + 定时刷新 (消除全量 JSONL 重写) | ✅ |
+| raw_output 移出内存 (按需磁盘读取) | ✅ |
+| EventBus 扩容 (256 → 4096 + 溢出警告) | ✅ |
+| 重连通知保护 (排空旧通道) | ✅ |
+| IPC 通道背压修复 (try_send 非阻塞) | ✅ |
+| merge_enriched_events TOCTOU 竞态修复 | ✅ |
+| 异步 enrichment 完整 (detected_tool 传递) | ✅ |
+| sync/async enrichment 竞态修复 | ✅ |
+| isError 语义修正 (exit>=2 才报错) | ✅ |
+| Parser pattern deprecation cycle | ✅ |
+| metrics 计算逻辑去重 | ✅ |
+| Context 噪音行过滤 | ✅ |
+| 37 个 parser 全量审计 + 9 bug 修复 | ✅ |
+| 9 个 code review bug 修复 | ✅ |
+| 7 个 code review bug 修复 | ✅ |
+| 分析模块 (arshy analyze) + Pretty 输出 | ✅ |
+| 增强遥测 (8 个 per-task 指标) | ✅ |
+| 异步任务 Enrichment (所有任务) | ✅ |
+| 迁移脚本 (历史数据重新处理) | ✅ |
+| Agent 可见事件: 53.2% → 71.8% (+18.6%) | ✅ |
+
 ### Phase 4: 护城河 (数据驱动)
 
 **目标：基于 Phase 3 的用户反馈，建立不可替代的优势。**
@@ -128,7 +180,9 @@ arshy 是**执行层**——控制命令的整个生命周期。
 | 跨命令因果分析 | 用户反馈 "Agent 不知道上一条命令影响了下一条" | 追踪命令历史，关联因果 |
 | 智能重试 | 收集到真实的瞬态故障场景 | 基于错误类型建议重试策略 |
 | 企业安全审计 | 有企业客户需求 | 完整的审计日志 + 合规报告 |
-| 分析仪表板 | 用户想看 token 节省量 | `arshy stats` 增强 + Web 仪表板 |
+| 分析仪表板 | 用户想看 token 节省量 | `arshy analyze` 增强 + Web 仪表板 |
+| 查询缓存 | query_events 频繁查询性能 | 内存缓存热点事件文件 |
+| Post-processor 管道 | 新增 Python/Go context 合并 | 抽象为可插拔管道，替代内联链 |
 
 **成功标准：**
 - 用户驱动的功能迭代（不是我们猜的）
@@ -177,6 +231,8 @@ arshy 是**执行层**——控制命令的整个生命周期。
 | 深度 | 压缩文本 | 结构化语义 | **这是我们的优势** |
 | 接入 | Hook 零配置 | MCP 需配置 | 补 hook 拦截模式 |
 | 社区 | 61K stars，Discord | 无 | 先做好产品，再建社区 |
+| 性能 | 文本压缩 | 21.6MB 内存，4ms 启动 | **生产级性能** |
+| 数据 | 无 | `arshy analyze` 分析 | **数据驱动决策** |
 
 **核心策略：不要跟 RTK 比谁覆盖的工具多，要比谁理解得深。**
 
@@ -187,6 +243,7 @@ arshy 是**执行层**——控制命令的整个生命周期。
 | 技术 | ML 模型压缩 | 正则/脚本解析 | 不同赛道，不竞争 |
 | 范围 | 所有上下文 | 命令输出 | 专注 |
 | 可逆性 | CCR 可逆压缩 | 不可逆 | 可能借鉴，但不是优先级 |
+| Token 节省 | 未知 | 28.2% | **可量化** |
 
 **核心策略：Headroom 压缩文本，arshy 提取语义。互补，不竞争。**
 
@@ -200,6 +257,10 @@ arshy 是**执行层**——控制命令的整个生命周期。
 | RTK 增加 MCP 支持 | **中** | 我们的深度解析是护城河，RTK 的硬编码过滤器无法复制 |
 | MCP 生态萎缩 | **低** | MCP 是 Anthropic 主推标准，短期不会萎缩 |
 | Agent 自己变强，不需要 arshy | **中** | Agent 变强是趋势，但结构化输出比原始文本永远更有价值 |
+| 性能回归 | **低** | 脏标记 + 定时刷新机制，403 测试覆盖 |
+| 数据一致性 | **低** | merge_enriched_events TOCTOU 修复，原子操作 |
+| Parser 覆盖率不足 | **中** | 37 parser 全量审计，持续优化 |
+| 异步任务 enrichment 不完整 | **低** | detected_tool 传递已修复，HintDb 可用 |
 
 ---
 
@@ -207,8 +268,23 @@ arshy 是**执行层**——控制命令的整个生命周期。
 
 **arshy 的技术差异化已经建立。** 37 个 parser、6 层管道、源码上下文、Git 关联——这些是竞品没有的。
 
-**现在的问题不是"还能做什么"，而是"有没有人在乎"。**
+**发布清单全部完成：**
+- README 重写 (80 行，面向新用户)
+- 安装文档 (macOS/Linux/Windows WSL)
+- `arshy doctor` 命令 (诊断集成状态)
+- 错误处理 (daemon 崩溃友好提示)
+- MCP 自动配置 (Cursor 支持)
+- MCP Prompt 模板 (3 个 prompt)
+- MCP Resource (task output 暴露)
+- 错误输出美化 (成功/失败差异化)
 
-Phase 3（多 agent 支持 + 发布 + 社区）是唯一的正确下一步。所有技术工作都应该服务于这个目标。
+**Phase 3.5 性能与质量已全面完成：**
+- Agent 可见事件率从 53.2% 提升到 71.8%
+- Daemon 内存从 30.3MB 降到 21.6MB
+- 37 个 parser 全量审计并修复 9 个 bug
+- 16 个 code review bug 修复
+- 性能优化：脏标记、内存优化、IPC 稳定性
+
+**下一步：发布 v0.2.0，开始收集用户反馈。**
 
 **北极星：让 AI Agent 从命令输出中获得比人类开发者更多的信息。**
