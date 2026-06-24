@@ -51,7 +51,7 @@ pub struct EventBus {
 
 impl EventBus {
     pub fn new() -> Self {
-        let (tx, _) = broadcast::channel(256);
+        let (tx, _) = broadcast::channel(4096);
         Self { tx }
     }
 
@@ -62,7 +62,9 @@ impl EventBus {
 
     /// Publish an event to all subscribers. Best-effort (no error if no receivers).
     pub fn publish(&self, event: BusEvent) {
-        let _ = self.tx.send(event);
+        if self.tx.send(event).is_err() {
+            tracing::warn!("eventbus: all receivers lagged, event dropped");
+        }
     }
 }
 

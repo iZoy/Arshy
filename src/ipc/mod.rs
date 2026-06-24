@@ -24,6 +24,7 @@ pub const METHOD_HEALTH: &str = "daemon/health";
 pub const METHOD_CD: &str = "session/cd";
 pub const METHOD_SUBSCRIBE: &str = "task/subscribe";
 pub const METHOD_PARSER_RELOAD: &str = "parser/reload";
+pub const METHOD_ANALYZE: &str = "daemon/analyze";
 
 pub const NOTIF_TASK_UPDATE: &str = "task/update";
 pub const NOTIF_TASK_COMPLETE: &str = "task/complete";
@@ -233,10 +234,30 @@ pub struct QueryParams {
     pub limit: usize,
     #[serde(default)]
     pub offset: usize,
+    /// Include raw log events in results. Default false — only structured
+    /// events (diagnostic, crash, test_result, summary, etc.) are returned.
+    /// Log events are unstructured lines that add bulk without helping agents.
+    #[serde(default)]
+    pub include_logs: bool,
 }
 
 fn default_limit() -> usize {
     20
+}
+
+impl Default for QueryParams {
+    fn default() -> Self {
+        Self {
+            task_id: String::new(),
+            event_type: None,
+            severity: None,
+            code: None,
+            file: None,
+            limit: default_limit(),
+            offset: 0,
+            include_logs: false,
+        }
+    }
 }
 
 // ── Stats response ──────────────────────────────────────────────────────────
@@ -275,6 +296,30 @@ pub struct StatsResponse {
     /// Per-parser usage counts (top parsers by task count).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub per_parser_usage: Option<Vec<ParserCount>>,
+    /// Total raw output bytes across all tasks.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_raw_output_bytes: Option<u64>,
+    /// Total structured events bytes across all tasks.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_structured_events_bytes: Option<u64>,
+    /// Total agent-visible events (non-log) across all tasks.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_agent_visible_events: Option<u64>,
+    /// Total agent-skipped events (log type) across all tasks.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_agent_skipped_events: Option<u64>,
+    /// Total locations extracted across all tasks.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_locations_extracted: Option<u64>,
+    /// Total error codes extracted across all tasks.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_codes_extracted: Option<u64>,
+    /// Total contexts enriched across all tasks.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_contexts_enriched: Option<u64>,
+    /// Total hints attached across all tasks.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_hints_attached: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

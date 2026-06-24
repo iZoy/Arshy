@@ -1,8 +1,33 @@
 use arshy_lib::ipc::{QueryParams, TaskEvent};
 use arshy_lib::Result;
 
+/// Update per-event metrics on a task record. Shared between insert_event
+/// and merge_enriched_events to prevent logic divergence.
+fn update_event_metrics(metrics: &mut super::TaskMetrics, event: &TaskEvent, json_bytes: u64) {
+    metrics.structured_events_bytes += json_bytes;
+    if event.event_type == "log" {
+        metrics.agent_skipped_events += 1;
+    } else {
+        metrics.agent_visible_events += 1;
+    }
+    if event.location.is_some() {
+        metrics.locations_extracted += 1;
+    }
+    if event.code.is_some() {
+        metrics.codes_extracted += 1;
+    }
+    if event.context.is_some() {
+        metrics.contexts_enriched += 1;
+    }
+    if event.hint.is_some() {
+        metrics.hints_attached += 1;
+    }
+}
+
 impl super::Store {
     /// Insert a structured event for a task.
+    /// The event is written to disk immediately. In-memory counts are updated
+    /// under the mutex, and the periodic background flush will persist them.
     pub fn insert_event(&self, task_id: &str, _seq: u64, event: &TaskEvent) -> Result<()> {
         // Append to per-task JSONL file
         let line = serde_json::to_string(event)?;
@@ -16,8 +41,110 @@ impl super::Store {
                 if event.severity.as_deref() == Some("error") {
                     record.task.error_count += 1;
                 }
+                update_event_metrics(&mut record.metrics, event, line.len() as u64);
             }
         }
+        // Mark dirty so the updated counts get persisted by the background flush
+        self.mark_dirty();
+        Ok(())
+    }
+
+    /// Merge enriched events into the task's event file.
+    ///
+    /// Uses seq-based replacement: reads existing events, replaces matching seqs
+    /// with enriched versions, and atomically rewrites the file.
+    /// All I/O happens under the task mutex to prevent TOCTOU races with
+    /// concurrent `insert_event` calls.
+    pub fn merge_enriched_events(&self, task_id: &str, enriched: &[TaskEvent]) -> Result<()> {
+        // Build a lookup of enriched events by seq
+        let enriched_map: std::collections::HashMap<u64, &TaskEvent> =
+            enriched.iter().map(|e| (e.seq, e)).collect();
+
+        // All file I/O under mutex to prevent TOCTOU race with insert_event
+        let mut tasks = self.lock();
+
+        // Read existing events from disk
+        let events_dir = self.dir.join("events");
+        let path = events_dir.join(format!("{}.jsonl", task_id));
+        let mut all_events: Vec<TaskEvent> = Vec::new();
+        if path.exists() {
+            let content = std::fs::read_to_string(&path)?;
+            for line in content.lines() {
+                let line = line.trim();
+                if line.is_empty() {
+                    continue;
+                }
+                if let Ok(event) = serde_json::from_str::<TaskEvent>(line) {
+                    all_events.push(event);
+                }
+            }
+        }
+
+        // Merge: replace events with matching seq, keep the rest
+        for event in &mut all_events {
+            if let Some(enriched_evt) = enriched_map.get(&event.seq) {
+                *event = (*enriched_evt).clone();
+            }
+        }
+
+        // Add any enriched events that don't exist in the original
+        let existing_seqs: std::collections::HashSet<u64> =
+            all_events.iter().map(|e| e.seq).collect();
+        for evt in enriched {
+            if !existing_seqs.contains(&evt.seq) {
+                all_events.push(evt.clone());
+            }
+        }
+
+        // Sort by seq to maintain order
+        all_events.sort_by_key(|e| e.seq);
+
+        // Compute serialized lines and metrics in one pass
+        let mut serialized_lines: Vec<String> = Vec::with_capacity(all_events.len());
+        let mut local_metrics = super::TaskMetrics::default();
+
+        for event in &all_events {
+            let line = serde_json::to_string(event)?;
+            let json_len = line.len() as u64;
+            serialized_lines.push(line);
+            update_event_metrics(&mut local_metrics, event, json_len);
+        }
+
+        let super::TaskMetrics {
+            structured_events_bytes,
+            agent_visible_events,
+            agent_skipped_events,
+            locations_extracted,
+            codes_extracted,
+            contexts_enriched,
+            hints_attached,
+            ..
+        } = local_metrics;
+
+        // Atomically write the merged file (still under mutex)
+        let tmp = events_dir.join(format!("{}.jsonl.tmp", task_id));
+        let mut file = std::fs::File::create(&tmp)?;
+        for line in &serialized_lines {
+            std::io::Write::write_all(&mut file, line.as_bytes())?;
+            std::io::Write::write_all(&mut file, b"\n")?;
+        }
+        file.sync_all()?;
+        std::fs::rename(&tmp, &path)?;
+
+        // Update task record metrics (already holding mutex)
+        if let Some(record) = tasks.get_mut(task_id) {
+            record.task.events_count = all_events.len() as u64;
+            record.task.error_count =
+                all_events.iter().filter(|e| e.severity.as_deref() == Some("error")).count() as u64;
+            record.metrics.structured_events_bytes = structured_events_bytes;
+            record.metrics.agent_visible_events = agent_visible_events;
+            record.metrics.agent_skipped_events = agent_skipped_events;
+            record.metrics.locations_extracted = locations_extracted;
+            record.metrics.codes_extracted = codes_extracted;
+            record.metrics.contexts_enriched = contexts_enriched;
+            record.metrics.hints_attached = hints_attached;
+        }
+        drop(tasks);
         self.persist_tasks()
     }
 
@@ -47,6 +174,11 @@ impl super::Store {
         let filtered: Vec<&TaskEvent> = all_events
             .iter()
             .filter(|e| {
+                // Skip raw log events by default — they're unstructured lines
+                // that add bulk without helping agents.
+                if !params.include_logs && e.event_type == "log" {
+                    return false;
+                }
                 if let Some(t) = &params.event_type {
                     if e.event_type != *t {
                         return false;

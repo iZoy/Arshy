@@ -16,10 +16,14 @@ impl super::Store {
             raw_output: None,
             dedup_collapsed: 0,
             correlated_errors: 0,
+            metrics: super::TaskMetrics::default(),
+            enriched: false,
+            detected_tool: None,
         };
         tasks.insert(task.task_id.clone(), record);
         drop(tasks);
-        self.persist_tasks()
+        self.mark_dirty();
+        Ok(())
     }
 
     /// List tasks, optionally filtered by status.
@@ -72,24 +76,25 @@ impl super::Store {
             record.task.pid = Some(pid);
         }
         drop(tasks);
-        self.persist_tasks()
+        self.mark_dirty();
+        Ok(())
     }
 
     /// Store full raw output for a task.
+    /// Writes to a separate file `<store_dir>/raw/<task_id>.txt` instead of
+    /// keeping it in the in-memory HashMap.
     pub fn update_task_raw_output(&self, task_id: &str, raw_output: &str) -> Result<()> {
-        let mut tasks = self.lock();
-        if let Some(record) = tasks.get_mut(task_id) {
-            record.raw_output = Some(raw_output.to_string());
-        }
-        drop(tasks);
-        self.persist_tasks()
+        self.write_raw_output(task_id, raw_output)?;
+        // Mark dirty so the task record (which now knows raw exists) gets persisted
+        self.mark_dirty();
+        Ok(())
     }
 
     /// Retrieve full raw output for a task.
+    /// Reads from the per-task file on disk.
     #[allow(dead_code)] // used by future tail --format raw command
     pub fn get_task_raw_output(&self, task_id: &str) -> Result<Option<String>> {
-        let tasks = self.lock();
-        Ok(tasks.get(task_id).and_then(|r| r.raw_output.clone()))
+        self.read_raw_output(task_id)
     }
 
     /// Increment feature usage counters for a completed task.
@@ -106,7 +111,54 @@ impl super::Store {
             record.correlated_errors += correlated_errors;
         }
         drop(tasks);
-        self.persist_tasks()
+        self.mark_dirty();
+        Ok(())
+    }
+
+    /// Set raw output bytes metric on a task record.
+    pub fn update_task_raw_output_bytes(&self, task_id: &str, bytes: u64) -> Result<()> {
+        let mut tasks = self.lock();
+        if let Some(record) = tasks.get_mut(task_id) {
+            record.metrics.raw_output_bytes = bytes;
+        }
+        drop(tasks);
+        self.mark_dirty();
+        Ok(())
+    }
+
+    /// Set the detected tool name for a task (used by async enrichment).
+    pub fn set_detected_tool(&self, task_id: &str, tool: &str) -> Result<()> {
+        let mut tasks = self.lock();
+        if let Some(record) = tasks.get_mut(task_id) {
+            record.detected_tool = Some(tool.to_string());
+        }
+        drop(tasks);
+        self.mark_dirty();
+        Ok(())
+    }
+
+    /// Get the detected tool name for a task.
+    pub fn get_detected_tool(&self, task_id: &str) -> Option<String> {
+        let tasks = self.lock();
+        tasks.get(task_id).and_then(|r| r.detected_tool.clone())
+    }
+
+    /// Check whether a task's events have already been enriched.
+    pub fn is_enriched(&self, task_id: &str) -> bool {
+        let tasks = self.lock();
+        tasks.get(task_id).is_some_and(|r| r.enriched)
+    }
+
+    /// Mark a task as enriched (context + hints have been applied).
+    /// Returns Ok(()) even if the task_id doesn't exist (no-op).
+    pub fn mark_enriched(&self, task_id: &str) -> Result<()> {
+        let mut tasks = self.lock();
+        if let Some(record) = tasks.get_mut(task_id) {
+            record.enriched = true;
+        }
+        drop(tasks);
+        self.mark_dirty();
+        Ok(())
     }
 }
 

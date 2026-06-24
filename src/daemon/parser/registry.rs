@@ -159,7 +159,7 @@ impl ParserRegistry {
                 if seg_name == cmd_name {
                     continue; // already tried
                 }
-                if let Some(tool) = self.try_detect(&cmd_lower, seg_name) {
+                if let Some(tool) = self.try_detect(segment, seg_name) {
                     return Some(tool);
                 }
             }

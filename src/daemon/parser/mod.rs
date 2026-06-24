@@ -31,7 +31,7 @@ pub use detect::*;
 pub use registry::*;
 
 use arshy_lib::config::ParserConfig;
-use arshy_lib::ipc::TaskEvent;
+use arshy_lib::ipc::{EventContext, TaskEvent};
 use arshy_lib::Result;
 use std::sync::{Arc, RwLock};
 
@@ -256,7 +256,12 @@ impl ParserSession {
     /// 2. Stateful parser (Rhai/state-machine)
     /// 3. TOML parser (regex patterns)
     /// 4. Crash parser (universal crash detection)
-    /// 5. Raw fallback
+    /// 5. Heuristic error filter
+    /// 6. Raw fallback
+    ///
+    /// Returns zero or more events. Context lines from rustc-style diagnostics
+    /// (pipe/caret/note markers) are merged into the preceding diagnostic event
+    /// rather than emitted as separate log events.
     pub fn parse_line(&self, line: &str, seq: u64, _tool: Option<&ParsedTool>) -> Vec<TaskEvent> {
         // 1. Format detection — try JSON first for structured output
         if let Some(mut event) = json::try_parse_line(line) {
@@ -321,6 +326,374 @@ pub enum ParserType {
     Toml,
     Rhai,
     Raw,
+}
+
+/// Post-processor that merges rustc-style diagnostic context lines into the
+/// preceding diagnostic event's `context` fields, instead of emitting them as
+/// separate log events.
+///
+/// Context lines match these patterns:
+/// - `  |` or `  -->` (pipe/arrow markers)
+/// - `N | <code>` (numbered source lines)
+/// - `  |   ^^^^ expected ...` (caret markers)
+/// - `  |   expected due to this` (explanation)
+/// - `  = note: ...` or `  = help: ...` (note/help directives)
+///
+/// The merged lines are appended to the parent event's `context.after` list,
+/// and the separate context events are suppressed.
+pub struct RustcContextMerger {
+    /// Buffer for the last diagnostic/log event that may receive merged context.
+    pending: Option<TaskEvent>,
+    /// Collected context lines to attach to `pending`.
+    context_lines: Vec<String>,
+    /// Counter of merged context events (for observability).
+    merged_count: u64,
+}
+
+impl RustcContextMerger {
+    pub fn new() -> Self {
+        Self { pending: None, context_lines: Vec::new(), merged_count: 0 }
+    }
+
+    /// Total context lines merged so far.
+    #[allow(dead_code)]
+    pub fn merged_count(&self) -> u64 {
+        self.merged_count
+    }
+
+    /// Feed an event through the merger. Returns `Some(event)` when an event
+    /// is ready to be emitted; returns `None` if the event was absorbed as context.
+    pub fn feed(&mut self, event: TaskEvent) -> Option<TaskEvent> {
+        if is_rustc_context_line(&event.message) {
+            // This is a context line — buffer it and suppress the event.
+            self.context_lines.push(event.message.clone());
+            self.merged_count += 1;
+            return None;
+        }
+
+        // Not a context line — flush whatever we have buffered.
+        let flushed = self.flush_pending();
+
+        // If the incoming event is a diagnostic or log that could receive context,
+        // buffer it; otherwise emit it directly.
+        if event.event_type == "diagnostic" || event.event_type == "log" {
+            self.pending = Some(event);
+        } else {
+            // Non-diagnostic events (test_result, summary, etc.) pass through immediately.
+            return flushed.or(Some(event));
+        }
+
+        flushed
+    }
+
+    /// Flush any remaining buffered event (call at end of stream).
+    pub fn finish(&mut self) -> Option<TaskEvent> {
+        self.flush_pending()
+    }
+
+    fn flush_pending(&mut self) -> Option<TaskEvent> {
+        let mut event = self.pending.take()?;
+        if !self.context_lines.is_empty() {
+            // Filter out noise lines: empty pipes, pure caret/arrow markers
+            let merged: Vec<String> = self
+                .context_lines
+                .drain(..)
+                .filter(|line| {
+                    let trimmed = line.trim();
+                    // Remove empty lines
+                    if trimmed.is_empty() {
+                        return false;
+                    }
+                    // Remove pure caret/dash/pipe connector lines: "  |  ^^^^", "  |  ---"
+                    // Keep lines with actual text (explanations, source code)
+                    if let Some(after_pipe) = trimmed.strip_prefix('|') {
+                        let after_pipe = after_pipe.trim();
+                        // Pure markers: "|", "|  |", "|  ^^^^", "|  ---"
+                        if after_pipe.is_empty()
+                            || after_pipe.chars().all(|c| c == '^' || c == '-' || c == '|')
+                        {
+                            return false;
+                        }
+                    }
+                    // Remove arrow markers: "--> file:line:col"
+                    if trimmed.starts_with("-->") {
+                        return false;
+                    }
+                    // Remove standalone close braces (formatting noise)
+                    if trimmed == "}" {
+                        return false;
+                    }
+                    // Remove ANSI escape lines (timestamps, log levels)
+                    if trimmed.contains('\x1b') {
+                        return false;
+                    }
+                    // Remove standalone doc comment markers
+                    if trimmed == "///" || trimmed == "//" {
+                        return false;
+                    }
+                    true
+                })
+                .collect();
+            if !merged.is_empty() {
+                match event.context {
+                    Some(ref mut ctx) => {
+                        ctx.after.extend(merged);
+                    }
+                    None => {
+                        event.context = Some(EventContext {
+                            before: Vec::new(),
+                            line: event.message.clone(),
+                            after: merged,
+                        });
+                    }
+                }
+            }
+        }
+        Some(event)
+    }
+}
+
+/// Returns `true` if a message looks like a rustc diagnostic context line that
+/// should be merged into the preceding diagnostic event rather than stored
+/// separately.
+fn is_rustc_context_line(msg: &str) -> bool {
+    let trimmed = msg.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+
+    // Pattern 1: `= note: ...`, `= help: ...`, `= warning: ...`  (rustc directives)
+    if let Some(rest) = trimmed.strip_prefix("= ") {
+        // Must look like a directive: `= <word>: ...`
+        if let Some(colon_pos) = rest.find(':') {
+            let directive = &rest[..colon_pos];
+            if directive.chars().all(|c| c.is_ascii_alphabetic()) {
+                return true;
+            }
+        }
+    }
+
+    // Pattern 2: Bare pipe markers — `|`, `| expected ...`, `|     ^^^^ ...`
+    // These start with optional whitespace, then `|`.
+    if trimmed.starts_with('|') {
+        // `|` alone, or `| ^^^^ ...`, or `| expected ...`, etc.
+        // All are valid context lines.
+        return true;
+    }
+
+    // Pattern 3: Numbered source lines — `<digits> | <code>`
+    // e.g. `  2 |     let x: i32 = "hello";`
+    if let Some(pos) = trimmed.find(" | ") {
+        let num_part = &trimmed[..pos];
+        if !num_part.is_empty() && num_part.chars().all(|c| c.is_ascii_digit() || c == ' ') {
+            return true;
+        }
+    }
+
+    // Pattern 4: Arrow markers — `  -->`, `  ^^^`, `  ---`
+    // Arrow: starts with `-->` after optional whitespace
+    if trimmed.starts_with("-->") {
+        return true;
+    }
+
+    false
+}
+
+// ── RustcContextMerger tests ──────────────────────────────────────────────────
+
+#[cfg(test)]
+mod context_merger_tests {
+    use super::*;
+    use arshy_lib::ipc::EventContext;
+
+    fn make_log(message: &str, seq: u64) -> TaskEvent {
+        TaskEvent {
+            seq,
+            event_type: "log".into(),
+            severity: Some("info".into()),
+            code: None,
+            message: message.into(),
+            location: None,
+            context: None,
+            hint: None,
+        }
+    }
+
+    fn make_diag(message: &str, seq: u64) -> TaskEvent {
+        TaskEvent {
+            seq,
+            event_type: "diagnostic".into(),
+            severity: Some("error".into()),
+            code: None,
+            message: message.into(),
+            location: Some(arshy_lib::ipc::EventLocation {
+                file: "src/main.rs".into(),
+                line: 10,
+                column: None,
+            }),
+            context: None,
+            hint: None,
+        }
+    }
+
+    fn make_summary(message: &str, seq: u64) -> TaskEvent {
+        TaskEvent {
+            seq,
+            event_type: "summary".into(),
+            severity: Some("info".into()),
+            code: None,
+            message: message.into(),
+            location: None,
+            context: None,
+            hint: None,
+        }
+    }
+
+    #[test]
+    fn context_line_detection() {
+        // Pipe markers
+        assert!(is_rustc_context_line("|"));
+        assert!(is_rustc_context_line("  | expected `i32`, found `&str`"));
+        assert!(is_rustc_context_line("  |     ^^^^ expected `i32`"));
+        // Numbered source lines
+        assert!(is_rustc_context_line("  2 |     let x: i32 = \"hello\";"));
+        assert!(is_rustc_context_line("2 | let x = 1;"));
+        // Arrow markers
+        assert!(is_rustc_context_line("  --> src/main.rs:5:10"));
+        assert!(is_rustc_context_line("--> file.rs:1:1"));
+        // Directive notes
+        assert!(is_rustc_context_line("  = note: expected due to this"));
+        assert!(is_rustc_context_line("  = help: consider using `to_string()`"));
+        // Non-context lines
+        assert!(!is_rustc_context_line("error[E0308]: mismatched types"));
+        assert!(!is_rustc_context_line("  = some_colon: not a directive"));
+        assert!(!is_rustc_context_line(""));
+        assert!(!is_rustc_context_line("   "));
+    }
+
+    #[test]
+    fn merger_passthrough_non_context() {
+        let mut m = RustcContextMerger::new();
+        // First event is always buffered (merger needs to see next event)
+        let e = make_diag("error[E0308]: mismatched types", 0);
+        let result = m.feed(e);
+        assert!(result.is_none(), "first event is buffered");
+        // Second non-context event flushes the first
+        let result = m.feed(make_diag("warning: unused", 1));
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().message, "error[E0308]: mismatched types");
+        // finish() flushes the second
+        let final_event = m.finish();
+        assert!(final_event.is_some());
+        assert_eq!(final_event.unwrap().message, "warning: unused");
+    }
+
+    #[test]
+    fn merger_absorbs_context_into_diagnostic() {
+        let mut m = RustcContextMerger::new();
+        // Diagnostic event — buffered as pending
+        let diag = make_diag("error[E0308]: mismatched types", 0);
+        assert!(m.feed(diag).is_none());
+        // Context lines get absorbed (return None, don't flush pending)
+        assert!(m.feed(make_log("  2 |     let x: i32 = \"hello\";", 1)).is_none());
+        assert!(m
+            .feed(make_log("  |                       ^^^^^^^ expected `i32`, found `&str`", 2))
+            .is_none());
+        assert!(m.feed(make_log("  |", 3)).is_none());
+        assert!(m.feed(make_log("  | expected due to this", 4)).is_none());
+        // Non-context line flushes the buffered event (with merged context)
+        let next = make_diag("warning: unused variable", 5);
+        let flushed = m.feed(next);
+        assert!(flushed.is_some());
+        let flushed = flushed.unwrap();
+        assert_eq!(flushed.message, "error[E0308]: mismatched types");
+        let ctx = flushed.context.expect("should have context");
+        // Empty "|" line is filtered out, so 3 lines instead of 4
+        assert_eq!(ctx.after.len(), 3);
+        assert_eq!(ctx.after[0], "  2 |     let x: i32 = \"hello\";");
+        assert_eq!(ctx.after[2], "  | expected due to this");
+        // The second diagnostic is now pending
+        let final_event = m.finish();
+        assert!(final_event.is_some());
+        assert_eq!(final_event.unwrap().message, "warning: unused variable");
+    }
+
+    #[test]
+    fn merger_extends_existing_context() {
+        let mut m = RustcContextMerger::new();
+        let diag = TaskEvent {
+            seq: 0,
+            event_type: "diagnostic".into(),
+            severity: Some("error".into()),
+            code: None,
+            message: "mismatched types".into(),
+            location: Some(arshy_lib::ipc::EventLocation {
+                file: "src/main.rs".into(),
+                line: 42,
+                column: None,
+            }),
+            context: Some(EventContext {
+                before: vec!["fn main() {".into()],
+                line: "    let x: i32 = \"hello\";".into(),
+                after: vec!["}".into()],
+            }),
+            hint: None,
+        };
+        // First event buffered
+        assert!(m.feed(diag).is_none());
+        // Context lines
+        assert!(m.feed(make_log("  = note: expected `i32`", 1)).is_none());
+        assert!(m.feed(make_log("  = note: found `&str`", 2)).is_none());
+        // Next non-context event flushes
+        let next = make_log("other line", 3);
+        let flushed = m.feed(next);
+        assert!(flushed.is_some());
+        let ctx = flushed.unwrap().context.unwrap();
+        // Original after + merged context lines
+        assert_eq!(
+            ctx.after,
+            vec![
+                "}".to_string(),
+                "  = note: expected `i32`".to_string(),
+                "  = note: found `&str`".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn merger_passes_through_non_diagnostic_events() {
+        let mut m = RustcContextMerger::new();
+        // Summary events should pass through immediately
+        let result = m.feed(make_summary("test result: ok", 0));
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().event_type, "summary");
+    }
+
+    #[test]
+    fn merger_finish_flushes_pending() {
+        let mut m = RustcContextMerger::new();
+        m.feed(make_diag("error: something", 0));
+        m.feed(make_log("  | context line", 1));
+        let result = m.finish();
+        assert!(result.is_some());
+        let event = result.unwrap();
+        assert_eq!(event.message, "error: something");
+        let ctx = event.context.unwrap();
+        assert_eq!(ctx.after, vec!["  | context line"]);
+    }
+
+    #[test]
+    fn merger_count_tracks_merged() {
+        let mut m = RustcContextMerger::new();
+        m.feed(make_diag("error: something", 0));
+        assert_eq!(m.merged_count(), 0);
+        m.feed(make_log("  | line 1", 1));
+        assert_eq!(m.merged_count(), 1);
+        m.feed(make_log("  | line 2", 2));
+        assert_eq!(m.merged_count(), 2);
+        m.finish();
+        assert_eq!(m.merged_count(), 2);
+    }
 }
 
 // ── Parser harness tests ─────────────────────────────────────────────────────

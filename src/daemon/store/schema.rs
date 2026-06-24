@@ -27,11 +27,16 @@ impl super::Store {
         let mut durations: Vec<u64> = Vec::new();
         let mut total_events: u64 = 0;
         let mut total_errors: u64 = 0;
-        let mut parser_coverage_non_log: u64 = 0;
-        let mut hints_count: u64 = 0;
-        let mut context_count: u64 = 0;
         let mut dedup_total: u64 = 0;
         let mut correlated_total: u64 = 0;
+        let mut total_raw_output_bytes: u64 = 0;
+        let mut total_structured_events_bytes: u64 = 0;
+        let mut total_agent_visible_events: u64 = 0;
+        let mut total_agent_skipped_events: u64 = 0;
+        let mut total_locations_extracted: u64 = 0;
+        let mut total_codes_extracted: u64 = 0;
+        let mut total_contexts_enriched: u64 = 0;
+        let mut total_hints_attached: u64 = 0;
         let mut parser_usage: std::collections::HashMap<String, u64> =
             std::collections::HashMap::new();
 
@@ -50,14 +55,31 @@ impl super::Store {
             total_errors += record.task.error_count;
             dedup_total += record.dedup_collapsed;
             correlated_total += record.correlated_errors;
+            total_raw_output_bytes += record.metrics.raw_output_bytes;
+            total_structured_events_bytes += record.metrics.structured_events_bytes;
+            total_agent_visible_events += record.metrics.agent_visible_events;
+            total_agent_skipped_events += record.metrics.agent_skipped_events;
+            total_locations_extracted += record.metrics.locations_extracted;
+            total_codes_extracted += record.metrics.codes_extracted;
+            total_contexts_enriched += record.metrics.contexts_enriched;
+            total_hints_attached += record.metrics.hints_attached;
             if let Some(ref parser) = record.task.parser_name {
                 *parser_usage.entry(parser.clone()).or_insert(0) += 1;
             }
         }
 
-        // Scan event files for parser_coverage, hints, and context metrics
+        // Use pre-computed TaskMetrics for parser coverage, hints, and context.
+        // Falls back to scanning event files only when metrics are zero (legacy data).
+        let needs_scan = total_agent_visible_events == 0 && total_agent_skipped_events == 0;
+        let mut parser_coverage_non_log = total_agent_visible_events;
+        let mut hints_count = total_hints_attached;
+        let mut context_count = total_contexts_enriched;
+
         let events_dir = self.dir.join("events");
-        if events_dir.exists() {
+        if needs_scan && events_dir.exists() {
+            parser_coverage_non_log = 0;
+            hints_count = 0;
+            context_count = 0;
             for entry in std::fs::read_dir(&events_dir)? {
                 let entry = entry?;
                 let path = entry.path();
@@ -166,6 +188,46 @@ impl super::Store {
             dedup_collapsed: Some(dedup_total),
             correlated_errors: Some(correlated_total),
             per_parser_usage,
+            total_raw_output_bytes: if total_raw_output_bytes > 0 {
+                Some(total_raw_output_bytes)
+            } else {
+                None
+            },
+            total_structured_events_bytes: if total_structured_events_bytes > 0 {
+                Some(total_structured_events_bytes)
+            } else {
+                None
+            },
+            total_agent_visible_events: if total_agent_visible_events > 0 {
+                Some(total_agent_visible_events)
+            } else {
+                None
+            },
+            total_agent_skipped_events: if total_agent_skipped_events > 0 {
+                Some(total_agent_skipped_events)
+            } else {
+                None
+            },
+            total_locations_extracted: if total_locations_extracted > 0 {
+                Some(total_locations_extracted)
+            } else {
+                None
+            },
+            total_codes_extracted: if total_codes_extracted > 0 {
+                Some(total_codes_extracted)
+            } else {
+                None
+            },
+            total_contexts_enriched: if total_contexts_enriched > 0 {
+                Some(total_contexts_enriched)
+            } else {
+                None
+            },
+            total_hints_attached: if total_hints_attached > 0 {
+                Some(total_hints_attached)
+            } else {
+                None
+            },
         })
     }
 }

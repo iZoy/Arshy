@@ -52,7 +52,9 @@ async fn proxy_main(config_path: Option<PathBuf>) -> Result<()> {
     // Retry connection on startup — daemon may be restarting (launchd KeepAlive).
     // 5 attempts with auto-cd validation ensures the connection is alive.
     let (mut daemon, mut notif_rx) =
-        connect_with_retry(&cfg, &socket_path, 5, &[500, 500, 500, 500], true).await?;
+        connect_with_retry(&cfg, &socket_path, 5, &[500, 500, 500, 500], true)
+            .await
+            .map_err(|e| format_daemon_error(e, &cfg))?;
 
     let mut stdin = BufReader::new(tokio::io::stdin());
     let mut stdout = BufWriter::new(tokio::io::stdout());
@@ -159,6 +161,13 @@ async fn proxy_main(config_path: Option<PathBuf>) -> Result<()> {
                                     }
                                     Err(e) if is_connection_error(&e) && cfg.daemon.auto_start => {
                                         tracing::warn!("daemon connection lost, attempting reconnect...");
+                                        // Drain remaining notifications from old channel before replacing
+                                        while let Ok(n) = notif_rx.try_recv() {
+                                            pending_notifs.push(n);
+                                        }
+                                        if !pending_notifs.is_empty() {
+                                            flush_batch(&mut stdout, &mut pending_notifs).await?;
+                                        }
                                         match connect_with_retry(&cfg, &socket_path, 3, &[500, 1000, 2000], false).await {
                                             Ok((new_conn, new_notif_rx)) => {
                                                 daemon = new_conn;
@@ -174,16 +183,27 @@ async fn proxy_main(config_path: Option<PathBuf>) -> Result<()> {
                                                     Err(e2) => Err(e2),
                                                 }
                                             }
-                                            Err(re) => {
+                                            Err(_re) => {
                                                 record_daemon_crash();
-                                                write_structured_error(&mut stdout, id, arshy_lib::ArshyError::DaemonUnreachable(
-                                                    format!("connection lost after retries: {}", re))).await
+                                                let msg = "arshyd daemon is not running or unreachable.\n\
+                                                    Run `arshy daemon start` to start it.\n\
+                                                    Connection failed after retries.".to_string();
+                                                write_structured_error(&mut stdout, id, arshy_lib::ArshyError::DaemonUnreachable(msg)).await
                                             }
                                         }
                                     }
                                     Err(e) => {
-                                        write_structured_error(&mut stdout, id, arshy_lib::ArshyError::Ipc(
-                                            format!("daemon error: {}", e))).await
+                                        let msg = match &e {
+                                            arshy_lib::ArshyError::DaemonUnreachable(_) => {
+                                                "arshyd daemon is not running or unreachable.\n\
+                                                 Run `arshy daemon start` to start it.".to_string()
+                                            }
+                                            arshy_lib::ArshyError::Ipc(inner) if is_connection_error(&e) => {
+                                                format!("arshyd daemon connection lost: {}\nRun `arshy daemon start` to restart it.", inner)
+                                            }
+                                            _ => format!("daemon error: {}", e),
+                                        };
+                                        write_structured_error(&mut stdout, id, arshy_lib::ArshyError::Ipc(msg)).await
                                     }
                                 };
                                 result
@@ -227,7 +247,7 @@ async fn proxy_main(config_path: Option<PathBuf>) -> Result<()> {
 
                         // Opportunistic health check — runs during active use too
                         if last_health_check.elapsed() >= health_interval {
-                            if perform_health_check(&mut daemon, &mut notif_rx, &cfg, &socket_path, &mut last_health_check).await {
+                            if perform_health_check(&mut daemon, &mut notif_rx, &cfg, &socket_path, &mut last_health_check, &mut stdout, &mut pending_notifs).await {
                                 consecutive_health_failures = 0;
                             } else {
                                 consecutive_health_failures = consecutive_health_failures.saturating_add(1);
@@ -263,7 +283,7 @@ async fn proxy_main(config_path: Option<PathBuf>) -> Result<()> {
             // Fires after 30s of inactivity to detect daemon crashes.
             // Backs off on consecutive failures to avoid thundering herd.
             _ = tokio::time::sleep(health_interval) => {
-                if perform_health_check(&mut daemon, &mut notif_rx, &cfg, &socket_path, &mut last_health_check).await {
+                if perform_health_check(&mut daemon, &mut notif_rx, &cfg, &socket_path, &mut last_health_check, &mut stdout, &mut pending_notifs).await {
                     consecutive_health_failures = 0;
                 } else {
                     consecutive_health_failures = consecutive_health_failures.saturating_add(1);
@@ -302,12 +322,15 @@ async fn proxy_main(config_path: Option<PathBuf>) -> Result<()> {
 
 /// Check daemon health and reconnect if needed. Updates `last_check` on success.
 /// Returns `true` if the daemon is healthy, `false` if reconnection failed.
+#[allow(clippy::too_many_arguments)]
 async fn perform_health_check(
     daemon: &mut DaemonConnection,
     notif_rx: &mut mpsc::Receiver<Notification>,
     cfg: &Config,
     socket_path: &std::path::Path,
     last_check: &mut tokio::time::Instant,
+    stdout: &mut BufWriter<tokio::io::Stdout>,
+    pending_notifs: &mut Vec<Notification>,
 ) -> bool {
     match daemon
         .send_request_with_timeout(
@@ -323,6 +346,13 @@ async fn perform_health_check(
         }
         Err(e) if is_connection_error(&e) && cfg.daemon.auto_start => {
             tracing::warn!("health check failed, reconnecting...");
+            // Drain remaining notifications from old channel before replacing
+            while let Ok(n) = notif_rx.try_recv() {
+                pending_notifs.push(n);
+            }
+            if !pending_notifs.is_empty() {
+                let _ = flush_batch(stdout, pending_notifs).await;
+            }
             match connect_with_retry(cfg, socket_path, 3, &[500, 1000, 2000], false).await {
                 Ok((new_conn, new_notif_rx)) => {
                     *daemon = new_conn;
@@ -333,6 +363,7 @@ async fn perform_health_check(
                 }
                 Err(_) => {
                     record_daemon_crash();
+                    tracing::error!("daemon unreachable — run `arshy daemon start` to restart");
                     false
                 }
             }
@@ -561,13 +592,74 @@ async fn handle_tool_call(
         };
         serde_json::json!([{"type": "text", "text": text}])
     } else {
-        // Long command → structured output
-        let text = serde_json::to_string_pretty(result).unwrap_or_default();
+        // Long command → concise structured summary.
+        // Agent gets: status icon, duration, error count, root cause on failure.
+        // Full events are available via arshy_query — not included here.
+        let root_cause = result.get("root_cause");
+        let error_count = result.get("error_count").and_then(|v| v.as_u64()).unwrap_or(0);
+        let exit_code = result.get("exit_code").and_then(|v| v.as_i64());
+        let duration_ms = result.get("duration_ms").and_then(|v| v.as_u64());
+
+        let status_icon = match status {
+            "completed" => "✓",
+            "failed" | "timeout" => "✗",
+            "killed" => "⊘",
+            "running" => "⟳",
+            _ => "?",
+        };
+
+        let duration_str = format_duration(duration_ms);
+        let has_errors = error_count > 0;
+        let exit_nonzero = exit_code.is_some_and(|c| c != 0);
+
+        // Build one-line summary: "✓ 0 errors, 2.3s" or "✗ 3 errors, 10.5s (exit 1)"
+        let mut text = String::new();
+        text.push_str(status_icon);
+        text.push(' ');
+        text.push_str(&format!("{} error{}", error_count, if error_count == 1 { "" } else { "s" }));
+        if !duration_str.is_empty() {
+            text.push_str(", ");
+            text.push_str(&duration_str);
+        }
+        if exit_nonzero {
+            if let Some(code) = exit_code {
+                text.push_str(&format!(" (exit {})", code));
+            }
+        }
+
+        // Attach root cause for failures (most useful single-line for the agent)
+        if let Some(rc) = root_cause {
+            if let Some(msg) = rc.get("message").and_then(|v| v.as_str()) {
+                if !msg.is_empty() {
+                    text.push_str(&format!("\nRoot cause: {}", msg));
+                }
+            }
+        }
+
+        // Include git diff stat on failure (helps agent correlate errors with changes)
+        if has_errors || exit_nonzero {
+            if let Some(pc) = result.get("project_context") {
+                if let Some(stat) = pc.get("git_diff_stat").and_then(|v| v.as_str()) {
+                    if !stat.is_empty() {
+                        text.push_str(&format!("\nChanged files:\n{}", stat));
+                    }
+                }
+            }
+        }
+
         serde_json::json!([{"type": "text", "text": text}])
     };
 
-    // Flag failures with isError so agents can detect them immediately
-    let is_error = status == "failed" || status == "timeout";
+    // Flag errors so agents can detect them programmatically via isError.
+    // Only flag explicit failures and high exit codes (>=2).
+    // exit_code=1 is ambiguous (grep no match, diff differs, test condition false)
+    // and should not trigger MCP isError.
+    let has_errors = result.get("error_count").and_then(|v| v.as_u64()).unwrap_or(0) > 0;
+    let exit_high = result.get("exit_code").and_then(|v| v.as_i64()).is_some_and(|c| c >= 2);
+    let is_error = status == "failed"
+        || status == "timeout"
+        || exit_high
+        || (status == "completed" && has_errors);
 
     let mut result_obj = serde_json::json!({ "content": content });
     if is_error {
@@ -761,6 +853,73 @@ async fn write_mcp_notification<W: tokio::io::AsyncWriteExt + Unpin>(
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
+
+/// Convert a daemon connection error into a user-friendly message.
+///
+/// Instead of exposing raw IPC/IO errors, shows an actionable message
+/// that tells the user exactly what to do.
+fn format_daemon_error(err: arshy_lib::ArshyError, cfg: &Config) -> arshy_lib::ArshyError {
+    let auto_start = cfg.daemon.auto_start;
+    let msg = match &err {
+        arshy_lib::ArshyError::DaemonUnreachable(inner) => {
+            if inner.contains("crash-loop") {
+                "arshyd is crash-looping and auto-start has been suppressed.\n\
+                 Check the daemon logs: cat ~/.local/share/arshy/daemon.log\n\
+                 Then restart: arshy daemon restart"
+                    .to_string()
+            } else if inner.contains("did not start") {
+                if auto_start {
+                    "arshyd daemon could not be started automatically.\n\
+                     Start it manually: arshy daemon start\n\
+                     If the problem persists, check: arshy doctor"
+                        .to_string()
+                } else {
+                    "arshyd daemon is not running.\n\
+                     Run `arshy daemon start` to start it."
+                        .to_string()
+                }
+            } else {
+                "arshyd daemon is not running or unreachable.\n\
+                 Run `arshy daemon start` to start it.\n\
+                 If it was recently running, check for crashes: arshy doctor"
+                    .to_string()
+            }
+        }
+        arshy_lib::ArshyError::Io(e) => {
+            if e.kind() == std::io::ErrorKind::ConnectionRefused {
+                "arshyd daemon is not running (connection refused).\n\
+                 Run `arshy daemon start` to start it."
+                    .to_string()
+            } else if e.kind() == std::io::ErrorKind::NotFound
+                || e.to_string().contains("No such file")
+            {
+                "arshyd daemon socket not found — the daemon is not running.\n\
+                 Run `arshy daemon start` to start it."
+                    .to_string()
+            } else {
+                format!(
+                    "Failed to connect to arshyd daemon: {}\nRun `arshy doctor` for diagnostics.",
+                    e
+                )
+            }
+        }
+        _ => {
+            format!("Cannot connect to arshyd daemon.\nRun `arshy daemon start` to start it.\nError: {}", err)
+        }
+    };
+    arshy_lib::ArshyError::DaemonUnreachable(msg)
+}
+
+/// Format milliseconds as a human-readable duration string.
+/// Examples: 500 -> "500ms", 2300 -> "2.3s", 125000 -> "2.1m"
+fn format_duration(ms: Option<u64>) -> String {
+    match ms {
+        None => String::new(),
+        Some(m) if m < 1000 => format!("{}ms", m),
+        Some(m) if m < 60_000 => format!("{:.1}s", m as f64 / 1000.0),
+        Some(m) => format!("{:.1}m", m as f64 / 60_000.0),
+    }
+}
 
 async fn connect_or_start(
     cfg: &Config,
@@ -1034,6 +1193,19 @@ async fn write_structured_error(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_format_duration() {
+        assert_eq!(format_duration(None), "");
+        assert_eq!(format_duration(Some(0)), "0ms");
+        assert_eq!(format_duration(Some(500)), "500ms");
+        assert_eq!(format_duration(Some(999)), "999ms");
+        assert_eq!(format_duration(Some(1000)), "1.0s");
+        assert_eq!(format_duration(Some(2300)), "2.3s");
+        assert_eq!(format_duration(Some(59999)), "60.0s");
+        assert_eq!(format_duration(Some(60000)), "1.0m");
+        assert_eq!(format_duration(Some(125000)), "2.1m");
+    }
 
     #[test]
     fn test_resource_uri_format() {

@@ -112,6 +112,12 @@ pub enum CliCommand {
     Doctor,
     /// Run parser benchmark across all builtin parsers
     Benchmark,
+    /// Generate impact analysis report
+    Analyze {
+        /// Output format: pretty (terminal UI), json (raw JSON), auto (default)
+        #[arg(long, default_value = "auto")]
+        format: String,
+    },
     /// Manage parsers
     Parser {
         #[command(subcommand)]
