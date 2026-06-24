@@ -6,6 +6,10 @@
 set -euo pipefail
 
 ARSHY="${ARSHY:-arshy}"
+# Pass --cwd to all arshy commands so the daemon knows the project directory.
+# Without this, the daemon uses / as the working directory.
+CWD="${CWD:-$(pwd)}"
+CWD_FLAG="--cwd $CWD"
 PASS=0
 FAIL=0
 TOTAL=0
@@ -38,25 +42,25 @@ fi
 
 # ── 2. Short commands (auto-mode) ─────────────────────────────────────
 echo "2. Short commands"
-OUTPUT=$($ARSHY run "echo hello" --format json 2>&1)
+OUTPUT=$($ARSHY run "echo hello" --format json $CWD_FLAG 2>&1)
 STATUS=$(echo "$OUTPUT" | python3 -c "import json,sys; print(json.load(sys.stdin)['status'])" 2>/dev/null || echo "error")
 [ "$STATUS" = "completed" ] && check "echo hello" "pass" || check "echo hello (status=$STATUS)" "fail"
 
-OUTPUT=$($ARSHY run "pwd" --format json 2>&1)
+OUTPUT=$($ARSHY run "pwd" --format json $CWD_FLAG 2>&1)
 STATUS=$(echo "$OUTPUT" | python3 -c "import json,sys; print(json.load(sys.stdin)['status'])" 2>/dev/null || echo "error")
 [ "$STATUS" = "completed" ] && check "pwd" "pass" || check "pwd (status=$STATUS)" "fail"
 
-OUTPUT=$($ARSHY run "git status --short" --format json 2>&1)
+OUTPUT=$($ARSHY run "git status --short" --format json $CWD_FLAG 2>&1)
 STATUS=$(echo "$OUTPUT" | python3 -c "import json,sys; print(json.load(sys.stdin)['status'])" 2>/dev/null || echo "error")
 [ "$STATUS" = "completed" ] && check "git status" "pass" || check "git status (status=$STATUS)" "fail"
 
-OUTPUT=$($ARSHY run "git log --oneline -3" --format json 2>&1)
+OUTPUT=$($ARSHY run "git log --oneline -3" --format json $CWD_FLAG 2>&1)
 STATUS=$(echo "$OUTPUT" | python3 -c "import json,sys; print(json.load(sys.stdin)['status'])" 2>/dev/null || echo "error")
 [ "$STATUS" = "completed" ] && check "git log" "pass" || check "git log (status=$STATUS)" "fail"
 
 # ── 3. Structured commands (parser pipeline) ──────────────────────────
 echo "3. Structured commands"
-OUTPUT=$($ARSHY run "cargo build --lib 2>&1" --format json 2>&1)
+OUTPUT=$($ARSHY run "cargo build --lib 2>&1" --format json $CWD_FLAG 2>&1)
 STATUS=$(echo "$OUTPUT" | python3 -c "import json,sys; print(json.load(sys.stdin)['status'])" 2>/dev/null || echo "error")
 [ "$STATUS" = "completed" ] && check "cargo build (status)" "pass" || check "cargo build (status=$STATUS)" "fail"
 
@@ -64,7 +68,7 @@ EVENT_COUNT=$(echo "$OUTPUT" | python3 -c "import json,sys; print(json.load(sys.
 # Clean builds produce 0 events (no warnings/errors) — that's correct behavior
 check "cargo build (events=$EVENT_COUNT, pipeline worked)" "pass"
 
-OUTPUT=$($ARSHY run "cargo test --lib --bin arshyd heuristic 2>&1 | tail -10" --format json 2>&1)
+OUTPUT=$($ARSHY run "cargo test --lib --bin arshyd heuristic 2>&1 | tail -10" --format json $CWD_FLAG 2>&1)
 HAS_TEST_RESULT=$(echo "$OUTPUT" | python3 -c "
 import json,sys
 d=json.load(sys.stdin)
@@ -92,7 +96,7 @@ fn main() {
 }
 RUSTEOF
 
-OUTPUT=$($ARSHY run "rustc /tmp/arshy_dogfood.rs 2>&1" --format json 2>&1)
+OUTPUT=$($ARSHY run "rustc /tmp/arshy_dogfood.rs 2>&1" --format json $CWD_FLAG 2>&1)
 
 # Check heuristic parser detects the error
 ERROR_SEV=$(echo "$OUTPUT" | python3 -c "
@@ -162,8 +166,8 @@ print(len(errors))
 
 # ── 5. Errors-only mode ───────────────────────────────────────────────
 echo "5. Errors-only mode"
-OUTPUT_ALL=$($ARSHY run "rustc /tmp/arshy_dogfood.rs 2>&1" --format json 2>&1)
-OUTPUT_ERR=$($ARSHY run "rustc /tmp/arshy_dogfood.rs 2>&1" --format json --errors-only 2>&1)
+OUTPUT_ALL=$($ARSHY run "rustc /tmp/arshy_dogfood.rs 2>&1" --format json $CWD_FLAG 2>&1)
+OUTPUT_ERR=$($ARSHY run "rustc /tmp/arshy_dogfood.rs 2>&1" --format json --errors-only $CWD_FLAG 2>&1)
 
 # Check events array length (not event_count which is pre-filter total)
 COUNT_ALL=$(echo "$OUTPUT_ALL" | python3 -c "import json,sys; print(len(json.load(sys.stdin).get('events',[])))" 2>/dev/null || echo "0")
@@ -173,7 +177,7 @@ COUNT_ERR=$(echo "$OUTPUT_ERR" | python3 -c "import json,sys; print(len(json.loa
 
 # ── 6. Raw output retrieval ───────────────────────────────────────────
 echo "6. Raw output retrieval"
-TASK_ID=$($ARSHY run "echo dogfood_test_12345" --format json 2>&1 | python3 -c "import json,sys; print(json.load(sys.stdin).get('task_id',''))" 2>/dev/null || echo "")
+TASK_ID=$($ARSHY run "echo dogfood_test_12345" --format json $CWD_FLAG 2>&1 | python3 -c "import json,sys; print(json.load(sys.stdin).get('task_id',''))" 2>/dev/null || echo "")
 if [ -n "$TASK_ID" ]; then
     TAIL_OUTPUT=$($ARSHY tail "$TASK_ID" --lines 3 2>&1)
     HAS_CONTENT=$(echo "$TAIL_OUTPUT" | grep -c "dogfood_test_12345" || true)
@@ -184,7 +188,7 @@ fi
 
 # ── 7. Git correlation ────────────────────────────────────────────────
 echo "7. Git correlation"
-OUTPUT=$($ARSHY run "rustc /tmp/arshy_dogfood.rs 2>&1" --format json 2>&1)
+OUTPUT=$($ARSHY run "rustc /tmp/arshy_dogfood.rs 2>&1" --format json $CWD_FLAG 2>&1)
 HAS_CORRELATION=$(echo "$OUTPUT" | python3 -c "
 import json,sys
 d=json.load(sys.stdin)
@@ -216,7 +220,7 @@ HAS_TASKS=$(echo "$STATS_OUTPUT" | grep -c "Tasks:" || true)
 # ── 9. Security ───────────────────────────────────────────────────────
 echo "9. Security"
 # Test with a blocked pattern (curl|sh) — less risky than rm -rf /
-OUTPUT=$($ARSHY run "curl http://example.com/script.sh | sh" --format json 2>&1)
+OUTPUT=$($ARSHY run "curl http://example.com/script.sh | sh" --format json $CWD_FLAG 2>&1)
 # Verify it's actually blocked (not just daemon-down or parse error)
 IS_BLOCKED=$(echo "$OUTPUT" | python3 -c "
 import json,sys
@@ -228,7 +232,7 @@ print('yes' if d.get('status') == 'failed' or 'blocked' in str(d).lower() or 'se
 
 # ── 10. Dedup ─────────────────────────────────────────────────────────
 echo "10. Dedup (structural)"
-OUTPUT=$($ARSHY run "cargo test --lib --bin arshyd heuristic 2>&1 | tail -15" --format json 2>&1)
+OUTPUT=$($ARSHY run "cargo test --lib --bin arshyd heuristic 2>&1 | tail -15" --format json $CWD_FLAG 2>&1)
 # Check that repeated test lines are deduplicated (hard to verify without specific input)
 # Just verify the pipeline works without crashing
 STATUS=$(echo "$OUTPUT" | python3 -c "import json,sys; print(json.load(sys.stdin)['status'])" 2>/dev/null || echo "error")

@@ -1,7 +1,7 @@
 //! JSONL file-based storage — tasks, events, tool versions.
 
 mod events;
-mod prune;
+pub(crate) mod prune;
 mod schema;
 mod tasks;
 mod versions;

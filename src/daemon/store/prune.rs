@@ -14,8 +14,9 @@ impl super::Store {
         if keep == 0 {
             let dt = tasks.len();
             let de = count_all_events(&self.dir, tasks.keys())?;
-            // Remove event files
+            // Remove event files and raw output files
             remove_event_files(&self.dir, tasks.keys())?;
+            remove_raw_files(&self.dir, tasks.keys())?;
             tasks.clear();
             drop(tasks);
             self.persist_tasks()?;
@@ -35,8 +36,9 @@ impl super::Store {
         let dt = to_delete.len();
         let de = count_event_files(&self.dir, to_delete.iter())?;
 
-        // Remove event files
+        // Remove event files and raw output files
         remove_event_files(&self.dir, to_delete.iter())?;
+        remove_raw_files(&self.dir, to_delete.iter())?;
 
         // Remove from HashMap
         for id in &to_delete {
@@ -63,8 +65,9 @@ impl super::Store {
         let dt = to_delete.len();
         let de = count_event_files(&self.dir, to_delete.iter())?;
 
-        // Remove event files
+        // Remove event files and raw output files
         remove_event_files(&self.dir, to_delete.iter())?;
+        remove_raw_files(&self.dir, to_delete.iter())?;
 
         // Remove from HashMap
         for id in &to_delete {
@@ -117,4 +120,47 @@ fn remove_event_files<'a>(
         }
     }
     Ok(())
+}
+
+/// Remove raw output files for the given task IDs.
+fn remove_raw_files<'a>(
+    dir: &std::path::Path,
+    task_ids: impl Iterator<Item = &'a String>,
+) -> Result<()> {
+    let raw_dir = dir.join("raw");
+    for id in task_ids {
+        let path = raw_dir.join(format!("{}.txt", id));
+        if path.exists() {
+            std::fs::remove_file(&path)?;
+        }
+    }
+    Ok(())
+}
+
+/// Clean up stale symlink fallback directories in /tmp/.arshy-cwd/.
+/// Removes symlinks older than 1 hour that may be left over from crashed tasks.
+pub fn cleanup_stale_symlinks() {
+    let symlink_dir = std::path::Path::new("/tmp/.arshy-cwd");
+    let Ok(entries) = std::fs::read_dir(symlink_dir) else {
+        return;
+    };
+    let cutoff = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+    for entry in entries.flatten() {
+        let path = entry.path();
+        // Only remove symlinks, not regular files
+        if !path.is_symlink() {
+            continue;
+        }
+        // Remove if older than cutoff or if target no longer exists
+        let stale = path
+            .symlink_metadata()
+            .and_then(|m| m.modified())
+            .map(|t| t < cutoff)
+            .unwrap_or(true);
+        if stale || !std::fs::metadata(&path).map(|m| m.is_dir()).unwrap_or(false) {
+            let _ = std::fs::remove_file(&path);
+        }
+    }
+    // Remove the directory itself if empty
+    let _ = std::fs::remove_dir(symlink_dir);
 }

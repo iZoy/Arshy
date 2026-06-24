@@ -1,5 +1,6 @@
 //! Arshy daemon — background process managing shell execution.
 
+mod analytics;
 mod bus;
 mod context;
 mod exec;
@@ -39,8 +40,12 @@ async fn main() -> Result<()> {
             panic.message = msg,
             "daemon panicked — collecting diagnostics before exit"
         );
+        // Write a clear, actionable message to stderr before the process exits
+        // so that auto-starting proxies and launchd/systemd see a useful message.
+        eprintln!("FATAL: arshyd daemon panicked at {}: {}", location, msg);
+        eprintln!("The daemon will restart automatically (KeepAlive).");
+        eprintln!("If this persists, check the log: ~/.local/share/arshy/daemon.log");
         // Flush logs before the process aborts
-        eprintln!("FATAL: arshyd panicked at {}: {}", location, msg);
     }));
 
     tracing::info!("arshyd v{} starting", env!("CARGO_PKG_VERSION"));
@@ -76,6 +81,9 @@ async fn main() -> Result<()> {
     let store = Arc::new(store::Store::open(&db_dir, cfg.store.wal_mode)?);
     store.initialize_schema()?;
 
+    // Start background flush task — persists dirty state every 1 second
+    let _flush_handle = store.start_flush_task();
+
     // SQLite integrity check
     if cfg.store.integrity_check {
         match store.integrity_check() {
@@ -93,6 +101,9 @@ async fn main() -> Result<()> {
             _ => tracing::debug!("auto-prune: nothing to prune"),
         }
     }
+
+    // Clean up stale /tmp/.arshy-cwd/ symlinks from previous sessions
+    store::prune::cleanup_stale_symlinks();
 
     // WAL checkpoint
     if cfg.store.wal_mode {
@@ -231,6 +242,10 @@ async fn main() -> Result<()> {
     }
 
     // ── Cleanup ────────────────────────────────────────────────────────────
+    // Flush any pending store changes before exit
+    if let Err(e) = store.flush() {
+        tracing::warn!("final store flush failed: {}", e);
+    }
     lifecycle::remove_pid();
     let _ = tokio::fs::remove_file(&socket_path).await;
     tracing::info!("arshyd stopped");

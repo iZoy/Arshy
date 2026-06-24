@@ -4,8 +4,8 @@ pub mod render;
 
 use arshy_lib::config::Config;
 use arshy_lib::ipc::{
-    self, QueryParams, Request, RunTaskParams, METHOD_LIST, METHOD_PRUNE, METHOD_RUN,
-    METHOD_SHUTDOWN, METHOD_STATS, METHOD_STATUS,
+    self, QueryParams, Request, RunTaskParams, METHOD_ANALYZE, METHOD_LIST, METHOD_PRUNE,
+    METHOD_RUN, METHOD_SHUTDOWN, METHOD_STATS, METHOD_STATUS,
 };
 use arshy_lib::Result;
 use std::path::PathBuf;
@@ -61,6 +61,7 @@ pub async fn dispatch(cli: Cli) -> Result<()> {
         Some(CliCommand::InstallSystemd) => install_systemd(),
         Some(CliCommand::Doctor) => doctor(config_path, log_level),
         Some(CliCommand::Benchmark) => run_benchmark(),
+        Some(CliCommand::Analyze { format }) => analyze(config_path, log_level, &format).await,
         Some(CliCommand::Parser { action }) => parser_action(action, config_path, log_level).await,
         None => {
             println!("Arshy — AI Agent native shell execution layer");
@@ -100,7 +101,7 @@ async fn run_command(
         command: command.into(),
         cwd,
         timeout_ms,
-        mode: mode.unwrap_or_else(|| "sync".into()),
+        mode: mode.unwrap_or_else(|| "auto".into()),
         parse_hint: None,
         env: None,
         errors_only,
@@ -167,7 +168,16 @@ async fn query_events(
     limit: usize,
 ) -> Result<()> {
     let mut daemon = connect(config_path, log_level).await?;
-    let params = QueryParams { task_id, event_type, severity, code, file, limit, offset: 0 };
+    let params = QueryParams {
+        task_id,
+        event_type,
+        severity,
+        code,
+        file,
+        limit,
+        offset: 0,
+        include_logs: false,
+    };
     let request = Request {
         jsonrpc: "2.0".into(),
         id: 1,
@@ -233,6 +243,11 @@ fn install() -> Result<()> {
         dirs::home_dir().unwrap_or_else(|| PathBuf::from("~")).join(".claude.json");
     install_mcp_in_claude_json(&claude_json_path)?;
 
+    // Write MCP server to ~/.cursor/mcp.json (Cursor IDE)
+    let cursor_mcp_path =
+        dirs::home_dir().unwrap_or_else(|| PathBuf::from("~")).join(".cursor").join("mcp.json");
+    install_mcp_in_cursor(&cursor_mcp_path)?;
+
     // Write permissions to ~/.claude/settings.json
     let settings_path = dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("~"))
@@ -282,8 +297,9 @@ fn install() -> Result<()> {
     }
 
     println!();
-    println!("Done! Restart Claude Code to activate.");
-    println!("  MCP server: {}", claude_json_path.display());
+    println!("Done! Restart your IDE to activate.");
+    println!("  Claude Code: {}", claude_json_path.display());
+    println!("  Cursor:      {}", cursor_mcp_path.display());
     println!("  Permissions: {}", settings_path.display());
     Ok(())
 }
@@ -320,14 +336,74 @@ fn install_mcp_in_claude_json(path: &std::path::Path) -> Result<()> {
                     != Some(&serde_json::json!(arshy_bin.clone()));
             map.insert("arshy".into(), arshy_entry);
             if changed {
-                println!("  ✓ MCP server registered (user scope) in {}", path.display());
+                println!("  \u{2713} MCP server registered (user scope) in {}", path.display());
             } else {
-                println!("  ✓ MCP server already configured in {}", path.display());
+                println!("  \u{2713} MCP server already configured in {}", path.display());
             }
         }
     }
 
     std::fs::write(path, serde_json::to_string_pretty(&data)?)?;
+    Ok(())
+}
+
+/// Write arshy MCP entry to ~/.cursor/mcp.json (Cursor IDE).
+///
+/// Cursor uses a `mcpServers` object at the top level, same schema as Claude Code.
+fn install_mcp_in_cursor(path: &std::path::Path) -> Result<()> {
+    let mut data: serde_json::Value = if path.exists() {
+        let content = std::fs::read_to_string(path)?;
+        serde_json::from_str(&content).unwrap_or(serde_json::json!({}))
+    } else {
+        serde_json::json!({})
+    };
+
+    // Find the installed arshy binary (same logic as Claude Code)
+    let arshy_bin = find_installed_binary("arshy")
+        .or_else(|| {
+            std::env::current_exe().ok().filter(|p| !p.to_string_lossy().contains("target"))
+        })
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "arshy".into());
+
+    let arshy_entry = serde_json::json!({
+        "type": "stdio",
+        "command": arshy_bin,
+        "args": ["--from-mcp"],
+        "env": {}
+    });
+
+    if let Some(obj) = data.as_object_mut() {
+        let servers = obj.entry("mcpServers").or_insert_with(|| serde_json::json!({}));
+        if let Some(map) = servers.as_object_mut() {
+            let changed = map.get("arshy").is_none()
+                || map.get("arshy").and_then(|v| v.get("command"))
+                    != Some(&serde_json::json!(arshy_bin.clone()));
+            map.insert("arshy".into(), arshy_entry);
+            if changed {
+                if let Some(parent) = path.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::write(path, serde_json::to_string_pretty(&data)?)?;
+                println!("  \u{2713} MCP server registered in {}", path.display());
+            } else {
+                println!("  \u{2713} MCP server already configured in {}", path.display());
+            }
+        }
+    } else {
+        // JSON root is not an object (e.g., null) — overwrite with a fresh config
+        data = serde_json::json!({
+            "mcpServers": {
+                "arshy": arshy_entry
+            }
+        });
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(path, serde_json::to_string_pretty(&data)?)?;
+        println!("  \u{2713} MCP server registered in {}", path.display());
+    }
+
     Ok(())
 }
 
@@ -390,6 +466,23 @@ fn uninstall() -> Result<()> {
         }
         std::fs::write(&claude_json_path, serde_json::to_string_pretty(&data)?)?;
         println!("Removed arshy from {}", claude_json_path.display());
+    }
+
+    // Remove from ~/.cursor/mcp.json (Cursor IDE)
+    let cursor_mcp_path = home.join(".cursor").join("mcp.json");
+    if cursor_mcp_path.exists() {
+        let content = std::fs::read_to_string(&cursor_mcp_path)?;
+        let mut data: serde_json::Value =
+            serde_json::from_str(&content).unwrap_or(serde_json::json!({}));
+        if let Some(obj) = data.as_object_mut() {
+            if let Some(servers) = obj.get_mut("mcpServers") {
+                if let Some(map) = servers.as_object_mut() {
+                    map.remove("arshy");
+                }
+            }
+        }
+        std::fs::write(&cursor_mcp_path, serde_json::to_string_pretty(&data)?)?;
+        println!("Removed arshy from {}", cursor_mcp_path.display());
     }
 
     // Remove permissions from ~/.claude/settings.json
@@ -926,7 +1019,7 @@ fn doctor(config_path: Option<PathBuf>, log_level: Option<String>) -> Result<()>
         };
     }
 
-    println!("arshy doctor — Claude Code integration diagnostics\n");
+    println!("arshy doctor — IDE integration diagnostics\n");
 
     // ── 1. Binary checks ──────────────────────────────────────────────────
     println!("1. Binaries");
@@ -953,14 +1046,20 @@ fn doctor(config_path: Option<PathBuf>, log_level: Option<String>) -> Result<()>
     }
 
     // ── 3. MCP server config ──────────────────────────────────────────────
-    println!("\n3. MCP server (~/.claude.json)");
+    println!("\n3. MCP server config");
     let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("~"));
     let claude_dir = home.join(".claude");
     let claude_json_path = home.join(".claude.json");
     let mcp_ok = check_claude_json_mcp(&claude_json_path);
-    check!("arshy entry in ~/.claude.json", mcp_ok, "run: arshy install");
+    check!("arshy entry in ~/.claude.json (Claude Code)", mcp_ok, "run: arshy install");
     if !mcp_ok {
         hint!("The MCP server must be registered for Claude Code to see arshy tools.");
+    }
+    let cursor_mcp_path = home.join(".cursor").join("mcp.json");
+    let cursor_ok = check_claude_json_mcp(&cursor_mcp_path);
+    check!("arshy entry in ~/.cursor/mcp.json (Cursor)", cursor_ok, "run: arshy install");
+    if !cursor_ok {
+        hint!("Run arshy install to register with Cursor IDE.");
     }
 
     // ── 4. Permissions ────────────────────────────────────────────────────
@@ -986,11 +1085,28 @@ fn doctor(config_path: Option<PathBuf>, log_level: Option<String>) -> Result<()>
         }
     }
 
-    // ── 5. Summary ────────────────────────────────────────────────────────
+    // ── 5. Filesystem access (macOS TCC) ───────────────────────────────
+    println!("\n5. Filesystem access");
+    let restricted = probe_common_tcc_dirs();
+    if restricted.is_empty() {
+        println!("  ✓ all common directories accessible");
+        ok += 1;
+    } else {
+        for dir in &restricted {
+            println!("  ✗ {} — restricted by macOS TCC", dir.display());
+            fail += 1;
+        }
+        hint!("arshy auto-creates /tmp symlinks so commands still work, but some");
+        hint!("tools may see /tmp paths instead of the real project directory.");
+        hint!("To fix permanently: System Settings → Privacy & Security →");
+        hint!("Full Disk Access → add your terminal app (Terminal.app / iTerm2 / etc.)");
+    }
+
+    // ── 6. Summary ────────────────────────────────────────────────────────
     println!("\n{}", "─".repeat(50));
     println!("  {} passed, 0 warnings, {} failed", ok, fail);
     if fail == 0 {
-        println!("\n  🎉 Everything looks good! Restart Claude Code to activate arshy.");
+        println!("\n  Everything looks good! Restart your IDE to activate arshy.");
     } else {
         println!("\n  Run `arshy install` to fix most issues automatically.");
     }
@@ -1007,6 +1123,29 @@ fn which_arshy_path() -> Option<PathBuf> {
         }
     }
     None
+}
+
+/// Probe common macOS TCC-restricted directories for accessibility.
+/// Returns a list of directories that are likely restricted by TCC.
+fn probe_common_tcc_dirs() -> Vec<PathBuf> {
+    let home = match dirs::home_dir() {
+        Some(h) => h,
+        None => return vec![],
+    };
+    let candidates = [
+        home.join("Documents"),
+        home.join("Desktop"),
+        home.join("Downloads"),
+    ];
+    candidates
+        .into_iter()
+        .filter(|dir| {
+            // Only flag directories that actually exist AND are likely TCC-restricted.
+            // TCC restricts child processes (PTY) from accessing these top-level dirs,
+            // even when the parent process (daemon) can write there.
+            dir.exists()
+        })
+        .collect()
 }
 
 fn check_claude_json_mcp(path: &std::path::Path) -> bool {
@@ -1164,5 +1303,38 @@ fn run_benchmark() -> Result<()> {
 
     render::render_benchmark(&result);
 
+    Ok(())
+}
+
+async fn analyze(
+    config_path: Option<PathBuf>,
+    log_level: Option<String>,
+    format: &str,
+) -> Result<()> {
+    let mut daemon = connect(config_path, log_level).await?;
+    let request = Request {
+        jsonrpc: "2.0".into(),
+        id: 1,
+        method: METHOD_ANALYZE.into(),
+        params: serde_json::json!({}),
+    };
+    let response = ipc::send_request(&mut daemon, &request).await?;
+
+    match format {
+        "json" => {
+            println!("{}", serde_json::to_string_pretty(&response.result)?);
+        }
+        "pretty" => {
+            render::render_analyze(&response.result);
+        }
+        _ => {
+            // Default (auto): pretty for interactive, json for non-interactive
+            if atty_is_available() {
+                render::render_analyze(&response.result);
+            } else {
+                println!("{}", serde_json::to_string_pretty(&response.result)?);
+            }
+        }
+    }
     Ok(())
 }
