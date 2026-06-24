@@ -1,5 +1,6 @@
 //! JSONL file-based storage — tasks, events, tool versions.
 
+pub(crate) mod dogfood;
 mod events;
 pub(crate) mod prune;
 mod schema;

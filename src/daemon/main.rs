@@ -3,6 +3,7 @@
 mod analytics;
 mod bus;
 mod context;
+mod dogfood;
 mod exec;
 mod ipc_handler;
 mod lifecycle;
@@ -150,6 +151,15 @@ async fn main() -> Result<()> {
 
     // ── Parser hot-reload watcher ─────────────────────────────────────────
     let _watcher = parser_engine.start_watcher()?;
+
+    // ── Dogfood watchdog ────────────────────────────────────────────────
+    if cfg.dogfood.enabled {
+        let watchdog = dogfood::DogfoodWatchdog::new(cfg.dogfood.interval_minutes, store.clone());
+        let _dogfood_handle = watchdog.spawn();
+        tracing::info!("dogfood watchdog enabled (interval={}min)", cfg.dogfood.interval_minutes);
+    } else {
+        tracing::debug!("dogfood watchdog disabled");
+    }
 
     // ── Shutdown channel ───────────────────────────────────────────────────
     let (shutdown_tx, shutdown_rx) = watch::channel(false);

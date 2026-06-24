@@ -128,6 +128,7 @@ pub struct Config {
     pub mcp: McpConfig,
     pub telemetry: TelemetryConfig,
     pub security: SecurityConfig,
+    pub dogfood: DogfoodConfig,
 }
 
 fn default_config_version() -> u32 {
@@ -146,6 +147,7 @@ pub struct PartialConfig {
     pub mcp: Option<PartialMcpConfig>,
     pub telemetry: Option<PartialTelemetryConfig>,
     pub security: Option<PartialSecurityConfig>,
+    pub dogfood: Option<PartialDogfoodConfig>,
 }
 
 macro_rules! partial_section {
@@ -210,6 +212,11 @@ partial_section!(PartialSecurityConfig {
     access_level: String,
     audit_log: String,
     rate_limit: RateLimitConfig,
+});
+
+partial_section!(PartialDogfoodConfig {
+    enabled: bool,
+    interval_minutes: u32,
 });
 
 // ── Full config sections ─────────────────────────────────────────────────────
@@ -326,6 +333,29 @@ impl Default for ParserConfig {
             default_priority: d_50(),
             coverage_warning_threshold: d_03(),
             version_cache_ttl_hours: d_24(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DogfoodConfig {
+    /// Whether continuous dogfooding is enabled
+    #[serde(default = "d_true")]
+    pub enabled: bool,
+    /// How often to run dogfood checks (minutes)
+    #[serde(default = "default_dogfood_interval")]
+    pub interval_minutes: u32,
+}
+
+fn default_dogfood_interval() -> u32 {
+    30
+}
+
+impl Default for DogfoodConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            interval_minutes: default_dogfood_interval(),
         }
     }
 }
