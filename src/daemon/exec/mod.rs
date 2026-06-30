@@ -1175,13 +1175,43 @@ async fn run_background(mut t: BackgroundTask) -> Result<()> {
                 }
             }
             // Flush remaining deduplicated and context-merged events
+            // dedup → ctx_merger → pair_merger (full pipeline)
             if let Some(final_event) = dedup.finish() {
-                if let Some(merged_event) = ctx_merger.feed(final_event) {
+                if let Some(ctx_merged) = ctx_merger.feed(final_event) {
+                    if let Some(merged_event) = pair_merger.feed(ctx_merged) {
+                        seq += 1;
+                        let mut event = merged_event;
+                        event.seq = seq;
+                        if let Err(e) = t.store.insert_event(&t.task_id, seq, &event) {
+                            tracing::error!(
+                                "task {} failed to store dedup event: {}",
+                                t.task_id,
+                                e
+                            );
+                        }
+                        t.event_bus.publish(BusEvent {
+                            connection_id: 0,
+                            kind: BusEventKind::Diagnostic {
+                                task_id: t.task_id.clone(),
+                                event,
+                            },
+                        });
+                    }
+                }
+            }
+            // Flush any remaining buffered event in the context merger
+            // ctx_merger → pair_merger (partial pipeline)
+            if let Some(final_event) = ctx_merger.finish() {
+                if let Some(merged_event) = pair_merger.feed(final_event) {
                     seq += 1;
                     let mut event = merged_event;
                     event.seq = seq;
                     if let Err(e) = t.store.insert_event(&t.task_id, seq, &event) {
-                        tracing::error!("task {} failed to store dedup event: {}", t.task_id, e);
+                        tracing::error!(
+                            "task {} failed to store merger event: {}",
+                            t.task_id,
+                            e
+                        );
                     }
                     t.event_bus.publish(BusEvent {
                         connection_id: 0,
@@ -1192,29 +1222,17 @@ async fn run_background(mut t: BackgroundTask) -> Result<()> {
                     });
                 }
             }
-            // Flush any remaining buffered event in the context merger
-            if let Some(final_event) = ctx_merger.finish() {
-                seq += 1;
-                let mut event = final_event;
-                event.seq = seq;
-                if let Err(e) = t.store.insert_event(&t.task_id, seq, &event) {
-                    tracing::error!("task {} failed to store merger event: {}", t.task_id, e);
-                }
-                t.event_bus.publish(BusEvent {
-                    connection_id: 0,
-                    kind: BusEventKind::Diagnostic {
-                        task_id: t.task_id.clone(),
-                        event,
-                    },
-                });
-            }
             // Flush any remaining buffered event in the pair merger
             if let Some(final_event) = pair_merger.finish() {
                 seq += 1;
                 let mut event = final_event;
                 event.seq = seq;
                 if let Err(e) = t.store.insert_event(&t.task_id, seq, &event) {
-                    tracing::error!("task {} failed to store pair merger event: {}", t.task_id, e);
+                    tracing::error!(
+                        "task {} failed to store pair merger event: {}",
+                        t.task_id,
+                        e
+                    );
                 }
                 t.event_bus.publish(BusEvent {
                     connection_id: 0,
