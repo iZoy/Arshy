@@ -1,15 +1,12 @@
-use arshy_lib::ipc::{Task, TaskStatus};
-use arshy_lib::Result;
+use crate::ipc::{Task, TaskStatus};
+use crate::Result;
 
 impl super::Store {
     /// Insert a new task record.
     pub fn insert_task(&self, task: &Task) -> Result<()> {
         let mut tasks = self.lock();
         if tasks.contains_key(&task.task_id) {
-            return Err(arshy_lib::ArshyError::Other(format!(
-                "duplicate task_id: {}",
-                task.task_id
-            )));
+            return Err(crate::ArshyError::Other(format!("duplicate task_id: {}", task.task_id)));
         }
         let record = super::TaskRecord {
             task: task.clone(),
@@ -120,6 +117,17 @@ impl super::Store {
         let mut tasks = self.lock();
         if let Some(record) = tasks.get_mut(task_id) {
             record.metrics.raw_output_bytes = bytes;
+        }
+        drop(tasks);
+        self.mark_dirty();
+        Ok(())
+    }
+
+    /// Increment the pairs_merged metric on a task record.
+    pub fn update_task_pairs_merged(&self, task_id: &str, count: u64) -> Result<()> {
+        let mut tasks = self.lock();
+        if let Some(record) = tasks.get_mut(task_id) {
+            record.metrics.pairs_merged += count;
         }
         drop(tasks);
         self.mark_dirty();

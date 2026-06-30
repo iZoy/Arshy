@@ -351,6 +351,12 @@ pub struct RustcContextMerger {
     merged_count: u64,
 }
 
+impl Default for RustcContextMerger {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RustcContextMerger {
     pub fn new() -> Self {
         Self { pending: None, context_lines: Vec::new(), merged_count: 0 }

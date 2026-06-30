@@ -9,15 +9,16 @@
 pub mod process;
 pub mod pty;
 
-use arshy_lib::ipc::{Task, TaskStatus};
-use arshy_lib::ArshyError;
-use arshy_lib::Result;
+use crate::ipc::{Task, TaskStatus};
+use crate::ArshyError;
+use crate::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{oneshot, Mutex as TokioMutex};
 
 use super::bus::{BusEvent, BusEventKind, EventBus};
 use super::context;
+use super::parser::pair_merger::GenericPairMerger;
 
 // ── CWD Accessibility & Symlink Fallback ───────────────────────────────
 
@@ -42,11 +43,8 @@ fn is_tcc_restricted(path: &std::path::Path) -> bool {
         let Ok(relative) = path.strip_prefix(&home) else {
             return false;
         };
-        let top_dir = relative
-            .components()
-            .next()
-            .and_then(|c| c.as_os_str().to_str())
-            .unwrap_or("");
+        let top_dir =
+            relative.components().next().and_then(|c| c.as_os_str().to_str()).unwrap_or("");
         matches!(top_dir, "Documents" | "Desktop" | "Downloads")
     }
 }
@@ -105,10 +103,7 @@ fn prepare_cwd(
 
     // Inject ARSHY_CWD so the command can find the real project directory
     let env_map = env.get_or_insert_with(HashMap::new);
-    env_map.insert(
-        "ARSHY_CWD".to_string(),
-        real_cwd.to_string_lossy().to_string(),
-    );
+    env_map.insert("ARSHY_CWD".to_string(), real_cwd.to_string_lossy().to_string());
 
     tracing::info!("cwd fallback: {:?} -> {:?}", real_cwd, symlink);
     (Some(symlink.clone()), Some(symlink))
@@ -137,7 +132,7 @@ pub fn enrich_events(
 ) -> Vec<serde_json::Value> {
     // Step 1: Context enrichment on error/warning events
     let mut enricher = super::context::ContextEnricher::new(3);
-    let mut task_events: Vec<arshy_lib::ipc::TaskEvent> =
+    let mut task_events: Vec<crate::ipc::TaskEvent> =
         events.iter().filter_map(|e| serde_json::from_value(e.clone()).ok()).collect();
     enricher.enrich(&mut task_events, cwd);
     let mut enriched_values: Vec<serde_json::Value> =
@@ -378,7 +373,7 @@ impl Executor {
         self
     }
 
-    pub fn with_security(mut self, config: &arshy_lib::config::SecurityConfig) -> Self {
+    pub fn with_security(mut self, config: &crate::config::SecurityConfig) -> Self {
         self.filter = CommandFilter::from_config(config).unwrap_or_else(|e| {
             tracing::error!("security config: {} — using permissive fallback", e);
             CommandFilter::permissive()
@@ -504,9 +499,8 @@ impl Executor {
         if is_auto && is_short && !has_hint {
             super::telemetry::record_task_created();
             let spawn_cwd_str = spawn_cwd.as_ref().map(|p| p.to_string_lossy().to_string());
-            let result = self
-                .run_short(command, spawn_cwd_str.as_deref(), timeout_ms, env_for_spawn)
-                .await;
+            let result =
+                self.run_short(command, spawn_cwd_str.as_deref(), timeout_ms, env_for_spawn).await;
             // Clean up symlink fallback if used
             if let Some(ref link) = symlink_to_cleanup {
                 let _ = std::fs::remove_file(link);
@@ -661,7 +655,7 @@ impl Executor {
                         // Query events from store — only used for summary/root_cause computation.
                         // The full events array is NOT sent to the agent; use arshy_query for detail.
                         let events_json: Option<Vec<serde_json::Value>> = {
-                            let params = arshy_lib::ipc::QueryParams {
+                            let params = crate::ipc::QueryParams {
                                 task_id: task_id.clone(),
                                 event_type: None,
                                 severity: None,
@@ -716,7 +710,7 @@ impl Executor {
                         // Persist enriched events back to store (context + hints)
                         // Uses merge strategy to preserve log events (Bug #1 fix)
                         if let Some(ref evts) = enriched_events {
-                            let task_events: Vec<arshy_lib::ipc::TaskEvent> = evts
+                            let task_events: Vec<crate::ipc::TaskEvent> = evts
                                 .iter()
                                 .filter_map(|e| serde_json::from_value(e.clone()).ok())
                                 .collect();
@@ -865,7 +859,7 @@ impl Executor {
 
     /// Tail the most recent events of a task.
     pub async fn tail(&self, task_id: &str, lines: usize, _format: &str) -> Result<Vec<String>> {
-        use arshy_lib::ipc::QueryParams;
+        use crate::ipc::QueryParams;
         let params = QueryParams {
             task_id: task_id.to_string(),
             event_type: None,
@@ -1038,7 +1032,16 @@ async fn run_background(mut t: BackgroundTask) -> Result<()> {
 
     // 3-way select: output reading, timeout, or kill signal
     // After this select, handle.wait() is called to get the exit code.
-    let (timed_out, killed, mut seq, error_count, warning_count, raw_output, dedup_collapsed) = tokio::select! {
+    let (
+        timed_out,
+        killed,
+        mut seq,
+        error_count,
+        warning_count,
+        raw_output,
+        dedup_collapsed,
+        pairs_merged,
+    ) = tokio::select! {
         result = async {
             let mut seq: u64 = 0;
             let mut total_bytes: u64 = 0;
@@ -1047,6 +1050,7 @@ async fn run_background(mut t: BackgroundTask) -> Result<()> {
             let mut full_output = String::new();
             let mut dedup = Deduplicator::new();
             let mut ctx_merger = RustcContextMerger::new();
+            let mut pair_merger = GenericPairMerger::new();
             while let Some((source, line)) = handle.output_rx.recv().await {
                 full_output.push_str(&line);
                 full_output.push('\n');
@@ -1054,7 +1058,7 @@ async fn run_background(mut t: BackgroundTask) -> Result<()> {
                 if total_bytes > max_bytes {
                     tracing::warn!("task {} output exceeded {} bytes, truncating", t.task_id, max_bytes);
                     // Emit a system warning event about truncation
-                    let truncation_event = arshy_lib::ipc::TaskEvent {
+                    let truncation_event = crate::ipc::TaskEvent {
                         seq: 0,
                         event_type: "system".into(),
                         severity: Some("warning".into()),
@@ -1108,61 +1112,64 @@ async fn run_background(mut t: BackgroundTask) -> Result<()> {
                     if let Some(deduped) = dedup.feed(event) {
                         // Feed through context merger: absorbs rustc context lines
                         // into the preceding diagnostic event
-                        if let Some(mut event) = ctx_merger.feed(deduped) {
-                            seq += 1;
-                            event.seq = seq;
+                        if let Some(ctx_merged) = ctx_merger.feed(deduped) {
+                            // Feed through pair merger: absorbs diagnostic+location pairs
+                            if let Some(mut event) = pair_merger.feed(ctx_merged) {
+                                seq += 1;
+                                event.seq = seq;
 
-                            if source == "stderr" {
-                                match event.severity.as_deref() {
-                                    Some("info") => {
-                                        if super::parser::stderr_looks_like_error(&line) {
+                                if source == "stderr" {
+                                    match event.severity.as_deref() {
+                                        Some("info") => {
+                                            if super::parser::stderr_looks_like_error(&line) {
+                                                event.severity = Some("error".into());
+                                            } else {
+                                                event.severity = Some("warning".into());
+                                            }
+                                        }
+                                        Some("warning")
+                                            if super::parser::stderr_looks_like_error(&line) =>
+                                        {
                                             event.severity = Some("error".into());
-                                        } else {
-                                            event.severity = Some("warning".into());
+                                        }
+                                        _ => {}
+                                    }
+                                }
+
+                                if event.severity.as_deref() == Some("error") {
+                                    error_count += 1;
+                                }
+                                if event.severity.as_deref() == Some("warning") {
+                                    warning_count += 1;
+                                }
+
+                                // Extract error context (source file +/- 3 lines) for events with location
+                                if let Some(ref loc) = event.location {
+                                    if loc.line > 0 && !loc.file.is_empty() {
+                                        if let Some(ctx) =
+                                            context::extract_context_async(&loc.file, loc.line).await
+                                        {
+                                            event.context = Some(ctx);
                                         }
                                     }
-                                    Some("warning")
-                                        if super::parser::stderr_looks_like_error(&line) =>
-                                    {
-                                        event.severity = Some("error".into());
-                                    }
-                                    _ => {}
                                 }
-                            }
 
-                            if event.severity.as_deref() == Some("error") {
-                                error_count += 1;
-                            }
-                            if event.severity.as_deref() == Some("warning") {
-                                warning_count += 1;
-                            }
-
-                            // Extract error context (source file +/- 3 lines) for events with location
-                            if let Some(ref loc) = event.location {
-                                if loc.line > 0 && !loc.file.is_empty() {
-                                    if let Some(ctx) =
-                                        context::extract_context_async(&loc.file, loc.line).await
-                                    {
-                                        event.context = Some(ctx);
-                                    }
+                                if let Err(e) = t.store.insert_event(&t.task_id, seq, &event) {
+                                    tracing::error!(
+                                        "task {} failed to store event: {}",
+                                        t.task_id,
+                                        e
+                                    );
                                 }
-                            }
 
-                            if let Err(e) = t.store.insert_event(&t.task_id, seq, &event) {
-                                tracing::error!(
-                                    "task {} failed to store event: {}",
-                                    t.task_id,
-                                    e
-                                );
+                                t.event_bus.publish(BusEvent {
+                                    connection_id: 0,
+                                    kind: BusEventKind::Diagnostic {
+                                        task_id: t.task_id.clone(),
+                                        event,
+                                    },
+                                });
                             }
-
-                            t.event_bus.publish(BusEvent {
-                                connection_id: 0,
-                                kind: BusEventKind::Diagnostic {
-                                    task_id: t.task_id.clone(),
-                                    event,
-                                },
-                            });
                         }
                     }
                 }
@@ -1201,6 +1208,22 @@ async fn run_background(mut t: BackgroundTask) -> Result<()> {
                     },
                 });
             }
+            // Flush any remaining buffered event in the pair merger
+            if let Some(final_event) = pair_merger.finish() {
+                seq += 1;
+                let mut event = final_event;
+                event.seq = seq;
+                if let Err(e) = t.store.insert_event(&t.task_id, seq, &event) {
+                    tracing::error!("task {} failed to store pair merger event: {}", t.task_id, e);
+                }
+                t.event_bus.publish(BusEvent {
+                    connection_id: 0,
+                    kind: BusEventKind::Diagnostic {
+                        task_id: t.task_id.clone(),
+                        event,
+                    },
+                });
+            }
             // Try JSON parsing on the full accumulated output
             if let Some(json_events) = super::parser::try_parse_json(&full_output) {
                 for mut event in json_events {
@@ -1219,15 +1242,15 @@ async fn run_background(mut t: BackgroundTask) -> Result<()> {
                 }
             }
             // Output channel closed — process exited, readers finished
-            (seq, error_count, warning_count, full_output, dedup.collapsed_count())
+            (seq, error_count, warning_count, full_output, dedup.collapsed_count(), pair_merger.merged_count())
         } => {
-            (false, false, result.0, result.1, result.2, result.3, result.4)
+            (false, false, result.0, result.1, result.2, result.3, result.4, result.5)
         }
         _ = tokio::time::sleep(timeout_dur) => {
             tracing::warn!("task {} timed out after {}ms", t.task_id, timeout_dur.as_millis());
             let _ = handle.force_kill();
             let _ = t.store.update_task(&t.task_id, &TaskStatus::Timeout, Some(-2), None);
-            (true, false, 0u64, 0u64, 0u64, String::new(), 0u64)
+            (true, false, 0u64, 0u64, 0u64, String::new(), 0u64, 0u64)
         }
         _ = t.kill_rx.recv() => {
             tracing::info!("task {} received kill signal, initiating graceful kill", t.task_id);
@@ -1239,7 +1262,7 @@ async fn run_background(mut t: BackgroundTask) -> Result<()> {
                 Ok(false) => tracing::warn!("task {} was force-killed", t.task_id),
                 Err(e) => tracing::error!("task {} kill error: {}", t.task_id, e),
             }
-            (false, true, 0u64, 0u64, 0u64, String::new(), 0u64)
+            (false, true, 0u64, 0u64, 0u64, String::new(), 0u64, 0u64)
         }
     };
 
@@ -1304,6 +1327,11 @@ async fn run_background(mut t: BackgroundTask) -> Result<()> {
             tracing::warn!("failed to store dedup counter for task {}: {}", t.task_id, e);
         }
     }
+    if pairs_merged > 0 {
+        if let Err(e) = t.store.update_task_pairs_merged(&t.task_id, pairs_merged) {
+            tracing::warn!("failed to store pairs_merged counter for task {}: {}", t.task_id, e);
+        }
+    }
 
     // Git correlation: count errors linked to recently changed files.
     // This runs for all tasks (sync and async), so correlated_errors is always tracked.
@@ -1312,7 +1340,7 @@ async fn run_background(mut t: BackgroundTask) -> Result<()> {
         let task_id = t.task_id.clone();
         let cwd = cwd_path.clone();
         tokio::task::spawn_blocking(move || {
-            let params = arshy_lib::ipc::QueryParams {
+            let params = crate::ipc::QueryParams {
                 task_id: task_id.clone(),
                 event_type: None,
                 severity: Some("error".into()),
@@ -1394,7 +1422,7 @@ async fn run_background(mut t: BackgroundTask) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arshy_lib::config::ParserConfig;
+    use crate::config::ParserConfig;
     use tempfile::TempDir;
 
     fn setup() -> (Arc<Store>, Arc<Engine>, EventBus, TempDir) {
@@ -1427,7 +1455,7 @@ mod tests {
         assert!(task.duration_ms.is_some());
 
         // Check events were stored
-        use arshy_lib::ipc::QueryParams;
+        use crate::ipc::QueryParams;
         let params = QueryParams {
             task_id: result.task_id.clone(),
             event_type: None,
@@ -1778,7 +1806,7 @@ mod tests {
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
         // Verify JSON events were stored
-        use arshy_lib::ipc::QueryParams;
+        use crate::ipc::QueryParams;
         let params = QueryParams {
             task_id: result.task_id.clone(),
             event_type: None,
@@ -1829,7 +1857,7 @@ mod tests {
     #[test]
     fn runtaskparams_default_parse_hint() {
         let json = r#"{"command":"ls"}"#;
-        let params: arshy_lib::ipc::RunTaskParams = serde_json::from_str(json).unwrap();
+        let params: crate::ipc::RunTaskParams = serde_json::from_str(json).unwrap();
         assert_eq!(params.command, "ls");
         assert_eq!(params.mode, "auto");
         assert!(params.parse_hint.is_none());
@@ -1838,7 +1866,7 @@ mod tests {
     #[test]
     fn runtaskparams_with_parse_hint() {
         let json = r#"{"command":"gh pr list --json","parse_hint":"json"}"#;
-        let params: arshy_lib::ipc::RunTaskParams = serde_json::from_str(json).unwrap();
+        let params: crate::ipc::RunTaskParams = serde_json::from_str(json).unwrap();
         assert_eq!(params.parse_hint.as_deref(), Some("json"));
     }
 
@@ -1857,7 +1885,7 @@ mod tests {
 
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
-        use arshy_lib::ipc::QueryParams;
+        use crate::ipc::QueryParams;
         let params = QueryParams {
             task_id: result.task_id.clone(),
             event_type: None,
@@ -1898,7 +1926,7 @@ mod tests {
 
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
-        use arshy_lib::ipc::QueryParams;
+        use crate::ipc::QueryParams;
         let params = QueryParams {
             task_id: result.task_id.clone(),
             event_type: None,
@@ -1933,7 +1961,7 @@ mod tests {
 
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
-        use arshy_lib::ipc::QueryParams;
+        use crate::ipc::QueryParams;
         let params = QueryParams {
             task_id: result.task_id.clone(),
             event_type: None,
@@ -1973,7 +2001,7 @@ mod tests {
 
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
-        use arshy_lib::ipc::QueryParams;
+        use crate::ipc::QueryParams;
         let params = QueryParams {
             task_id: result.task_id.clone(),
             event_type: None,
@@ -2026,7 +2054,7 @@ mod tests {
 
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
-        use arshy_lib::ipc::QueryParams;
+        use crate::ipc::QueryParams;
         let params = QueryParams {
             task_id: result.task_id.clone(),
             event_type: None,

@@ -1,13 +1,13 @@
 //! JSONL file-based storage — tasks, events, tool versions.
 
 mod events;
-pub(crate) mod prune;
+pub mod prune;
 mod schema;
 mod tasks;
 mod versions;
 
-use arshy_lib::ipc::TaskStatus;
-use arshy_lib::Result;
+use crate::ipc::TaskStatus;
+use crate::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Write as _;
@@ -27,6 +27,7 @@ pub struct TaskMetrics {
     pub codes_extracted: u64,
     pub contexts_enriched: u64,
     pub hints_attached: u64,
+    pub pairs_merged: u64,
 }
 
 /// Internal task record extending the public Task with storage-only fields.
@@ -34,7 +35,7 @@ pub struct TaskMetrics {
 #[serde(default)]
 struct TaskRecord {
     #[serde(flatten)]
-    task: arshy_lib::ipc::Task,
+    task: crate::ipc::Task,
     raw_output: Option<String>,
     dedup_collapsed: u64,
     correlated_errors: u64,
@@ -51,7 +52,7 @@ struct TaskRecord {
 impl Default for TaskRecord {
     fn default() -> Self {
         Self {
-            task: arshy_lib::ipc::Task {
+            task: crate::ipc::Task {
                 task_id: String::new(),
                 command: String::new(),
                 cwd: None,
@@ -223,7 +224,7 @@ impl Store {
                     for line in content.lines() {
                         if !line.trim().is_empty() {
                             let _: serde_json::Value = serde_json::from_str(line).map_err(|e| {
-                                arshy_lib::ArshyError::Other(format!(
+                                crate::ArshyError::Other(format!(
                                     "corrupt event in {}: {}",
                                     path.display(),
                                     e
@@ -316,7 +317,7 @@ fn load_versions_from_disk(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arshy_lib::ipc::{EventLocation, QueryParams, Task, TaskEvent, TaskStatus};
+    use crate::ipc::{EventLocation, QueryParams, Task, TaskEvent, TaskStatus};
     use tempfile::TempDir;
 
     /// Create a temporary store with initialized schema.

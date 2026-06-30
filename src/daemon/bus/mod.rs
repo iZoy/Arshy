@@ -27,7 +27,7 @@ pub enum BusEventKind {
     },
     Diagnostic {
         task_id: String,
-        event: arshy_lib::ipc::TaskEvent,
+        event: crate::ipc::TaskEvent,
     },
     #[allow(dead_code)] // future: graceful shutdown notification
     DaemonShutdown {
@@ -47,6 +47,12 @@ pub enum BusEventKind {
 #[derive(Debug, Clone)]
 pub struct EventBus {
     tx: broadcast::Sender<BusEvent>,
+}
+
+impl Default for EventBus {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl EventBus {
