@@ -90,16 +90,11 @@
     "type": "diagnostic"
   },
   {
+    "file": "variables.tf",
+    "line": 22,
     "message": "Value for undeclared variable",
     "severity": "warning",
     "type": "diagnostic"
-  },
-  {
-    "file": "variables.tf",
-    "line": 22,
-    "message": "  on variables.tf line 22:",
-    "severity": "info",
-    "type": "location"
   },
   {
     "message": "  22: variable \"extra\" {",

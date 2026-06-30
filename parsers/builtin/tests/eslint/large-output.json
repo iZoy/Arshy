@@ -1,13 +1,8 @@
 [
   {
+    "code": "@typescript-eslint/no-explicit-any",
     "file": "home/user/project/src/app.ts",
     "line": 0,
-    "message": "/home/user/project/src/app.ts",
-    "severity": "info",
-    "type": "location"
-  },
-  {
-    "code": "@typescript-eslint/no-explicit-any",
     "message": "Unexpected any, specify a different type",
     "severity": "error",
     "type": "diagnostic"
@@ -128,16 +123,11 @@
   },
   {
     "code": "no-trailing-spaces",
+    "file": "home/user/project/src/utils.ts",
+    "line": 0,
     "message": "This line has a trailing whitespace",
     "severity": "error",
     "type": "diagnostic"
-  },
-  {
-    "file": "home/user/project/src/utils.ts",
-    "line": 0,
-    "message": "/home/user/project/src/utils.ts",
-    "severity": "info",
-    "type": "location"
   },
   {
     "code": "import/first",
@@ -261,16 +251,11 @@
   },
   {
     "code": "no-trailing-spaces",
+    "file": "home/user/project/src/types.ts",
+    "line": 0,
     "message": "This line has a trailing whitespace",
     "severity": "error",
     "type": "diagnostic"
-  },
-  {
-    "file": "home/user/project/src/types.ts",
-    "line": 0,
-    "message": "/home/user/project/src/types.ts",
-    "severity": "info",
-    "type": "location"
   },
   {
     "code": "import/first",

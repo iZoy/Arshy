@@ -2,11 +2,6 @@
   {
     "file": "tests/test_login.py",
     "line": 15,
-    "message": "    File \"tests/test_login.py\", line 15",
-    "severity": "error",
-    "type": "location"
-  },
-  {
     "message": "AssertionError: expected 200, got 500",
     "severity": "error",
     "type": "diagnostic"
@@ -21,11 +16,6 @@
   {
     "file": "tests/test_api.py",
     "line": 42,
-    "message": "    File \"tests/test_api.py\", line 42",
-    "severity": "error",
-    "type": "location"
-  },
-  {
     "message": "KeyError: 'user_id'",
     "severity": "error",
     "type": "diagnostic"

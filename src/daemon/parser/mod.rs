@@ -738,6 +738,11 @@ mod harness_tests {
             all_events.extend(session.parse_line(line, 0, tool.as_ref()));
         }
 
+        // Apply pair merger so fixture expectations match exec-pipeline output.
+        let (merged_events, _pairs_merged) =
+            pair_merger::merge_diagnostic_location_pairs(all_events);
+        all_events = merged_events;
+
         // ── Bless mode: write actual output as expected JSON ──────────────
         if std::env::var("ARSHY_BLESS").is_ok() {
             let events_json: Vec<serde_json::Value> = all_events

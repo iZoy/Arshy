@@ -1,40 +1,25 @@
 [
   {
     "code": "E0308",
+    "file": "src/main.rs",
+    "line": 10,
     "message": "mismatched types",
     "severity": "error",
     "type": "diagnostic"
   },
   {
-    "file": "src/main.rs",
-    "line": 10,
-    "message": "  --> src/main.rs:10:5",
-    "severity": "info",
-    "type": "location"
-  },
-  {
+    "file": "src/lib.rs",
+    "line": 22,
     "message": "unused variable: `x`",
     "severity": "warning",
     "type": "diagnostic"
   },
   {
-    "file": "src/lib.rs",
-    "line": 22,
-    "message": "  --> src/lib.rs:22:9",
-    "severity": "info",
-    "type": "location"
-  },
-  {
     "code": "E0425",
+    "file": "src/handler.rs",
+    "line": 45,
     "message": "cannot find value `foo` in this scope",
     "severity": "error",
     "type": "diagnostic"
-  },
-  {
-    "file": "src/handler.rs",
-    "line": 45,
-    "message": "  --> src/handler.rs:45:12",
-    "severity": "info",
-    "type": "location"
   }
 ]

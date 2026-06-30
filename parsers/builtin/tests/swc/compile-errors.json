@@ -1,14 +1,9 @@
 [
   {
+    "file": "src/parser.ts",
+    "line": 25,
     "message": "unexpected token",
     "severity": "error",
     "type": "diagnostic"
-  },
-  {
-    "file": "src/parser.ts",
-    "line": 25,
-    "message": "  --> src/parser.ts:25:10",
-    "severity": "info",
-    "type": "location"
   }
 ]

@@ -21,13 +21,6 @@
     "type": "diagnostic"
   },
   {
-    "file": "file:///Users/dev/project/src/main.ts",
-    "line": 10,
-    "message": "   at file:///Users/dev/project/src/main.ts:10:5",
-    "severity": "info",
-    "type": "location"
-  },
-  {
     "file": "file:///Users/dev/project/src/utils.ts",
     "line": 42,
     "message": "   at file:///Users/dev/project/src/utils.ts:42:10",

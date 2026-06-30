@@ -12,16 +12,11 @@
     "type": "diagnostic"
   },
   {
+    "file": "tests/example.test.ts",
+    "line": 10,
     "message": "expected 1 to deeply equal 2",
     "severity": "error",
     "type": "diagnostic"
-  },
-  {
-    "file": "tests/example.test.ts",
-    "line": 10,
-    "message": " ❯ tests/example.test.ts:10:15",
-    "severity": "info",
-    "type": "location"
   },
   {
     "message": " ✓ tests/utils.test.ts > Utils > formats date (1ms)",

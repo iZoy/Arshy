@@ -1,15 +1,10 @@
 [
   {
+    "file": "src/app.ts",
+    "line": 5,
     "message": "Could not resolve \"missing-module\"",
     "severity": "error",
     "type": "diagnostic"
-  },
-  {
-    "file": "src/app.ts",
-    "line": 5,
-    "message": "    src/app.ts:5:1:",
-    "severity": "info",
-    "type": "location"
   },
   {
     "message": "      5 │ import { foo } from \"missing-module\";",

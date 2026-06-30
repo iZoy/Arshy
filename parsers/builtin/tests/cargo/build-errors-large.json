@@ -1,16 +1,11 @@
 [
   {
     "code": "E0308",
+    "file": "src/models/user.rs",
+    "line": 15,
     "message": "mismatched types",
     "severity": "error",
     "type": "diagnostic"
-  },
-  {
-    "file": "src/models/user.rs",
-    "line": 15,
-    "message": "  --> src/models/user.rs:15:20",
-    "severity": "info",
-    "type": "location"
   },
   {
     "message": "   |",
@@ -44,16 +39,11 @@
   },
   {
     "code": "E0308",
+    "file": "src/models/user.rs",
+    "line": 22,
     "message": "mismatched types",
     "severity": "error",
     "type": "diagnostic"
-  },
-  {
-    "file": "src/models/user.rs",
-    "line": 22,
-    "message": "  --> src/models/user.rs:22:25",
-    "severity": "info",
-    "type": "location"
   },
   {
     "message": "   |",
@@ -72,16 +62,11 @@
   },
   {
     "code": "E0599",
+    "file": "src/handlers/auth.rs",
+    "line": 45,
     "message": "no method named `save` found for struct `User`",
     "severity": "error",
     "type": "diagnostic"
-  },
-  {
-    "file": "src/handlers/auth.rs",
-    "line": 45,
-    "message": "  --> src/handlers/auth.rs:45:10",
-    "severity": "info",
-    "type": "location"
   },
   {
     "message": "   |",
@@ -100,16 +85,11 @@
   },
   {
     "code": "E0277",
+    "file": "src/handlers/auth.rs",
+    "line": 50,
     "message": "the trait bound `DatabasePool: sqlx::Executor` is not satisfied",
     "severity": "error",
     "type": "diagnostic"
-  },
-  {
-    "file": "src/handlers/auth.rs",
-    "line": 50,
-    "message": "  --> src/handlers/auth.rs:50:20",
-    "severity": "info",
-    "type": "location"
   },
   {
     "message": "   |",
@@ -128,16 +108,11 @@
   },
   {
     "code": "E0308",
+    "file": "src/handlers/auth.rs",
+    "line": 65,
     "message": "mismatched types",
     "severity": "error",
     "type": "diagnostic"
-  },
-  {
-    "file": "src/handlers/auth.rs",
-    "line": 65,
-    "message": "  --> src/handlers/auth.rs:65:15",
-    "severity": "info",
-    "type": "location"
   },
   {
     "message": "   |",
@@ -156,16 +131,11 @@
   },
   {
     "code": "E0308",
+    "file": "src/models/post.rs",
+    "line": 12,
     "message": "mismatched types",
     "severity": "error",
     "type": "diagnostic"
-  },
-  {
-    "file": "src/models/post.rs",
-    "line": 12,
-    "message": "  --> src/models/post.rs:12:18",
-    "severity": "info",
-    "type": "location"
   },
   {
     "message": "   |",
@@ -184,16 +154,11 @@
   },
   {
     "code": "E0308",
+    "file": "src/models/post.rs",
+    "line": 18,
     "message": "mismatched types",
     "severity": "error",
     "type": "diagnostic"
-  },
-  {
-    "file": "src/models/post.rs",
-    "line": 18,
-    "message": "  --> src/models/post.rs:18:22",
-    "severity": "info",
-    "type": "location"
   },
   {
     "message": "   |",
@@ -212,16 +177,11 @@
   },
   {
     "code": "E0599",
+    "file": "src/handlers/posts.rs",
+    "line": 30,
     "message": "no method named `publish` found for struct `Post`",
     "severity": "error",
     "type": "diagnostic"
-  },
-  {
-    "file": "src/handlers/posts.rs",
-    "line": 30,
-    "message": "  --> src/handlers/posts.rs:30:10",
-    "severity": "info",
-    "type": "location"
   },
   {
     "message": "   |",
@@ -240,16 +200,11 @@
   },
   {
     "code": "E0277",
+    "file": "src/handlers/posts.rs",
+    "line": 35,
     "message": "`?` couldn't convert the error type",
     "severity": "error",
     "type": "diagnostic"
-  },
-  {
-    "file": "src/handlers/posts.rs",
-    "line": 35,
-    "message": "  --> src/handlers/posts.rs:35:50",
-    "severity": "info",
-    "type": "location"
   },
   {
     "message": "   |",
@@ -268,16 +223,11 @@
   },
   {
     "code": "E0308",
+    "file": "src/handlers/posts.rs",
+    "line": 50,
     "message": "mismatched types",
     "severity": "error",
     "type": "diagnostic"
-  },
-  {
-    "file": "src/handlers/posts.rs",
-    "line": 50,
-    "message": "  --> src/handlers/posts.rs:50:22",
-    "severity": "info",
-    "type": "location"
   },
   {
     "message": "   |",
@@ -296,16 +246,11 @@
   },
   {
     "code": "E0599",
+    "file": "src/handlers/posts.rs",
+    "line": 60,
     "message": "no method named `delete` found for struct `Post`",
     "severity": "error",
     "type": "diagnostic"
-  },
-  {
-    "file": "src/handlers/posts.rs",
-    "line": 60,
-    "message": "  --> src/handlers/posts.rs:60:10",
-    "severity": "info",
-    "type": "location"
   },
   {
     "message": "   |",
@@ -324,16 +269,11 @@
   },
   {
     "code": "E0277",
+    "file": "src/middleware/validation.rs",
+    "line": 20,
     "message": "the trait bound `AppError: From<ValidationError>` is not satisfied",
     "severity": "error",
     "type": "diagnostic"
-  },
-  {
-    "file": "src/middleware/validation.rs",
-    "line": 20,
-    "message": "  --> src/middleware/validation.rs:20:20",
-    "severity": "info",
-    "type": "location"
   },
   {
     "message": "   |",
@@ -352,16 +292,11 @@
   },
   {
     "code": "E0308",
+    "file": "src/middleware/validation.rs",
+    "line": 35,
     "message": "mismatched types",
     "severity": "error",
     "type": "diagnostic"
-  },
-  {
-    "file": "src/middleware/validation.rs",
-    "line": 35,
-    "message": "  --> src/middleware/validation.rs:35:25",
-    "severity": "info",
-    "type": "location"
   },
   {
     "message": "   |",
@@ -380,16 +315,11 @@
   },
   {
     "code": "E0599",
+    "file": "src/middleware/validation.rs",
+    "line": 45,
     "message": "no method named `check` found for struct `Validator`",
     "severity": "error",
     "type": "diagnostic"
-  },
-  {
-    "file": "src/middleware/validation.rs",
-    "line": 45,
-    "message": "  --> src/middleware/validation.rs:45:15",
-    "severity": "info",
-    "type": "location"
   },
   {
     "message": "   |",
@@ -408,16 +338,11 @@
   },
   {
     "code": "E0308",
+    "file": "src/config.rs",
+    "line": 10,
     "message": "mismatched types",
     "severity": "error",
     "type": "diagnostic"
-  },
-  {
-    "file": "src/config.rs",
-    "line": 10,
-    "message": "  --> src/config.rs:10:18",
-    "severity": "info",
-    "type": "location"
   },
   {
     "message": "   |",
@@ -436,16 +361,11 @@
   },
   {
     "code": "E0308",
+    "file": "src/config.rs",
+    "line": 15,
     "message": "mismatched types",
     "severity": "error",
     "type": "diagnostic"
-  },
-  {
-    "file": "src/config.rs",
-    "line": 15,
-    "message": "  --> src/config.rs:15:22",
-    "severity": "info",
-    "type": "location"
   },
   {
     "message": "   |",
@@ -464,16 +384,11 @@
   },
   {
     "code": "E0599",
+    "file": "src/main.rs",
+    "line": 25,
     "message": "no method named `connect` found for struct `DatabaseConfig`",
     "severity": "error",
     "type": "diagnostic"
-  },
-  {
-    "file": "src/main.rs",
-    "line": 25,
-    "message": "  --> src/main.rs:25:20",
-    "severity": "info",
-    "type": "location"
   },
   {
     "message": "   |",
@@ -491,16 +406,11 @@
     "type": "log"
   },
   {
+    "file": "src/models/user.rs",
+    "line": 3,
     "message": "unused import `std::collections::HashMap`",
     "severity": "warning",
     "type": "diagnostic"
-  },
-  {
-    "file": "src/models/user.rs",
-    "line": 3,
-    "message": "  --> src/models/user.rs:3:5",
-    "severity": "info",
-    "type": "location"
   },
   {
     "message": "   |",
@@ -518,16 +428,11 @@
     "type": "log"
   },
   {
+    "file": "src/handlers/auth.rs",
+    "line": 12,
     "message": "unused variable `debug`",
     "severity": "warning",
     "type": "diagnostic"
-  },
-  {
-    "file": "src/handlers/auth.rs",
-    "line": 12,
-    "message": "  --> src/handlers/auth.rs:12:9",
-    "severity": "info",
-    "type": "location"
   },
   {
     "message": "   |",
@@ -545,16 +450,11 @@
     "type": "log"
   },
   {
+    "file": "src/models/post.rs",
+    "line": 5,
     "message": "unused import `chrono::Utc`",
     "severity": "warning",
     "type": "diagnostic"
-  },
-  {
-    "file": "src/models/post.rs",
-    "line": 5,
-    "message": "  --> src/models/post.rs:5:5",
-    "severity": "info",
-    "type": "location"
   },
   {
     "message": "   |",
@@ -572,16 +472,11 @@
     "type": "log"
   },
   {
+    "file": "src/handlers/posts.rs",
+    "line": 20,
     "message": "variable does not need to be mutable",
     "severity": "warning",
     "type": "diagnostic"
-  },
-  {
-    "file": "src/handlers/posts.rs",
-    "line": 20,
-    "message": "  --> src/handlers/posts.rs:20:13",
-    "severity": "info",
-    "type": "location"
   },
   {
     "message": "   |",
