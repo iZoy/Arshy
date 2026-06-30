@@ -18,6 +18,7 @@ mod heuristic;
 pub mod hint;
 mod json;
 mod loader;
+pub mod pair_merger;
 mod redos;
 mod registry;
 pub mod rhai;
@@ -30,9 +31,9 @@ pub use toml::stderr_looks_like_error;
 pub use detect::*;
 pub use registry::*;
 
-use arshy_lib::config::ParserConfig;
-use arshy_lib::ipc::{EventContext, TaskEvent};
-use arshy_lib::Result;
+use crate::config::ParserConfig;
+use crate::ipc::{EventContext, TaskEvent};
+use crate::Result;
 use std::sync::{Arc, RwLock};
 
 /// Central parser engine — detects tools, loads parsers, dispatches lines.
@@ -84,7 +85,7 @@ impl Engine {
         let mut reg = self
             .registry
             .write()
-            .map_err(|_| arshy_lib::ArshyError::Other("registry lock poisoned".into()))?;
+            .map_err(|_| crate::ArshyError::Other("registry lock poisoned".into()))?;
         let audit = reg.diff(&new_registry);
         tracing::info!("parser reload: {}", audit);
         *reg = new_registry;
@@ -504,7 +505,7 @@ fn is_rustc_context_line(msg: &str) -> bool {
 #[cfg(test)]
 mod context_merger_tests {
     use super::*;
-    use arshy_lib::ipc::EventContext;
+    use crate::ipc::EventContext;
 
     fn make_log(message: &str, seq: u64) -> TaskEvent {
         TaskEvent {
@@ -526,7 +527,7 @@ mod context_merger_tests {
             severity: Some("error".into()),
             code: None,
             message: message.into(),
-            location: Some(arshy_lib::ipc::EventLocation {
+            location: Some(crate::ipc::EventLocation {
                 file: "src/main.rs".into(),
                 line: 10,
                 column: None,
@@ -627,7 +628,7 @@ mod context_merger_tests {
             severity: Some("error".into()),
             code: None,
             message: "mismatched types".into(),
-            location: Some(arshy_lib::ipc::EventLocation {
+            location: Some(crate::ipc::EventLocation {
                 file: "src/main.rs".into(),
                 line: 42,
                 column: None,
@@ -1123,7 +1124,7 @@ mod harness_tests {
 #[cfg(test)]
 mod benchmark {
     use super::*;
-    use arshy_lib::ipc::TaskEvent;
+    use crate::ipc::TaskEvent;
     use std::path::Path;
 
     /// Parser names matching the builtin set (must match `all_parsers_load` list).
