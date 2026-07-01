@@ -16,16 +16,16 @@
     "type": "diagnostic"
   },
   {
+    "message": "Found 3 errors.",
+    "severity": "error",
+    "type": "summary"
+  },
+  {
     "code": "TS2339",
     "file": "src/utils.ts",
     "line": 22,
     "message": "Property 'foo' does not exist on type 'Bar'.",
     "severity": "error",
     "type": "diagnostic"
-  },
-  {
-    "message": "Found 3 errors.",
-    "severity": "error",
-    "type": "summary"
   }
 ]

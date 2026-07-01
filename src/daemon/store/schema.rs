@@ -1,4 +1,4 @@
-use arshy_lib::Result;
+use crate::Result;
 
 impl super::Store {
     /// Ensure storage directories exist. Replaces the old CREATE TABLE statements.
@@ -17,8 +17,8 @@ impl super::Store {
     pub fn get_stats(
         &self,
         db_path: Option<&std::path::Path>,
-    ) -> Result<arshy_lib::ipc::StatsResponse> {
-        use arshy_lib::ipc::StatusCounts;
+    ) -> Result<crate::ipc::StatsResponse> {
+        use crate::ipc::StatusCounts;
 
         let tasks = self.lock().clone();
         let total_tasks = tasks.len() as u64;
@@ -42,11 +42,11 @@ impl super::Store {
 
         for record in tasks.values() {
             match &record.task.status {
-                arshy_lib::ipc::TaskStatus::Running => counts.running += 1,
-                arshy_lib::ipc::TaskStatus::Completed => counts.completed += 1,
-                arshy_lib::ipc::TaskStatus::Failed => counts.failed += 1,
-                arshy_lib::ipc::TaskStatus::Killed => counts.killed += 1,
-                arshy_lib::ipc::TaskStatus::Timeout => counts.timeout += 1,
+                crate::ipc::TaskStatus::Running => counts.running += 1,
+                crate::ipc::TaskStatus::Completed => counts.completed += 1,
+                crate::ipc::TaskStatus::Failed => counts.failed += 1,
+                crate::ipc::TaskStatus::Killed => counts.killed += 1,
+                crate::ipc::TaskStatus::Timeout => counts.timeout += 1,
             }
             if let Some(d) = record.task.duration_ms {
                 durations.push(d);
@@ -92,7 +92,7 @@ impl super::Store {
                     if line.is_empty() {
                         continue;
                     }
-                    if let Ok(event) = serde_json::from_str::<arshy_lib::ipc::TaskEvent>(line) {
+                    if let Ok(event) = serde_json::from_str::<crate::ipc::TaskEvent>(line) {
                         if event.event_type != "log" {
                             parser_coverage_non_log += 1;
                         }
@@ -163,16 +163,16 @@ impl super::Store {
         let per_parser_usage = if parser_usage.is_empty() {
             None
         } else {
-            let mut list: Vec<arshy_lib::ipc::ParserCount> = parser_usage
+            let mut list: Vec<crate::ipc::ParserCount> = parser_usage
                 .into_iter()
-                .map(|(parser, count)| arshy_lib::ipc::ParserCount { parser, count })
+                .map(|(parser, count)| crate::ipc::ParserCount { parser, count })
                 .collect();
             list.sort_by(|a, b| b.count.cmp(&a.count));
             list.truncate(10);
             Some(list)
         };
 
-        Ok(arshy_lib::ipc::StatsResponse {
+        Ok(crate::ipc::StatsResponse {
             total_tasks,
             by_status: counts,
             total_events,
@@ -243,7 +243,7 @@ fn percentile(sorted: &[u64], pct: u64) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arshy_lib::ipc::{Task, TaskEvent, TaskStatus};
+    use crate::ipc::{Task, TaskEvent, TaskStatus};
     use tempfile::TempDir;
 
     fn test_store() -> (super::super::Store, TempDir) {
@@ -340,7 +340,7 @@ mod tests {
             message: "mismatched types".into(),
             location: None,
             context: None,
-            hint: Some(arshy_lib::ipc::EventHint {
+            hint: Some(crate::ipc::EventHint {
                 cause: "Type mismatch".into(),
                 fix: Some("Use .into()".into()),
                 retry: None,

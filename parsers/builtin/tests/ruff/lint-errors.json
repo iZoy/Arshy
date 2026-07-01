@@ -32,14 +32,6 @@
     "type": "diagnostic"
   },
   {
-    "code": "I001",
-    "file": "src/handlers.py",
-    "line": 8,
-    "message": "Import block is un-sorted or un-formatted",
-    "severity": "warning",
-    "type": "diagnostic"
-  },
-  {
     "message": "Found 5 errors.",
     "severity": "error",
     "type": "summary"
@@ -48,5 +40,13 @@
     "message": "4 fixable",
     "severity": "info",
     "type": "summary"
+  },
+  {
+    "code": "I001",
+    "file": "src/handlers.py",
+    "line": 8,
+    "message": "Import block is un-sorted or un-formatted",
+    "severity": "warning",
+    "type": "diagnostic"
   }
 ]

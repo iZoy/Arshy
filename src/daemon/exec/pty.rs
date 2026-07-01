@@ -1,7 +1,7 @@
 //! PTY/process execution — spawns commands with piped stdout/stderr,
 //! streams output lines through channels for async consumption.
 
-use arshy_lib::Result;
+use crate::Result;
 use std::collections::HashMap;
 use std::sync::OnceLock;
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -34,9 +34,9 @@ impl ProcessHandle {
     /// Uses start_kill() which is non-blocking.
     pub fn force_kill(&mut self) -> Result<()> {
         if let Some(ref mut child) = self.child {
-            child.start_kill().map_err(|e| {
-                arshy_lib::ArshyError::Exec(format!("failed to kill process: {}", e))
-            })?;
+            child
+                .start_kill()
+                .map_err(|e| crate::ArshyError::Exec(format!("failed to kill process: {}", e)))?;
         }
         Ok(())
     }
@@ -105,10 +105,7 @@ pub fn user_shell_path() -> Option<&'static str> {
                 Ok(out) if out.status.success() => {
                     let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
                     if !path.is_empty() && path != "/usr/bin:/bin:/usr/sbin:/sbin" {
-                        tracing::info!(
-                            "enriched PATH from user shell ({} chars)",
-                            path.len()
-                        );
+                        tracing::info!("enriched PATH from user shell ({} chars)", path.len());
                         Some(path)
                     } else {
                         tracing::debug!("user shell PATH same as system — no enrichment needed");
@@ -164,6 +161,10 @@ pub async fn spawn_command(
         cmd.env("PATH", upath);
     }
 
+    // Force dumb terminal mode so tools (rustc, cargo, etc.) don't use ANSI escape
+    // codes or cursor movement that would hide output lines from the parser.
+    cmd.env("TERM", "dumb");
+
     if let Some(env_vars) = env {
         for (k, v) in env_vars {
             cmd.env(k, v);
@@ -175,10 +176,10 @@ pub async fn spawn_command(
 
     let mut child = cmd
         .spawn()
-        .map_err(|e| arshy_lib::ArshyError::Exec(format!("failed to spawn command: {}", e)))?;
+        .map_err(|e| crate::ArshyError::Exec(format!("failed to spawn command: {}", e)))?;
 
     let pid =
-        child.id().ok_or_else(|| arshy_lib::ArshyError::Exec("child process has no PID".into()))?;
+        child.id().ok_or_else(|| crate::ArshyError::Exec("child process has no PID".into()))?;
 
     let (tx, rx) = mpsc::channel(1024);
 

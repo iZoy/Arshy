@@ -21,13 +21,6 @@
     "type": "diagnostic"
   },
   {
-    "file": "file:///Users/dev/project/src/utils.ts",
-    "line": 42,
-    "message": "   at file:///Users/dev/project/src/utils.ts:42:10",
-    "severity": "info",
-    "type": "location"
-  },
-  {
     "message": "should add two numbers",
     "severity": "info",
     "type": "test_result"
@@ -46,5 +39,12 @@
     "message": "ok | 2 passed | 1 failed",
     "severity": "info",
     "type": "summary"
+  },
+  {
+    "file": "file:///Users/dev/project/src/utils.ts",
+    "line": 42,
+    "message": "   at file:///Users/dev/project/src/utils.ts:42:10",
+    "severity": "info",
+    "type": "location"
   }
 ]

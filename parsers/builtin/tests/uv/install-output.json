@@ -15,13 +15,13 @@
     "type": "diagnostic"
   },
   {
-    "message": "No solution found when resolving dependencies:",
-    "severity": "error",
-    "type": "diagnostic"
-  },
-  {
     "message": "  Because package-a requires package-b>=2.0 and package-b<2.0 is available, no solution found.",
     "severity": "info",
     "type": "log"
+  },
+  {
+    "message": "No solution found when resolving dependencies:",
+    "severity": "error",
+    "type": "diagnostic"
   }
 ]

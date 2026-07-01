@@ -378,14 +378,14 @@
     "type": "diagnostic"
   },
   {
+    "message": "✖ 63 problems (57 errors, 6 warnings)",
+    "severity": "error",
+    "type": "summary"
+  },
+  {
     "code": "no-trailing-spaces",
     "message": "This line has a trailing whitespace",
     "severity": "error",
     "type": "diagnostic"
-  },
-  {
-    "message": "✖ 63 problems (57 errors, 6 warnings)",
-    "severity": "error",
-    "type": "summary"
   }
 ]

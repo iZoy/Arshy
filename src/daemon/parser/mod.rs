@@ -381,6 +381,17 @@ impl RustcContextMerger {
         // Not a context line — flush whatever we have buffered.
         let flushed = self.flush_pending();
 
+        // Location events are handled by GenericPairMerger downstream.
+        // If we just flushed a pending event, return it and re-buffer the
+        // location so it comes out on the next feed()/finish() call.
+        if event.event_type == "location" {
+            if flushed.is_some() {
+                self.pending = Some(event);
+                return flushed;
+            }
+            return Some(event);
+        }
+
         // If the incoming event is a diagnostic or log that could receive context,
         // buffer it; otherwise emit it directly.
         if event.event_type == "diagnostic" || event.event_type == "log" {
@@ -497,9 +508,10 @@ fn is_rustc_context_line(msg: &str) -> bool {
         }
     }
 
-    // Pattern 4: Arrow markers — `  -->`, `  ^^^`, `  ---`
-    // Arrow: starts with `-->` after optional whitespace
-    if trimmed.starts_with("-->") {
+    // Pattern 4: Caret/dash markers — `  ^^^`, `  ---`
+    // Note: `-->` arrow markers are NOT absorbed here — they are parsed as
+    // location events by the TOML parser and merged by GenericPairMerger.
+    if trimmed.starts_with("^^^") || trimmed.starts_with("---") {
         return true;
     }
 
@@ -565,9 +577,9 @@ mod context_merger_tests {
         // Numbered source lines
         assert!(is_rustc_context_line("  2 |     let x: i32 = \"hello\";"));
         assert!(is_rustc_context_line("2 | let x = 1;"));
-        // Arrow markers
-        assert!(is_rustc_context_line("  --> src/main.rs:5:10"));
-        assert!(is_rustc_context_line("--> file.rs:1:1"));
+        // Arrow markers — NOT context lines (parsed as location events by TOML parser)
+        assert!(!is_rustc_context_line("  --> src/main.rs:5:10"));
+        assert!(!is_rustc_context_line("--> file.rs:1:1"));
         // Directive notes
         assert!(is_rustc_context_line("  = note: expected due to this"));
         assert!(is_rustc_context_line("  = help: consider using `to_string()`"));

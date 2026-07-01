@@ -5,11 +5,6 @@
     "type": "log"
   },
   {
-    "message": "upload failed: ./myfile.txt to s3://my-bucket/myfile.txt An error occurred (NoSuchBucket) when calling the PutObject operation: The specified bucket does not exist",
-    "severity": "error",
-    "type": "diagnostic"
-  },
-  {
     "message": "$ aws ec2 describe-instances --instance-ids i-1234567890abcdef0",
     "severity": "info",
     "type": "log"
@@ -36,10 +31,9 @@
     "type": "log"
   },
   {
-    "code": "node",
-    "message": "An error occurred (NoSuchBucket) when calling the ListObjectsV2 operation: The specified bucket does not exist",
+    "message": "upload failed: ./myfile.txt to s3://my-bucket/myfile.txt An error occurred (NoSuchBucket) when calling the PutObject operation: The specified bucket does not exist",
     "severity": "error",
-    "type": "crash"
+    "type": "diagnostic"
   },
   {
     "message": "$ aws cloudformation describe-stacks --stack-name my-stack",
@@ -55,5 +49,11 @@
     "message": "| arn:aws:cloudformation:us-east-1:123456789012:stack/my-stack/abc123 | CREATE_FAILED |",
     "severity": "error",
     "type": "log"
+  },
+  {
+    "code": "node",
+    "message": "An error occurred (NoSuchBucket) when calling the ListObjectsV2 operation: The specified bucket does not exist",
+    "severity": "error",
+    "type": "crash"
   }
 ]

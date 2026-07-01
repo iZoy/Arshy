@@ -5,11 +5,6 @@
     "type": "diagnostic"
   },
   {
-    "message": "Your local changes to the following files would be overwritten by merge:",
-    "severity": "error",
-    "type": "diagnostic"
-  },
-  {
     "message": "\tsrc/app.ts",
     "severity": "info",
     "type": "log"
@@ -23,5 +18,10 @@
     "message": "Aborting",
     "severity": "info",
     "type": "log"
+  },
+  {
+    "message": "Your local changes to the following files would be overwritten by merge:",
+    "severity": "error",
+    "type": "diagnostic"
   }
 ]
