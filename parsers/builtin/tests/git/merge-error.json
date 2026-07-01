@@ -5,14 +5,11 @@
     "type": "diagnostic"
   },
   {
-    "message": "\tsrc/app.ts",
-    "severity": "info",
-    "type": "log"
-  },
-  {
-    "message": "\tPlease commit your changes or stash them before you merge.",
-    "severity": "info",
-    "type": "log"
+    "file": "src/app.ts",
+    "line": 0,
+    "message": "error: Your local changes to the following files would be overwritten by merge:",
+    "severity": "error",
+    "type": "diagnostic"
   },
   {
     "message": "Aborting",
@@ -20,8 +17,10 @@
     "type": "log"
   },
   {
-    "message": "Your local changes to the following files would be overwritten by merge:",
+    "file": "Please commit your changes or stash them before you merge.",
+    "line": 0,
+    "message": "\tPlease commit your changes or stash them before you merge.",
     "severity": "error",
-    "type": "diagnostic"
+    "type": "location"
   }
 ]

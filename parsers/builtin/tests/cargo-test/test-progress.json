@@ -10,16 +10,22 @@
     "type": "summary"
   },
   {
+    "file": "handler::test_parse",
+    "line": 0,
     "message": "test handler::test_parse ... ok",
     "severity": "info",
     "type": "test_result"
   },
   {
+    "file": "handler::test_invalid",
+    "line": 0,
     "message": "test handler::test_invalid ... FAILED",
     "severity": "error",
     "type": "test_result"
   },
   {
+    "file": "handler::test_ignored",
+    "line": 0,
     "message": "test handler::test_ignored ... ignored",
     "severity": "info",
     "type": "test_result"
@@ -35,6 +41,8 @@
     "type": "summary"
   },
   {
+    "file": "main::test_cli",
+    "line": 0,
     "message": "test main::test_cli ... ok",
     "severity": "info",
     "type": "test_result"
@@ -55,6 +63,8 @@
     "type": "summary"
   },
   {
+    "file": "daemon::test_start",
+    "line": 0,
     "message": "test daemon::test_start ... ok",
     "severity": "info",
     "type": "test_result"
