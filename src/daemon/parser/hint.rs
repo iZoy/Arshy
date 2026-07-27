@@ -1,6 +1,6 @@
 //! Error code -> fix suggestion lookup database.
 
-use arshy_lib::ipc::{EventHint, RetryHint};
+use crate::ipc::{EventHint, RetryHint};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::LazyLock;

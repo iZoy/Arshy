@@ -21,7 +21,7 @@
 //! }
 //! ```
 
-use arshy_lib::ipc::{EventLocation, TaskEvent};
+use crate::ipc::{EventLocation, TaskEvent};
 use regex::Regex;
 
 /// A stateful parser for cross-line pattern matching.
@@ -37,7 +37,7 @@ pub enum StatefulParser {
     #[allow(private_interfaces)]
     Patterns { name: String, patterns: Vec<StatefulPattern>, state: std::sync::Mutex<ParserState> },
     #[allow(private_interfaces)]
-    Script { source: String, state: std::sync::Mutex<ScriptState> },
+    Script { ast: rhai::AST, state: std::sync::Mutex<ScriptState> },
 }
 
 /// A regex pattern with state-machine transitions.
@@ -118,8 +118,8 @@ struct ScriptState {
 /// the `Send` constraint is satisfied by storing only `SendValue` (not `Dynamic`).
 #[derive(Clone)]
 struct RhaiCtx {
-    events: std::rc::Rc<std::cell::RefCell<Vec<TaskEvent>>>,
-    values: std::rc::Rc<std::cell::RefCell<std::collections::HashMap<String, SendValue>>>,
+    events: std::sync::Arc<std::sync::Mutex<Vec<TaskEvent>>>,
+    values: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, SendValue>>>,
     seq: u64,
 }
 
@@ -134,13 +134,12 @@ impl StatefulParser {
     }
 
     /// Create with a rhai script (from `.rhai` file).
-    /// Validates syntax at creation time; runtime engine is created per-call.
+    /// Validates syntax and precompiles the script to an AST.
     pub fn with_script(script: &str) -> Result<Self, String> {
-        // Validate syntax with a temporary engine.
         let engine = rhai::Engine::new();
-        engine.compile(script).map_err(|e| format!("rhai compile error: {}", e))?;
+        let ast = engine.compile(script).map_err(|e| format!("rhai compile error: {}", e))?;
         Ok(Self::Script {
-            source: script.to_string(),
+            ast,
             state: std::sync::Mutex::new(ScriptState { values: std::collections::HashMap::new() }),
         })
     }
@@ -164,7 +163,7 @@ impl StatefulParser {
     pub fn feed_line(&self, line: &str, seq: u64) -> Vec<TaskEvent> {
         match self {
             Self::Patterns { patterns, state, .. } => feed_patterns(patterns, state, line, seq),
-            Self::Script { source, state, .. } => feed_script(source, state, line, seq),
+            Self::Script { ast, state, .. } => feed_script(ast, state, line, seq),
         }
     }
 
@@ -172,7 +171,7 @@ impl StatefulParser {
     pub fn on_complete(&self, exit_code: i32, seq: u64) -> Vec<TaskEvent> {
         match self {
             Self::Patterns { name, state, .. } => on_complete_patterns(name, state, exit_code, seq),
-            Self::Script { source, state, .. } => on_complete_script(source, state, exit_code, seq),
+            Self::Script { ast, state, .. } => on_complete_script(ast, state, exit_code, seq),
         }
     }
 
@@ -293,7 +292,7 @@ fn register_ctx_api(engine: &mut rhai::Engine) {
     engine.register_type::<RhaiCtx>();
 
     engine.register_fn("emit", |ctx: &mut RhaiCtx, typ: &str, sev: &str, msg: &str| {
-        let mut evts = ctx.events.borrow_mut();
+        let mut evts = ctx.events.lock().unwrap();
         let seq = ctx.seq + evts.len() as u64;
         evts.push(TaskEvent {
             seq,
@@ -310,7 +309,7 @@ fn register_ctx_api(engine: &mut rhai::Engine) {
     engine.register_fn(
         "emit",
         |ctx: &mut RhaiCtx, typ: &str, sev: &str, msg: &str, file: &str, line: i64| {
-            let mut evts = ctx.events.borrow_mut();
+            let mut evts = ctx.events.lock().unwrap();
             let seq = ctx.seq + evts.len() as u64;
             evts.push(TaskEvent {
                 seq,
@@ -330,33 +329,38 @@ fn register_ctx_api(engine: &mut rhai::Engine) {
     );
 
     engine.register_fn("set", |ctx: &mut RhaiCtx, key: &str, value: rhai::Dynamic| {
-        ctx.values.borrow_mut().insert(key.to_string(), SendValue::from_dynamic(&value));
+        ctx.values.lock().unwrap().insert(key.to_string(), SendValue::from_dynamic(&value));
     });
 
     engine.register_fn("get", |ctx: &mut RhaiCtx, key: &str| -> rhai::Dynamic {
-        ctx.values.borrow().get(key).cloned().map(|v| v.to_dynamic()).unwrap_or(rhai::Dynamic::UNIT)
+        ctx.values
+            .lock()
+            .unwrap()
+            .get(key)
+            .cloned()
+            .map(|v| v.to_dynamic())
+            .unwrap_or(rhai::Dynamic::UNIT)
     });
 
     engine.register_fn("has", |ctx: &mut RhaiCtx, key: &str| -> bool {
-        ctx.values.borrow().contains_key(key)
+        ctx.values.lock().unwrap().contains_key(key)
     });
 }
 
 fn feed_script(
-    source: &str,
+    ast: &rhai::AST,
     state: &std::sync::Mutex<ScriptState>,
     line: &str,
     seq: u64,
 ) -> Vec<TaskEvent> {
-    let events_rc: std::rc::Rc<std::cell::RefCell<Vec<TaskEvent>>> =
-        std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
-    let values_rc: std::rc::Rc<std::cell::RefCell<std::collections::HashMap<String, SendValue>>> =
-        std::rc::Rc::new(std::cell::RefCell::new(std::collections::HashMap::new()));
+    let events_rc = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let values_rc = std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
 
     {
         let st = state.lock().unwrap();
+        let mut vals = values_rc.lock().unwrap();
         for (k, v) in &st.values {
-            values_rc.borrow_mut().insert(k.clone(), v.clone());
+            vals.insert(k.clone(), v.clone());
         }
     }
 
@@ -365,46 +369,37 @@ fn feed_script(
     let mut engine = rhai::Engine::new();
     register_ctx_api(&mut engine);
 
-    let ast = match engine.compile(source) {
-        Ok(a) => a,
-        Err(e) => {
-            tracing::debug!("rhai compile error: {}", e);
-            return Vec::new();
-        }
-    };
-
     let mut scope = rhai::Scope::new();
     let line_owned = line.to_string();
-    let result: Result<(), _> = engine.call_fn(&mut scope, &ast, "on_line", (line_owned, ctx));
+    let result: Result<(), _> = engine.call_fn(&mut scope, ast, "on_line", (line_owned, ctx));
     if let Err(e) = result {
         tracing::debug!("rhai on_line error: {}", e);
     }
 
     {
         let mut st = state.lock().unwrap();
-        st.values = values_rc.borrow().clone();
+        st.values = values_rc.lock().unwrap().clone();
     }
 
-    std::rc::Rc::try_unwrap(events_rc)
-        .map(|c| c.into_inner())
-        .unwrap_or_else(|rc| rc.borrow().clone())
+    std::sync::Arc::try_unwrap(events_rc)
+        .map(|c| c.into_inner().unwrap())
+        .unwrap_or_else(|arc| arc.lock().unwrap().clone())
 }
 
 fn on_complete_script(
-    source: &str,
+    ast: &rhai::AST,
     state: &std::sync::Mutex<ScriptState>,
     exit_code: i32,
     seq: u64,
 ) -> Vec<TaskEvent> {
-    let events_rc: std::rc::Rc<std::cell::RefCell<Vec<TaskEvent>>> =
-        std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
-    let values_rc: std::rc::Rc<std::cell::RefCell<std::collections::HashMap<String, SendValue>>> =
-        std::rc::Rc::new(std::cell::RefCell::new(std::collections::HashMap::new()));
+    let events_rc = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let values_rc = std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
 
     {
         let st = state.lock().unwrap();
+        let mut vals = values_rc.lock().unwrap();
         for (k, v) in &st.values {
-            values_rc.borrow_mut().insert(k.clone(), v.clone());
+            vals.insert(k.clone(), v.clone());
         }
     }
 
@@ -413,29 +408,21 @@ fn on_complete_script(
     let mut engine = rhai::Engine::new();
     register_ctx_api(&mut engine);
 
-    let ast = match engine.compile(source) {
-        Ok(a) => a,
-        Err(e) => {
-            tracing::debug!("rhai compile error: {}", e);
-            return Vec::new();
-        }
-    };
-
     let mut scope = rhai::Scope::new();
     let result: Result<(), _> =
-        engine.call_fn(&mut scope, &ast, "on_complete", (exit_code as i64, ctx));
+        engine.call_fn(&mut scope, ast, "on_complete", (exit_code as i64, ctx));
     if let Err(e) = result {
         tracing::debug!("rhai on_complete error: {}", e);
     }
 
     {
         let mut st = state.lock().unwrap();
-        st.values = values_rc.borrow().clone();
+        st.values = values_rc.lock().unwrap().clone();
     }
 
-    std::rc::Rc::try_unwrap(events_rc)
-        .map(|c| c.into_inner())
-        .unwrap_or_else(|rc| rc.borrow().clone())
+    std::sync::Arc::try_unwrap(events_rc)
+        .map(|c| c.into_inner().unwrap())
+        .unwrap_or_else(|arc| arc.lock().unwrap().clone())
 }
 
 /// Built-in stateful patterns for cross-line tools.

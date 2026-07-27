@@ -670,7 +670,16 @@ async fn handle_tool_call(
     // The MCP content[] has the human-readable summary; these fields give machines
     // programmatic access without a second round-trip to arshy_query.
     if !is_short {
-        for key in &["task_id", "status", "exit_code", "duration_ms", "error_count", "warning_count", "root_cause", "project_context"] {
+        for key in &[
+            "task_id",
+            "status",
+            "exit_code",
+            "duration_ms",
+            "error_count",
+            "warning_count",
+            "root_cause",
+            "project_context",
+        ] {
             if let Some(val) = result.get(*key) {
                 result_obj[*key] = val.clone();
             }

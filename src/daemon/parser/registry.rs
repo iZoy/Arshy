@@ -6,8 +6,8 @@
 //!
 //! Same-name user parsers override builtins.
 
-use arshy_lib::config::ParserConfig;
-use arshy_lib::Result;
+use crate::config::ParserConfig;
+use crate::Result;
 
 /// ASCII case-insensitive prefix check. Avoids heap allocation from `to_lowercase()`.
 fn starts_with_ignore_ascii_case(haystack: &str, prefix: &str) -> bool {
@@ -99,7 +99,7 @@ impl ParserRegistry {
 
         // 2. Load user parsers from filesystem directories
         for dir in &config.dirs {
-            let expanded = arshy_lib::config::expand_path(dir);
+            let expanded = crate::config::expand_path(dir);
             if expanded.is_dir() {
                 if let Ok(files) = std::fs::read_dir(&expanded) {
                     for file_entry in files.flatten() {

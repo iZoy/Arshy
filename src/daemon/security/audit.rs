@@ -1,6 +1,6 @@
 //! Audit log — append-only JSON-lines log of all command executions.
 
-use arshy_lib::Result;
+use crate::Result;
 use serde::Serialize;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -43,8 +43,8 @@ impl AuditLog {
         let mut file = self
             .file
             .lock()
-            .map_err(|_| arshy_lib::ArshyError::Other("audit log mutex poisoned".into()))?;
-        file.write_all(line.as_bytes()).map_err(arshy_lib::ArshyError::Io)
+            .map_err(|_| crate::ArshyError::Other("audit log mutex poisoned".into()))?;
+        file.write_all(line.as_bytes()).map_err(crate::ArshyError::Io)
     }
 
     /// Path to the audit log file. Reserved for audit log tooling.

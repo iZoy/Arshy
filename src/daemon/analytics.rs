@@ -6,7 +6,7 @@
 use serde::Serialize;
 use std::collections::HashMap;
 
-use arshy_lib::ipc::TaskEvent;
+use crate::ipc::TaskEvent;
 
 // ── Report structs ───────────────────────────────────────────────────────────
 
@@ -82,12 +82,38 @@ impl<'a> Analytics<'a> {
     /// Generate a full `ImpactReport` from the store contents.
     ///
     /// This is read-only — the store is never modified.
-    pub fn generate_report(&self) -> arshy_lib::Result<ImpactReport> {
+    pub fn generate_report(&self) -> crate::Result<ImpactReport> {
         let tasks = self.store.list_tasks(None, 10_000)?;
         let events = self.load_all_events()?;
+        let stats = self.store.get_stats(None)?;
 
         let summary = self.compute_summary(&tasks, &events);
-        let token_efficiency = self.compute_token_efficiency(&tasks, &events);
+
+        let total_raw = stats.total_raw_output_bytes.unwrap_or(0);
+        let total_struct = stats.total_structured_events_bytes.unwrap_or(0);
+        let skipped = stats.total_agent_skipped_events.unwrap_or(0);
+        let visible = stats.total_agent_visible_events.unwrap_or(0);
+
+        let noise_pct = if skipped + visible > 0 {
+            skipped as f64 / (skipped + visible) as f64 * 100.0
+        } else {
+            0.0
+        };
+        let savings_pct = if total_raw > 0 {
+            let saved = total_raw.saturating_sub(total_struct);
+            saved as f64 / total_raw as f64 * 100.0
+        } else {
+            0.0
+        };
+
+        let token_efficiency = TokenEfficiency {
+            total_raw_output_bytes: total_raw,
+            total_structured_bytes: total_struct,
+            agent_skipped_events: skipped,
+            agent_visible_events: visible,
+            noise_pct,
+            estimated_token_savings_pct: savings_pct,
+        };
         let information_density = self.compute_information_density(&events);
         let command_patterns = self.compute_command_patterns(&tasks);
         let temporal = self.compute_temporal(&tasks, &summary);
@@ -105,7 +131,7 @@ impl<'a> Analytics<'a> {
     // ── Internal: data loading ──────────────────────────────────────────────
 
     /// Read every event JSONL file from the store's `events/` directory.
-    fn load_all_events(&self) -> arshy_lib::Result<Vec<TaskEvent>> {
+    fn load_all_events(&self) -> crate::Result<Vec<TaskEvent>> {
         let events_dir = self.store.store_dir().join("events");
         let mut all = Vec::new();
 
@@ -135,11 +161,7 @@ impl<'a> Analytics<'a> {
 
     // ── Internal: metric computation ────────────────────────────────────────
 
-    fn compute_summary(
-        &self,
-        tasks: &[arshy_lib::ipc::Task],
-        events: &[TaskEvent],
-    ) -> SummaryMetrics {
+    fn compute_summary(&self, tasks: &[crate::ipc::Task], events: &[TaskEvent]) -> SummaryMetrics {
         let total_tasks = tasks.len() as u64;
         let total_events = events.len() as u64;
         let total_errors =
@@ -154,52 +176,6 @@ impl<'a> Analytics<'a> {
             total_errors,
             date_range_days: span,
             avg_tasks_per_day,
-        }
-    }
-
-    fn compute_token_efficiency(
-        &self,
-        tasks: &[arshy_lib::ipc::Task],
-        events: &[TaskEvent],
-    ) -> TokenEfficiency {
-        // Raw output bytes: sum of stored raw_output lengths.
-        // Since we can only get them via the public API one at a time, we
-        // estimate from event message bytes instead (much cheaper than N
-        // store round-trips for every task).
-        let total_raw_output_bytes: u64 = events.iter().map(|e| e.message.len() as u64).sum();
-
-        // Structured bytes: JSON size of events
-        let total_structured_bytes: u64 =
-            events.iter().map(|e| serde_json::to_vec(e).map_or(0, |v| v.len() as u64)).sum();
-
-        // Agent-visible events exclude "log" type (skipped by default in query_events)
-        let agent_skipped_events = events.iter().filter(|e| e.event_type == "log").count() as u64;
-        let agent_visible_events = events.len() as u64 - agent_skipped_events;
-
-        let noise_pct = if !events.is_empty() {
-            agent_skipped_events as f64 / events.len() as f64 * 100.0
-        } else {
-            0.0
-        };
-
-        // Estimated token savings: structured output is typically much smaller
-        // than raw terminal output.  We approximate by comparing the number of
-        // events a consumer actually reads vs total lines produced.
-        let total_lines_produced: u64 = tasks.iter().map(|t| t.events_count).sum();
-        let estimated_token_savings_pct = if total_lines_produced > 0 {
-            let skipped = total_lines_produced.saturating_sub(agent_visible_events);
-            skipped as f64 / total_lines_produced as f64 * 100.0
-        } else {
-            0.0
-        };
-
-        TokenEfficiency {
-            total_raw_output_bytes,
-            total_structured_bytes,
-            agent_skipped_events,
-            agent_visible_events,
-            noise_pct,
-            estimated_token_savings_pct,
         }
     }
 
@@ -265,7 +241,7 @@ impl<'a> Analytics<'a> {
         }
     }
 
-    fn compute_command_patterns(&self, tasks: &[arshy_lib::ipc::Task]) -> CommandPatterns {
+    fn compute_command_patterns(&self, tasks: &[crate::ipc::Task]) -> CommandPatterns {
         // Group by first 2 words of command
         let mut cmd_groups: HashMap<String, u64> = HashMap::new();
         let mut short_count: u64 = 0;
@@ -316,7 +292,7 @@ impl<'a> Analytics<'a> {
 
     fn compute_temporal(
         &self,
-        tasks: &[arshy_lib::ipc::Task],
+        tasks: &[crate::ipc::Task],
         summary: &SummaryMetrics,
     ) -> TemporalMetrics {
         let dates: Vec<String> =
@@ -380,7 +356,7 @@ fn is_short_heuristic(cmd: &str) -> bool {
 }
 
 /// Compute span (in days) between earliest and latest task `started_at`.
-fn compute_span_days(tasks: &[arshy_lib::ipc::Task]) -> u64 {
+fn compute_span_days(tasks: &[crate::ipc::Task]) -> u64 {
     let mut dates: Vec<chrono::NaiveDate> = tasks
         .iter()
         .filter_map(|t| {
@@ -408,7 +384,7 @@ fn parse_date_part(ts: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arshy_lib::ipc::{EventHint, EventLocation, Task, TaskEvent, TaskStatus};
+    use crate::ipc::{EventHint, EventLocation, Task, TaskEvent, TaskStatus};
 
     fn make_task(id: &str, command: &str, started: &str, duration: Option<u64>) -> Task {
         Task {
@@ -557,51 +533,6 @@ mod tests {
         assert_eq!(patterns.total_retry_runs, 1); // 2 runs - 1 = 1 retry
         assert_eq!(patterns.top_retried[0].0, "cargo test");
         assert_eq!(patterns.top_retried[0].1, 2);
-    }
-
-    #[test]
-    fn token_efficiency_noise_pct() {
-        let store = test_store();
-        let analytics = Analytics::new(&store);
-
-        let events = vec![
-            TaskEvent {
-                seq: 0,
-                event_type: "diagnostic".into(),
-                severity: Some("error".into()),
-                code: None,
-                message: "error".into(),
-                location: None,
-                context: None,
-                hint: None,
-            },
-            TaskEvent {
-                seq: 1,
-                event_type: "log".into(),
-                severity: None,
-                code: None,
-                message: "raw".into(),
-                location: None,
-                context: None,
-                hint: None,
-            },
-            TaskEvent {
-                seq: 2,
-                event_type: "log".into(),
-                severity: None,
-                code: None,
-                message: "raw2".into(),
-                location: None,
-                context: None,
-                hint: None,
-            },
-        ];
-
-        let efficiency = analytics.compute_token_efficiency(&[], &events);
-        assert_eq!(efficiency.agent_skipped_events, 2);
-        assert_eq!(efficiency.agent_visible_events, 1);
-        // 2/3 = 66.67%
-        assert!((efficiency.noise_pct - 66.66666666666666).abs() < 0.01);
     }
 
     // ── Test helper ─────────────────────────────────────────────────────────

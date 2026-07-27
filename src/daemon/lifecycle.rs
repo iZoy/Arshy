@@ -1,7 +1,7 @@
 //! Daemon lifecycle — PID file, stale socket cleanup, process detection.
 
-use arshy_lib::config::xdg_data_home;
-use arshy_lib::Result;
+use crate::config::xdg_data_home;
+use crate::Result;
 use std::path::{Path, PathBuf};
 
 /// PID file path: `${XDG_DATA_HOME}/arshy/arshyd.pid`

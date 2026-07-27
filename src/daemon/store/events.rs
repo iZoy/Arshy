@@ -1,5 +1,5 @@
-use arshy_lib::ipc::{QueryParams, TaskEvent};
-use arshy_lib::Result;
+use crate::ipc::{QueryParams, TaskEvent};
+use crate::Result;
 
 /// Update per-event metrics on a task record. Shared between insert_event
 /// and merge_enriched_events to prevent logic divergence.

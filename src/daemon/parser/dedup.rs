@@ -4,7 +4,7 @@
 //! emitting a single event with "(repeated N times)" suffix when
 //! duplicates are flushed.
 
-use arshy_lib::ipc::TaskEvent;
+use crate::ipc::TaskEvent;
 
 /// Regex pattern matching ANSI escape sequences (SGR color/style codes).
 /// Strips sequences like `\x1b[0m`, `\x1b[32m`, `\x1b[2m`, etc.
@@ -46,9 +46,9 @@ pub struct Deduplicator {
     last_event_type: Option<String>,
     last_message: Option<String>,
     last_severity: Option<String>,
-    last_location: Option<arshy_lib::ipc::EventLocation>,
+    last_location: Option<crate::ipc::EventLocation>,
     last_code: Option<String>,
-    last_context: Option<arshy_lib::ipc::EventContext>,
+    last_context: Option<crate::ipc::EventContext>,
     repeat_count: u64,
     first_seq: u64,
     total_collapsed: u64,
@@ -225,7 +225,7 @@ mod tests {
 
     #[test]
     fn same_type_message_different_location_not_collapsed() {
-        use arshy_lib::ipc::EventLocation;
+        use crate::ipc::EventLocation;
 
         let mut d = Deduplicator::new();
         let e1 = TaskEvent {
@@ -255,7 +255,7 @@ mod tests {
 
     #[test]
     fn flush_preserves_context() {
-        use arshy_lib::ipc::EventContext;
+        use crate::ipc::EventContext;
 
         let mut d = Deduplicator::new();
         let ctx = Some(EventContext {
@@ -291,7 +291,7 @@ mod tests {
 
     #[test]
     fn flush_preserves_context_with_location() {
-        use arshy_lib::ipc::{EventContext, EventLocation};
+        use crate::ipc::{EventContext, EventLocation};
 
         let loc = Some(EventLocation { file: "src/main.rs".into(), line: 10, column: None });
         let ctx = Some(EventContext {

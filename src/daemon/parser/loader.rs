@@ -4,7 +4,7 @@
 //! When a `.toml` or `.rhai` parser file is created, modified, or deleted,
 //! invokes the callback to trigger a registry reload.
 
-use arshy_lib::Result;
+use crate::Result;
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use std::path::PathBuf;
 use std::sync::mpsc;
@@ -33,14 +33,14 @@ impl ParserWatcher {
             tx,
             notify::Config::default().with_poll_interval(Duration::from_secs(2)),
         )
-        .map_err(|e| arshy_lib::ArshyError::Config(format!("notify watcher: {}", e)))?;
+        .map_err(|e| crate::ArshyError::Config(format!("notify watcher: {}", e)))?;
 
         // Watch all configured parser directories
         for dir in dirs {
-            let expanded = arshy_lib::config::expand_path(dir);
+            let expanded = crate::config::expand_path(dir);
             if expanded.is_dir() {
                 watcher.watch(&expanded, RecursiveMode::NonRecursive).map_err(|e| {
-                    arshy_lib::ArshyError::Config(format!("watch {:?}: {}", expanded, e))
+                    crate::ArshyError::Config(format!("watch {:?}: {}", expanded, e))
                 })?;
                 tracing::debug!("watching parser dir: {}", expanded.display());
             }
@@ -68,7 +68,7 @@ impl ParserWatcher {
                     }
                 }
             })
-            .map_err(|e| arshy_lib::ArshyError::Config(format!("watcher thread: {}", e)))?;
+            .map_err(|e| crate::ArshyError::Config(format!("watcher thread: {}", e)))?;
 
         Ok(Self { _watcher: watcher })
     }

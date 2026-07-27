@@ -2,7 +2,7 @@
 
 pub mod git_correlator;
 
-use arshy_lib::ipc::{EventContext, EventLocation, TaskEvent};
+use crate::ipc::{EventContext, EventLocation, TaskEvent};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 

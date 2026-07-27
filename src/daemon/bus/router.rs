@@ -1,5 +1,5 @@
 use super::{BusEvent, BusEventKind};
-use arshy_lib::ipc;
+use crate::ipc;
 
 /// Maps daemon bus events to JSON-RPC notifications for proxy delivery.
 pub struct NotificationRouter;
@@ -49,7 +49,7 @@ impl NotificationRouter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arshy_lib::ipc::TaskEvent;
+    use crate::ipc::TaskEvent;
 
     fn make_bus_event(kind: BusEventKind) -> BusEvent {
         BusEvent { connection_id: 0, kind }

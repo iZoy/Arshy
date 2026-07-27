@@ -123,6 +123,17 @@ impl super::Store {
         Ok(())
     }
 
+    /// Set agent delivered bytes metric on a task record.
+    pub fn update_task_agent_delivered_bytes(&self, task_id: &str, bytes: u64) -> Result<()> {
+        let mut tasks = self.lock();
+        if let Some(record) = tasks.get_mut(task_id) {
+            record.metrics.agent_delivered_bytes = bytes;
+        }
+        drop(tasks);
+        self.mark_dirty();
+        Ok(())
+    }
+
     /// Increment the pairs_merged metric on a task record.
     pub fn update_task_pairs_merged(&self, task_id: &str, count: u64) -> Result<()> {
         let mut tasks = self.lock();

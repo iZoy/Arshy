@@ -5,12 +5,12 @@
 //! - Writer task: drains channel (responses + notifications) to the socket
 //! - EventBus notifications are forwarded to all connected proxies
 
-use arshy_lib::ipc::{
+use crate::ipc::{
     self, ErrorResponse, JsonRpcError, Notification, QueryParams, Request, Response, RunTaskParams,
     METHOD_CD, METHOD_HEALTH, METHOD_KILL, METHOD_LIST, METHOD_PRUNE, METHOD_QUERY, METHOD_RUN,
     METHOD_SHUTDOWN, METHOD_STATS, METHOD_STATUS, METHOD_STDIN, METHOD_SUBSCRIBE, METHOD_TAIL,
 };
-use arshy_lib::Result;
+use crate::Result;
 use serde::Serialize;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, BufReader, BufWriter};
@@ -33,7 +33,7 @@ enum Outbound {
 #[derive(Debug, Clone, Serialize)]
 pub struct RunResult {
     pub task_id: String,
-    pub status: arshy_lib::ipc::TaskStatus,
+    pub status: crate::ipc::TaskStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub exit_code: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -141,14 +141,12 @@ pub async fn handle(
                     .unwrap_or_default();
 
                     // Persist enriched events
-                    let task_events: Vec<arshy_lib::ipc::TaskEvent> = enriched
+                    let task_events: Vec<crate::ipc::TaskEvent> = enriched
                         .iter()
                         .filter_map(|e| serde_json::from_value(e.clone()).ok())
                         .collect();
                     if !task_events.is_empty() {
-                        if let Err(e) =
-                            store_clone.merge_enriched_events(&task_id, &task_events)
-                        {
+                        if let Err(e) = store_clone.merge_enriched_events(&task_id, &task_events) {
                             tracing::warn!(
                                 "async enrichment: failed to persist for {}: {}",
                                 task_id,
@@ -216,17 +214,17 @@ pub async fn handle(
                 request.params.get("command").and_then(|v| v.as_str()).unwrap_or(".").to_string();
             let abs = tokio::task::spawn_blocking(move || {
                 std::fs::canonicalize(std::path::Path::new(&dir))
-                    .map_err(|e| arshy_lib::ArshyError::Ipc(format!("cd: {}: {}", dir, e)))
+                    .map_err(|e| crate::ArshyError::Ipc(format!("cd: {}: {}", dir, e)))
             })
             .await
-            .map_err(|e| arshy_lib::ArshyError::Ipc(format!("cd resolve panicked: {}", e)))??;
+            .map_err(|e| crate::ArshyError::Ipc(format!("cd resolve panicked: {}", e)))??;
             let cwd_str = abs.to_string_lossy().to_string();
             default_cwd = Some(cwd_str.clone());
             Ok(serde_json::json!({"cwd": cwd_str}))
         } else if request.method.as_str() == METHOD_SUBSCRIBE {
             let tid_val = request.params.get("task_id").and_then(|v| v.as_str());
             match tid_val {
-                None => Err(arshy_lib::ArshyError::Ipc("missing task_id".into())),
+                None => Err(crate::ArshyError::Ipc("missing task_id".into())),
                 Some(task_id_str) => {
                     let task_id = task_id_str.to_string();
 
@@ -263,13 +261,13 @@ pub async fn handle(
                                             }));
                                         }
                                         Ok(_) => continue,
-                                        Err(_) => break Err(arshy_lib::ArshyError::Ipc(
+                                        Err(_) => break Err(crate::ArshyError::Ipc(
                                             "event bus disconnected".into()
                                         )),
                                     }
                                 }
                                 _ = tokio::time::sleep(timeout) => {
-                                    break Err(arshy_lib::ArshyError::Ipc(format!(
+                                    break Err(crate::ArshyError::Ipc(format!(
                                         "subscribe {} timed out after 600s", task_id
                                     )));
                                 }
@@ -334,7 +332,7 @@ async fn dispatch(
 ) -> Result<serde_json::Value> {
     match request.method.as_str() {
         METHOD_RUN | METHOD_KILL if executor.access_level() == "read-only" => {
-            Err(arshy_lib::ArshyError::AccessDenied("read-only mode".into()))
+            Err(crate::ArshyError::AccessDenied("read-only mode".into()))
         }
         METHOD_RUN => {
             let params: RunTaskParams = serde_json::from_value(request.params.clone())?;
@@ -382,7 +380,7 @@ async fn dispatch(
                 .params
                 .get("task_id")
                 .and_then(|v| v.as_str())
-                .ok_or_else(|| arshy_lib::ArshyError::Ipc("missing task_id".into()))?;
+                .ok_or_else(|| crate::ArshyError::Ipc("missing task_id".into()))?;
             executor.kill(task_id).await?;
             Ok(serde_json::json!({ "task_id": task_id, "status": "killed" }))
         }
@@ -391,7 +389,7 @@ async fn dispatch(
                 .params
                 .get("task_id")
                 .and_then(|v| v.as_str())
-                .ok_or_else(|| arshy_lib::ArshyError::Ipc("missing task_id".into()))?;
+                .ok_or_else(|| crate::ArshyError::Ipc("missing task_id".into()))?;
             let lines: usize =
                 request.params.get("lines").and_then(|v| v.as_u64()).unwrap_or(50) as usize;
             let format: String = request
@@ -453,7 +451,7 @@ async fn dispatch(
             let stats = store.get_stats(db_path)?;
             Ok(serde_json::to_value(&stats)?)
         }
-        METHOD_STDIN => Err(arshy_lib::ArshyError::Ipc("stdin write not supported yet".into())),
+        METHOD_STDIN => Err(crate::ArshyError::Ipc("stdin write not supported yet".into())),
         ipc::METHOD_PARSER_RELOAD => {
             let diff = executor.reload_parsers()?;
             Ok(serde_json::json!({ "diff": diff }))
@@ -465,10 +463,10 @@ async fn dispatch(
                 analytics.generate_report()
             })
             .await
-            .map_err(|e| arshy_lib::ArshyError::Other(format!("analytics panic: {}", e)))??;
+            .map_err(|e| crate::ArshyError::Other(format!("analytics panic: {}", e)))??;
             Ok(serde_json::to_value(&report)?)
         }
-        _ => Err(arshy_lib::ArshyError::Ipc(format!("unknown method: {}", request.method))),
+        _ => Err(crate::ArshyError::Ipc(format!("unknown method: {}", request.method))),
     }
 }
 
@@ -507,8 +505,8 @@ fn daemon_uptime_secs() -> u64 {
 mod tests {
     use super::super::parser::Engine;
     use super::*;
-    use arshy_lib::config::ParserConfig;
-    use arshy_lib::ipc::{
+    use crate::config::ParserConfig;
+    use crate::ipc::{
         DaemonConnection, Notification, METHOD_KILL, METHOD_LIST, METHOD_PRUNE, METHOD_QUERY,
         METHOD_RUN, METHOD_SHUTDOWN, METHOD_STATS, METHOD_STATUS, METHOD_SUBSCRIBE, METHOD_TAIL,
     };
@@ -929,7 +927,7 @@ mod tests {
     // ── Security integration tests ────────────────────────────────────────
 
     use super::super::security::AuditLog;
-    use arshy_lib::config::SecurityConfig;
+    use crate::config::SecurityConfig;
 
     async fn spawn_secure_daemon(
         security: SecurityConfig,

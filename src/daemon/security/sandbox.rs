@@ -1,6 +1,6 @@
 //! Path sandbox — restricts working directory to allowed paths.
 
-use arshy_lib::{ArshyError, Result};
+use crate::{ArshyError, Result};
 use std::path::PathBuf;
 
 /// Check that `cwd` is within one of the `sandbox_paths`.

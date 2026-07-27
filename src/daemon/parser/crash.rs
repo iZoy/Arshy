@@ -7,7 +7,7 @@
 //! Not a full parser — just enough to emit a structured `crash` event
 //! with language, error type, file, and line number.
 
-use arshy_lib::ipc::{EventLocation, TaskEvent};
+use crate::ipc::{EventLocation, TaskEvent};
 use regex::Regex;
 use std::sync::LazyLock;
 

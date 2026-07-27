@@ -1,4 +1,4 @@
-use arshy_lib::Result;
+use crate::Result;
 
 impl super::Store {
     /// Get a cached tool version if still valid (not expired).

@@ -728,6 +728,27 @@ impl Executor {
                             }
                         }
 
+                        // Compute and save agent_delivered_bytes for telemetry
+                        let rc_msg = extract_root_cause(&enriched_events).and_then(|rc| {
+                            rc.get("message").and_then(|v| v.as_str()).map(|s| s.to_string())
+                        });
+                        let rc_file = extract_root_cause(&enriched_events).and_then(|rc| {
+                            rc.get("file").and_then(|v| v.as_str()).map(|s| s.to_string())
+                        });
+                        let git_diff = project_context.as_ref().and_then(|pc| {
+                            pc.get("git_diff_stat").and_then(|v| v.as_str()).map(|s| s.to_string())
+                        });
+
+                        let delivered_bytes = calculate_agent_delivered_bytes(
+                            false,
+                            0,
+                            rc_msg.as_deref(),
+                            rc_file.as_deref(),
+                            git_diff.as_deref(),
+                        );
+                        let _ = store_for_enrichment
+                            .update_task_agent_delivered_bytes(&task_id, delivered_bytes);
+
                         Ok(RunResult {
                             task_id: task_id.clone(),
                             status: info.status.clone(),
@@ -891,6 +912,31 @@ fn filter_events_errors_only(
 fn extract_root_cause(events: &Option<Vec<serde_json::Value>>) -> Option<serde_json::Value> {
     let evts = events.as_ref()?;
     evts.iter().find(|e| e.get("severity").and_then(|v| v.as_str()) == Some("error")).cloned()
+}
+
+/// Estimate the bytes delivered to the agent for token savings telemetry.
+fn calculate_agent_delivered_bytes(
+    is_short: bool,
+    raw_len: u64,
+    root_cause_msg: Option<&str>,
+    root_cause_file: Option<&str>,
+    git_diff_stat: Option<&str>,
+) -> u64 {
+    if is_short {
+        return raw_len;
+    }
+    // Base status line: "✗ 3 errors, 4 warnings   235ms (exit 1)"
+    let mut size = 50;
+    if let Some(msg) = root_cause_msg {
+        size += msg.len() as u64 + 15;
+    }
+    if let Some(file) = root_cause_file {
+        size += file.len() as u64 + 15;
+    }
+    if let Some(git) = git_diff_stat {
+        size += git.len() as u64 + 15;
+    }
+    size
 }
 
 /// Compute project context for failed commands.

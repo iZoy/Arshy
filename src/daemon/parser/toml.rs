@@ -3,7 +3,7 @@
 //! Patterns are loaded from TOML definition files (see `toml_def.rs`).
 //! This module only handles matching, not pattern loading.
 
-use arshy_lib::ipc::{EventLocation, TaskEvent};
+use crate::ipc::{EventLocation, TaskEvent};
 use regex::Regex;
 
 /// A single regex pattern that matches a line and extracts event fields.

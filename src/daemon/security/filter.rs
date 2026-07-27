@@ -1,7 +1,7 @@
 //! Command filter — blocks dangerous commands via regex patterns and optional whitelist.
 
-use arshy_lib::config::SecurityConfig;
-use arshy_lib::{ArshyError, Result};
+use crate::config::SecurityConfig;
+use crate::{ArshyError, Result};
 
 /// Filters commands against blocked patterns and an optional whitelist.
 pub struct CommandFilter {

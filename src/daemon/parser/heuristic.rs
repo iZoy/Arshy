@@ -3,7 +3,7 @@
 //! Catches error/warning keywords in lines that weren't matched by any
 //! tool-specific parser. Extracts file:line:col when present.
 
-use arshy_lib::ipc::{EventLocation, TaskEvent};
+use crate::ipc::{EventLocation, TaskEvent};
 use regex::Regex;
 use std::sync::LazyLock;
 

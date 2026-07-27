@@ -28,6 +28,7 @@ pub struct TaskMetrics {
     pub contexts_enriched: u64,
     pub hints_attached: u64,
     pub pairs_merged: u64,
+    pub agent_delivered_bytes: u64,
 }
 
 /// Internal task record extending the public Task with storage-only fields.

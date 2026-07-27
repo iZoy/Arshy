@@ -1,4 +1,4 @@
-use arshy_lib::Result;
+use crate::Result;
 
 impl super::Store {
     /// Keep only the `keep` most recent tasks, delete the rest.
@@ -152,11 +152,8 @@ pub fn cleanup_stale_symlinks() {
             continue;
         }
         // Remove if older than cutoff or if target no longer exists
-        let stale = path
-            .symlink_metadata()
-            .and_then(|m| m.modified())
-            .map(|t| t < cutoff)
-            .unwrap_or(true);
+        let stale =
+            path.symlink_metadata().and_then(|m| m.modified()).map(|t| t < cutoff).unwrap_or(true);
         if stale || !std::fs::metadata(&path).map(|m| m.is_dir()).unwrap_or(false) {
             let _ = std::fs::remove_file(&path);
         }

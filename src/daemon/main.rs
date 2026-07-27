@@ -1,17 +1,7 @@
 //! Arshy daemon — background process managing shell execution.
 
-mod analytics;
-mod bus;
-mod context;
-mod exec;
-mod ipc_handler;
-mod lifecycle;
-mod parser;
-mod security;
-mod store;
-mod telemetry;
-
 use arshy_lib::config::{expand_path, Config};
+use arshy_lib::daemon::{bus, exec, ipc_handler, lifecycle, parser, security, store, telemetry};
 use arshy_lib::Result;
 use std::sync::Arc;
 use tokio::net::UnixListener;
@@ -117,12 +107,28 @@ async fn main() -> Result<()> {
     }
 
     // ── Security validation ──────────────────────────────────────────────────
-    if cfg.daemon.sandbox_mode != "none" {
+    if cfg.daemon.sandbox_mode != "none" && cfg.daemon.sandbox_mode != "workspace" {
         return Err(arshy_lib::ArshyError::Config(format!(
-            "sandbox_mode '{}' is not implemented; only 'none' is supported. \
-             See https://github.com/izoy/arshy#sandbox for roadmap.",
+            "sandbox_mode '{}' is not supported. Use 'none' or 'workspace'.",
             cfg.daemon.sandbox_mode
         )));
+    }
+
+    let mut security = cfg.security.clone();
+    if cfg.daemon.sandbox_mode == "workspace" {
+        if let Ok(current_dir) = std::env::current_dir() {
+            let workspace = current_dir.to_string_lossy().to_string();
+            tracing::info!("workspace sandbox active, locking to: {}", workspace);
+            security.sandbox_paths.push(workspace);
+        }
+    }
+
+    // Create custom parser directories if they don't exist
+    for dir in &cfg.parser.dirs {
+        let expanded = arshy_lib::config::expand_path(dir);
+        if !expanded.exists() {
+            let _ = std::fs::create_dir_all(&expanded);
+        }
     }
 
     // ── Executor ───────────────────────────────────────────────────────────
@@ -137,7 +143,7 @@ async fn main() -> Result<()> {
     };
     let mut executor = exec::Executor::new(store.clone(), parser_engine.clone(), event_bus.clone())
         .with_config(exec_config)
-        .with_security(&cfg.security);
+        .with_security(&security);
 
     if let Some(ref audit_path) = cfg.security.audit_log {
         let expanded = expand_path(std::path::Path::new(audit_path));
@@ -174,6 +180,19 @@ async fn main() -> Result<()> {
         tokio::select! {
             result = listener.accept() => {
                 let (stream, _) = result?;
+                // UID security check – reject connections from processes with a different UID
+                let peer_cred = stream.peer_cred();
+                let allowed = match peer_cred {
+                    Ok(cred) => cred.uid() == unsafe { libc::getuid() },
+                    Err(e) => {
+                        tracing::error!("failed to get peer credentials: {}", e);
+                        false
+                    }
+                };
+                if !allowed {
+                    tracing::warn!("rejecting connection {} from different UID", conn_id);
+                    continue;
+                }
                 let id = conn_id;
                 conn_id = conn_id.wrapping_add(1);
                 telemetry::record_connection_accepted();
@@ -228,7 +247,10 @@ async fn main() -> Result<()> {
     let phase1 = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
     let hard_deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
     loop {
-        let running = store.list_tasks(Some("running"), 10_000).map(|t| t.len()).unwrap_or(0);
+        let running = store
+            .list_tasks(Some("running"), 10_000)
+            .map(|t: Vec<arshy_lib::ipc::Task>| t.len())
+            .unwrap_or(0);
         if running == 0 {
             tracing::info!("all tasks completed, clean shutdown");
             break;

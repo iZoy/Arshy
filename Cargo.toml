@@ -1,6 +1,6 @@
 [package]
 name = "arshy"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "AI Agent's native shell — structured output, security sandbox, MCP server"
 license = "MIT"
@@ -37,7 +37,8 @@ regex = "1"
 libc = "0.2"
 
 notify = "7"
-rhai = "1.24"
+rhai = { version = "1.24", features = ["sync"] }
+rust-embed = { version = "8", features = ["include-exclude"] }
 
 [dev-dependencies]
 tempfile = "3"

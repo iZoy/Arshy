@@ -456,17 +456,19 @@ pub fn render_stats(result: &serde_json::Value) {
         }
         if let Some(parsers) = per_parser_usage {
             if !parsers.is_empty() {
-                let top: Vec<String> = parsers
-                    .iter()
-                    .take(5)
-                    .filter_map(|p| {
-                        let name = p.get("parser")?.as_str()?;
-                        let count = p.get("count")?.as_u64()?;
-                        Some(format!("{}({})", name, count))
-                    })
-                    .collect();
-                if !top.is_empty() {
-                    box_line(&format!("  Top parsers:     {}", top.join(", ")));
+                box_line("");
+                box_line("  Top parser hits:");
+                let max_count =
+                    parsers.iter().filter_map(|p| p.get("count")?.as_u64()).max().unwrap_or(1);
+                for p in parsers.iter().take(5) {
+                    if let (Some(name), Some(count)) = (
+                        p.get("parser").and_then(|v| v.as_str()),
+                        p.get("count").and_then(|v| v.as_u64()),
+                    ) {
+                        let bar = render_bar(count, max_count, 24);
+                        let name_trunc = truncate_name(name, 12);
+                        box_line(&format!("    {:<12} {:>4} {}", name_trunc, count, bar));
+                    }
                 }
             }
         }
@@ -474,6 +476,50 @@ pub fn render_stats(result: &serde_json::Value) {
 
     box_bottom();
     eprintln!();
+}
+
+fn fmt_diff(diff: Option<f64>, suffix: &str, pct: bool) -> String {
+    match diff {
+        Some(d) if d > 0.001 => {
+            let val = if pct { d * 100.0 } else { d };
+            format!("  \x1b[32m(+{:.1}{})\x1b[0m", val, suffix)
+        }
+        Some(d) if d < -0.001 => {
+            let val = if pct { d * 100.0 } else { d };
+            format!("  \x1b[31m({:.1}{})\x1b[0m", val, suffix)
+        }
+        _ => String::new(),
+    }
+}
+
+fn fmt_diff_int(diff: Option<i64>, suffix: &str) -> String {
+    match diff {
+        Some(d) if d > 0 => {
+            format!("  \x1b[31m(+{}{})\x1b[0m", d, suffix)
+        }
+        Some(d) if d < 0 => {
+            format!("  \x1b[32m({}{})\x1b[0m", d, suffix)
+        }
+        _ => String::new(),
+    }
+}
+
+fn pad_right(s: &str, width: usize) -> String {
+    let vis = visible_width(s);
+    if vis >= width {
+        s.to_string()
+    } else {
+        format!("{}{}", s, " ".repeat(width - vis))
+    }
+}
+
+fn pad_left(s: &str, width: usize) -> String {
+    let vis = visible_width(s);
+    if vis >= width {
+        s.to_string()
+    } else {
+        format!("{}{}", " ".repeat(width - vis), s)
+    }
 }
 
 /// Render benchmark results as a formatted terminal table.
@@ -488,10 +534,25 @@ pub fn render_benchmark(result: &serde_json::Value) {
     let fields_per = result.get("avg_fields_per_event").and_then(|v| v.as_f64()).unwrap_or(0.0);
     let speed = result.get("error_speed_advantage_pct").and_then(|v| v.as_f64()).unwrap_or(0.0);
     let accuracy = result.get("avg_accuracy").and_then(|v| v.as_f64()).unwrap_or(0.0) * 100.0;
+    let unparsed = result.get("total_unparsed_error_lines").and_then(|v| v.as_u64()).unwrap_or(0);
+
+    let comparison = result.get("comparison");
+
+    let ratio_diff = comparison.and_then(|c| c.get("compression_ratio")).and_then(|v| v.as_f64());
+    let accuracy_diff = comparison.and_then(|c| c.get("avg_accuracy")).and_then(|v| v.as_f64());
+    let speed_diff =
+        comparison.and_then(|c| c.get("error_speed_advantage_pct")).and_then(|v| v.as_f64());
+    let unparsed_diff =
+        comparison.and_then(|c| c.get("total_unparsed_error_lines")).and_then(|v| v.as_i64());
+
+    let ratio_diff_str = fmt_diff(ratio_diff, "x", false);
+    let acc_diff_str = fmt_diff(accuracy_diff, "%", true);
+    let speed_diff_str = fmt_diff(speed_diff, "%", false);
+    let unparsed_diff_str = fmt_diff_int(unparsed_diff, " lines");
 
     eprintln!();
     eprintln!("╔═══════════════════════════════════════════════════════════════╗");
-    eprintln!("║               ARSHY PARSER BENCHMARK RESULTS                 ║");
+    eprintln!("║             {}ARSHY PARSER BENCHMARK RESULTS{}                ║", BOLD, RESET);
     eprintln!("╚═══════════════════════════════════════════════════════════════╝");
     eprintln!();
     eprintln!("  Scope: {} fixtures across 37 builtin parsers", fixtures);
@@ -499,54 +560,53 @@ pub fn render_benchmark(result: &serde_json::Value) {
     eprintln!();
 
     // Information density
-    eprintln!("  ┌─────────────────────────────────────────────────────────┐");
-    eprintln!("  │ INFORMATION DENSITY                                     │");
-    eprintln!("  ├─────────────────────────────────────────────────────────┤");
-    eprintln!("  │                                                         │");
-    eprintln!("  │  Structured output:  {:.1} actionable fields/event       │", fields_per);
-    eprintln!("  │                       (type, severity, code,            │");
-    eprintln!("  │                        file, line, message)             │");
-    eprintln!("  │                                                         │");
-    eprintln!("  │  Raw text output:    0 structured fields/line           │");
-    eprintln!("  │                       (agent must parse everything)     │");
-    eprintln!("  │                                                         │");
-    eprintln!("  │  Total fields:       {} across {} events               │", fields, events);
-    eprintln!("  │                                                         │");
-    eprintln!("  └─────────────────────────────────────────────────────────┘");
+    box_top();
+    box_line(&format!("{}INFORMATION DENSITY{}", BOLD, RESET));
+    box_divider();
+    box_line(&format!("  Structured output:  {:.1} actionable fields/event", fields_per));
+    box_line("                       (type, severity, code,");
+    box_line("                        file, line, message)");
+    box_line("");
+    box_line("  Raw text output:    0 structured fields/line");
+    box_line("                       (agent must parse everything)");
+    box_line("");
+    box_line(&format!("  Total fields:       {} across {} events", fields, events));
+    box_bottom();
     eprintln!();
 
     // Token efficiency
-    eprintln!("  ┌─────────────────────────────────────────────────────────┐");
-    eprintln!("  │ TOKEN EFFICIENCY                                        │");
-    eprintln!("  ├─────────────────────────────────────────────────────────┤");
-    eprintln!("  │  Raw text:           {} words                          │", raw_tokens);
-    eprintln!("  │  Structured JSON:    {} words                          │", struct_tokens);
-    eprintln!("  │  Ratio:              {:.1}x                             │", ratio);
-    eprintln!("  └─────────────────────────────────────────────────────────┘");
+    box_top();
+    box_line(&format!("{}TOKEN EFFICIENCY{}", BOLD, RESET));
+    box_divider();
+    box_line(&format!("  Raw text (approx BPE): {} tokens", raw_tokens));
+    box_line(&format!("  Structured JSON:       {} tokens", struct_tokens));
+    box_line(&format!("  Ratio:                 {:.1}x{}", ratio, ratio_diff_str));
+    box_bottom();
     eprintln!();
 
     // Error location speed
-    eprintln!("  ┌─────────────────────────────────────────────────────────┐");
-    eprintln!("  │ ERROR LOCATION SPEED                                    │");
-    eprintln!("  ├─────────────────────────────────────────────────────────┤");
-    eprintln!("  │  Structured faster:  {:.0}% of fixtures                  │", speed);
-    eprintln!("  └─────────────────────────────────────────────────────────┘");
+    box_top();
+    box_line(&format!("{}ERROR LOCATION SPEED{}", BOLD, RESET));
+    box_divider();
+    box_line(&format!("  Structured faster:     {:.0}% of fixtures{}", speed, speed_diff_str));
+    box_bottom();
     eprintln!();
 
-    // Parser accuracy
-    eprintln!("  ┌─────────────────────────────────────────────────────────┐");
-    eprintln!("  │ PARSER ACCURACY                                         │");
-    eprintln!("  ├─────────────────────────────────────────────────────────┤");
-    eprintln!("  │  Average accuracy:   {:.0}%                             │", accuracy);
-    eprintln!("  └─────────────────────────────────────────────────────────┘");
+    // Parser accuracy & diagnostics
+    box_top();
+    box_line(&format!("{}PARSER QUALITY & ACCURACY{}", BOLD, RESET));
+    box_divider();
+    box_line(&format!("  Average accuracy:      {:.0}%{}", accuracy, acc_diff_str));
+    box_line(&format!("  Unparsed error lines:  {}{}", unparsed, unparsed_diff_str));
+    box_bottom();
     eprintln!();
 
     // Per-parser table
     if let Some(details) = result.get("details").and_then(|v| v.as_array()) {
         eprintln!("  Per-parser breakdown:");
-        eprintln!("  ┌──────────────┬───────┬────────┬────────┬──────────┬───────────┐");
-        eprintln!("  │ Parser       │ Lines │ Events │ Fields │ Compress │ Accuracy  │");
-        eprintln!("  ├──────────────┼───────┼────────┼────────┼──────────┼───────────┤");
+        eprintln!("  ┌──────────────┬───────┬────────┬────────┬──────────┬──────────┬──────────┐");
+        eprintln!("  │ Parser       │ Lines │ Events │ Fields │ Compress │ Accuracy │ Unparsed │");
+        eprintln!("  ├──────────────┼───────┼────────┼────────┼──────────┼──────────┼──────────┤");
 
         for d in details {
             let parser = d.get("parser").and_then(|v| v.as_str()).unwrap_or("");
@@ -555,19 +615,61 @@ pub fn render_benchmark(result: &serde_json::Value) {
             let flds = d.get("structured_fields").and_then(|v| v.as_u64()).unwrap_or(0);
             let comp = d.get("compression_ratio").and_then(|v| v.as_f64()).unwrap_or(0.0);
             let acc = d.get("accuracy").and_then(|v| v.as_f64()).unwrap_or(0.0) * 100.0;
+            let unparsed_fixture =
+                d.get("unparsed_error_lines").and_then(|v| v.as_u64()).unwrap_or(0);
+
+            let acc_str = if let Some(diff) = d.get("accuracy_diff").and_then(|v| v.as_f64()) {
+                if diff > 0.001 {
+                    format!("{:.0}% \x1b[32m(+{:.0})\x1b[0m", acc, diff * 100.0)
+                } else if diff < -0.001 {
+                    format!("{:.0}% \x1b[31m({:.0})\x1b[0m", acc, diff * 100.0)
+                } else {
+                    format!("{:.0}%", acc)
+                }
+            } else {
+                format!("{:.0}%", acc)
+            };
+
+            let unparsed_str = if let Some(diff) = d.get("unparsed_diff").and_then(|v| v.as_i64()) {
+                if diff > 0 {
+                    format!("{} \x1b[31m(+{})\x1b[0m", unparsed_fixture, diff)
+                } else if diff < 0 {
+                    format!("{} \x1b[32m({})\x1b[0m", unparsed_fixture, diff)
+                } else {
+                    format!("{}", unparsed_fixture)
+                }
+            } else {
+                format!("{}", unparsed_fixture)
+            };
+
             let p_name = if parser.len() > 12 {
                 let end = parser.char_indices().nth(12).map(|(i, _)| i).unwrap_or(parser.len());
                 &parser[..end]
             } else {
                 parser
             };
+
+            let name_padded = pad_right(p_name, 12);
+            let lines_padded = pad_left(&lines.to_string(), 5);
+            let evts_padded = pad_left(&evts.to_string(), 6);
+            let flds_padded = pad_left(&flds.to_string(), 6);
+            let comp_padded = pad_left(&format!("{:.1}x", comp), 8);
+            let acc_padded = pad_left(&acc_str, 8);
+            let unparsed_padded = pad_left(&unparsed_str, 8);
+
             eprintln!(
-                "  │ {:<12} │ {:>5} │ {:>6} │ {:>6} │ {:>6.1}x  │ {:>6.0}%   │",
-                p_name, lines, evts, flds, comp, acc
+                "  │ {} │ {} │ {} │ {} │ {} │ {} │ {} │",
+                name_padded,
+                lines_padded,
+                evts_padded,
+                flds_padded,
+                comp_padded,
+                acc_padded,
+                unparsed_padded
             );
         }
 
-        eprintln!("  └──────────────┴───────┴────────┴────────┴──────────┴───────────┘");
+        eprintln!("  └──────────────┴───────┴────────┴────────┴──────────┴──────────┴──────────┘");
     }
     eprintln!();
 }

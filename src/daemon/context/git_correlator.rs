@@ -1,6 +1,6 @@
 //! Git diff correlation — identifies which error files were recently changed.
 
-use arshy_lib::ipc::TaskEvent;
+use crate::ipc::TaskEvent;
 use std::path::Path;
 
 /// Correlates error events with recently changed files from git diff.
@@ -70,7 +70,7 @@ impl GitCorrelation {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arshy_lib::ipc::EventLocation;
+    use crate::ipc::EventLocation;
 
     fn make_error(file: &str, line: u64) -> TaskEvent {
         TaskEvent {

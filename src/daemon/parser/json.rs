@@ -11,7 +11,7 @@
 //! 4. CSV/TSV: consistent delimiter patterns across lines
 //! 5. Neither → return None, fall through to regex pipeline
 
-use arshy_lib::ipc::TaskEvent;
+use crate::ipc::TaskEvent;
 
 /// Try to parse accumulated output as structured data (JSON/NDJSON/YAML/CSV).
 ///
@@ -160,7 +160,7 @@ fn value_to_event(value: &serde_json::Value) -> TaskEvent {
                 .or_else(|| obj.get("lineno"))
                 .and_then(|v| v.as_u64());
 
-            let location = file.map(|f| arshy_lib::ipc::EventLocation {
+            let location = file.map(|f| crate::ipc::EventLocation {
                 file: f,
                 line: line.unwrap_or(0),
                 column: None,

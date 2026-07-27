@@ -117,12 +117,30 @@ pub enum CliCommand {
         /// Output format: pretty (terminal UI), json (raw JSON), auto (default)
         #[arg(long, default_value = "auto")]
         format: String,
+        /// Open interactive web dashboard in the browser
+        #[arg(long)]
+        web: bool,
     },
     /// Manage parsers
     Parser {
         #[command(subcommand)]
         action: ParserAction,
     },
+    /// Manage shell integration hook
+    Hook {
+        #[command(subcommand)]
+        action: HookAction,
+    },
+    /// Claude Code PreToolUse hook handler (reads stdin, outputs stdout)
+    ClaudeHook,
+}
+
+#[derive(clap::Subcommand, Debug)]
+pub enum HookAction {
+    /// Install the shell integration wrapper
+    Install,
+    /// Uninstall the shell integration wrapper
+    Uninstall,
 }
 
 #[derive(clap::Subcommand, Debug)]
@@ -156,6 +174,29 @@ pub enum ParserAction {
 }
 
 fn main() -> arshy_lib::Result<()> {
+    // Check if we should act as a shell wrapper (invoked as sh, bash, or zsh)
+    let args: Vec<String> = std::env::args().collect();
+    let mut is_shell = None;
+    let mut is_claude_hook = false;
+    if let Some(exe_path) = args.first() {
+        let exe_path_buf = std::path::Path::new(exe_path);
+        if let Some(exe_name) = exe_path_buf.file_name().and_then(|n| n.to_str()) {
+            if exe_name == "sh" || exe_name == "bash" || exe_name == "zsh" {
+                is_shell = Some(exe_name.to_string());
+            } else if exe_name == "claude-hook" {
+                is_claude_hook = true;
+            }
+        }
+    }
+
+    if is_claude_hook {
+        return cli::shell_wrapper::run_claude_hook();
+    }
+
+    if let Some(name) = is_shell {
+        return cli::shell_wrapper::run_wrapper(&name, args);
+    }
+
     let cli = Cli::parse();
 
     if cli.from_mcp {

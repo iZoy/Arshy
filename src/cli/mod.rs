@@ -1,6 +1,8 @@
 //! CLI command dispatch — connects to daemon via UDS and executes user commands.
 
+pub mod dashboard;
 pub mod render;
+pub mod shell_wrapper;
 
 use arshy_lib::config::Config;
 use arshy_lib::ipc::{
@@ -61,8 +63,15 @@ pub async fn dispatch(cli: Cli) -> Result<()> {
         Some(CliCommand::InstallSystemd) => install_systemd(),
         Some(CliCommand::Doctor) => doctor(config_path, log_level),
         Some(CliCommand::Benchmark) => run_benchmark(),
-        Some(CliCommand::Analyze { format }) => analyze(config_path, log_level, &format).await,
+        Some(CliCommand::Analyze { format, web }) => {
+            analyze(config_path, log_level, &format, web).await
+        }
         Some(CliCommand::Parser { action }) => parser_action(action, config_path, log_level).await,
+        Some(CliCommand::Hook { action }) => match action {
+            crate::HookAction::Install => shell_wrapper::install_hook(),
+            crate::HookAction::Uninstall => shell_wrapper::uninstall_hook(),
+        },
+        Some(CliCommand::ClaudeHook) => shell_wrapper::run_claude_hook(),
         None => {
             println!("Arshy — AI Agent native shell execution layer");
             println!("Usage: arshy [--from-mcp] [OPTIONS] <COMMAND>");
@@ -130,7 +139,8 @@ async fn run_command(
             }
         }
     }
-    Ok(())
+    let exit_code = response.result.get("exit_code").and_then(|v| v.as_i64()).unwrap_or(0);
+    std::process::exit(exit_code as i32);
 }
 
 /// Check if stdout is a terminal (for auto-detecting format).
@@ -248,6 +258,14 @@ fn install() -> Result<()> {
         dirs::home_dir().unwrap_or_else(|| PathBuf::from("~")).join(".cursor").join("mcp.json");
     install_mcp_in_cursor(&cursor_mcp_path)?;
 
+    // Write MCP server to ~/.gemini/config/mcp_config.json (Google Antigravity)
+    let gemini_mcp_path = dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("~"))
+        .join(".gemini")
+        .join("config")
+        .join("mcp_config.json");
+    install_mcp_in_antigravity(&gemini_mcp_path)?;
+
     // Write permissions to ~/.claude/settings.json
     let settings_path = dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("~"))
@@ -298,9 +316,10 @@ fn install() -> Result<()> {
 
     println!();
     println!("Done! Restart your IDE to activate.");
-    println!("  Claude Code: {}", claude_json_path.display());
-    println!("  Cursor:      {}", cursor_mcp_path.display());
-    println!("  Permissions: {}", settings_path.display());
+    println!("  Claude Code:  {}", claude_json_path.display());
+    println!("  Cursor:       {}", cursor_mcp_path.display());
+    println!("  Antigravity:  {}", gemini_mcp_path.display());
+    println!("  Permissions:  {}", settings_path.display());
     Ok(())
 }
 
@@ -392,6 +411,60 @@ fn install_mcp_in_cursor(path: &std::path::Path) -> Result<()> {
         }
     } else {
         // JSON root is not an object (e.g., null) — overwrite with a fresh config
+        data = serde_json::json!({
+            "mcpServers": {
+                "arshy": arshy_entry
+            }
+        });
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(path, serde_json::to_string_pretty(&data)?)?;
+        println!("  \u{2713} MCP server registered in {}", path.display());
+    }
+
+    Ok(())
+}
+
+/// Write arshy MCP entry to ~/.gemini/config/mcp_config.json (Google Antigravity).
+fn install_mcp_in_antigravity(path: &std::path::Path) -> Result<()> {
+    let mut data: serde_json::Value = if path.exists() {
+        let content = std::fs::read_to_string(path)?;
+        serde_json::from_str(&content).unwrap_or(serde_json::json!({}))
+    } else {
+        serde_json::json!({})
+    };
+
+    let arshy_bin = find_installed_binary("arshy")
+        .or_else(|| {
+            std::env::current_exe().ok().filter(|p| !p.to_string_lossy().contains("target"))
+        })
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "arshy".into());
+
+    let arshy_entry = serde_json::json!({
+        "command": arshy_bin,
+        "args": ["--from-mcp"]
+    });
+
+    if let Some(obj) = data.as_object_mut() {
+        let servers = obj.entry("mcpServers").or_insert_with(|| serde_json::json!({}));
+        if let Some(map) = servers.as_object_mut() {
+            let changed = map.get("arshy").is_none()
+                || map.get("arshy").and_then(|v| v.get("command"))
+                    != Some(&serde_json::json!(arshy_bin.clone()));
+            map.insert("arshy".into(), arshy_entry);
+            if changed {
+                if let Some(parent) = path.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::write(path, serde_json::to_string_pretty(&data)?)?;
+                println!("  \u{2713} MCP server registered in {}", path.display());
+            } else {
+                println!("  \u{2713} MCP server already configured in {}", path.display());
+            }
+        }
+    } else {
         data = serde_json::json!({
             "mcpServers": {
                 "arshy": arshy_entry
@@ -507,6 +580,24 @@ fn uninstall() -> Result<()> {
         std::fs::write(&settings_path, serde_json::to_string_pretty(&settings)?)?;
         println!("Removed permissions from {}", settings_path.display());
     }
+
+    // Remove from ~/.gemini/config/mcp_config.json (Google Antigravity)
+    let gemini_mcp_path = home.join(".gemini").join("config").join("mcp_config.json");
+    if gemini_mcp_path.exists() {
+        let content = std::fs::read_to_string(&gemini_mcp_path)?;
+        let mut data: serde_json::Value =
+            serde_json::from_str(&content).unwrap_or(serde_json::json!({}));
+        if let Some(obj) = data.as_object_mut() {
+            if let Some(servers) = obj.get_mut("mcpServers") {
+                if let Some(map) = servers.as_object_mut() {
+                    map.remove("arshy");
+                }
+            }
+        }
+        std::fs::write(&gemini_mcp_path, serde_json::to_string_pretty(&data)?)?;
+        println!("Removed arshy from {}", gemini_mcp_path.display());
+    }
+
     Ok(())
 }
 
@@ -1132,11 +1223,7 @@ fn probe_common_tcc_dirs() -> Vec<PathBuf> {
         Some(h) => h,
         None => return vec![],
     };
-    let candidates = [
-        home.join("Documents"),
-        home.join("Desktop"),
-        home.join("Downloads"),
-    ];
+    let candidates = [home.join("Documents"), home.join("Desktop"), home.join("Downloads")];
     candidates
         .into_iter()
         .filter(|dir| {
@@ -1272,7 +1359,7 @@ fn run_benchmark() -> Result<()> {
     eprintln!("Running benchmark across all builtin parsers...\n");
 
     let output = std::process::Command::new("cargo")
-        .args(["test", "--bin", "arshyd", "benchmark::run_benchmark", "--", "--nocapture"])
+        .args(["test", "--lib", "daemon::parser::benchmark::run_benchmark", "--", "--nocapture"])
         .output()
         .map_err(|e| arshy_lib::ArshyError::Other(format!("failed to run cargo test: {}", e)))?;
 
@@ -1298,8 +1385,78 @@ fn run_benchmark() -> Result<()> {
     }
 
     // Parse and display
-    let result: serde_json::Value = serde_json::from_str(&json_str)
+    let mut result: serde_json::Value = serde_json::from_str(&json_str)
         .map_err(|e| arshy_lib::ArshyError::Other(format!("invalid benchmark JSON: {}", e)))?;
+
+    let report_path = if std::path::Path::new("docs").is_dir() {
+        std::path::PathBuf::from("docs/benchmark_report.json")
+    } else {
+        std::path::PathBuf::from(".arshy-benchmark.json")
+    };
+
+    if let Ok(baseline_str) = std::fs::read_to_string(&report_path) {
+        if let Ok(baseline) = serde_json::from_str::<serde_json::Value>(&baseline_str) {
+            let mut diff = serde_json::json!({});
+
+            if let (Some(new_val), Some(old_val)) = (
+                result.get("compression_ratio").and_then(|v| v.as_f64()),
+                baseline.get("compression_ratio").and_then(|v| v.as_f64()),
+            ) {
+                diff["compression_ratio"] = serde_json::json!(new_val - old_val);
+            }
+            if let (Some(new_val), Some(old_val)) = (
+                result.get("avg_accuracy").and_then(|v| v.as_f64()),
+                baseline.get("avg_accuracy").and_then(|v| v.as_f64()),
+            ) {
+                diff["avg_accuracy"] = serde_json::json!(new_val - old_val);
+            }
+            if let (Some(new_val), Some(old_val)) = (
+                result.get("error_speed_advantage_pct").and_then(|v| v.as_f64()),
+                baseline.get("error_speed_advantage_pct").and_then(|v| v.as_f64()),
+            ) {
+                diff["error_speed_advantage_pct"] = serde_json::json!(new_val - old_val);
+            }
+            if let (Some(new_val), Some(old_val)) = (
+                result.get("total_unparsed_error_lines").and_then(|v| v.as_i64()),
+                baseline.get("total_unparsed_error_lines").and_then(|v| v.as_i64()),
+            ) {
+                diff["total_unparsed_error_lines"] = serde_json::json!(new_val - old_val);
+            }
+
+            if let (Some(new_details), Some(old_details)) = (
+                result.get_mut("details").and_then(|v| v.as_array_mut()),
+                baseline.get("details").and_then(|v| v.as_array()),
+            ) {
+                for detail in new_details.iter_mut() {
+                    let parser = detail.get("parser").and_then(|v| v.as_str()).unwrap_or("");
+                    let fixture = detail.get("fixture").and_then(|v| v.as_str()).unwrap_or("");
+
+                    if let Some(old_detail) = old_details.iter().find(|d| {
+                        d.get("parser").and_then(|v| v.as_str()) == Some(parser)
+                            && d.get("fixture").and_then(|v| v.as_str()) == Some(fixture)
+                    }) {
+                        if let (Some(new_acc), Some(old_acc)) = (
+                            detail.get("accuracy").and_then(|v| v.as_f64()),
+                            old_detail.get("accuracy").and_then(|v| v.as_f64()),
+                        ) {
+                            detail["accuracy_diff"] = serde_json::json!(new_acc - old_acc);
+                        }
+                        if let (Some(new_unparsed), Some(old_unparsed)) = (
+                            detail.get("unparsed_error_lines").and_then(|v| v.as_i64()),
+                            old_detail.get("unparsed_error_lines").and_then(|v| v.as_i64()),
+                        ) {
+                            detail["unparsed_diff"] =
+                                serde_json::json!(new_unparsed - old_unparsed);
+                        }
+                    }
+                }
+            }
+
+            result["comparison"] = diff;
+        }
+    }
+
+    let _ = std::fs::write(&report_path, &json_str);
 
     render::render_benchmark(&result);
 
@@ -1310,6 +1467,7 @@ async fn analyze(
     config_path: Option<PathBuf>,
     log_level: Option<String>,
     format: &str,
+    web: bool,
 ) -> Result<()> {
     let mut daemon = connect(config_path, log_level).await?;
     let request = Request {
@@ -1319,6 +1477,10 @@ async fn analyze(
         params: serde_json::json!({}),
     };
     let response = ipc::send_request(&mut daemon, &request).await?;
+
+    if web || format == "web" {
+        return dashboard::render_web_dashboard(&response.result);
+    }
 
     match format {
         "json" => {

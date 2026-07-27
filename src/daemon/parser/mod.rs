@@ -1226,6 +1226,8 @@ mod benchmark {
         events_with_code: usize,
         /// Diagnostic events (not raw log fallback).
         diagnostic_events: usize,
+        /// Number of raw lines containing error words that did not emit diagnostic events.
+        unparsed_error_lines: usize,
     }
 
     #[derive(serde::Serialize)]
@@ -1261,13 +1263,31 @@ mod benchmark {
         total_events_with_code: usize,
         /// Total diagnostic events (not raw log fallback).
         total_diagnostic_events: usize,
+        /// Total raw lines containing error words that did not emit diagnostic events across all fixtures.
+        total_unparsed_error_lines: usize,
         /// Per-parser results.
         details: Vec<FixtureResult>,
     }
 
-    /// Count tokens (words) in a string — whitespace-split approximation.
+    /// Count tokens in a string — heuristic BPE approximation (cl100k_base).
+    /// Splits alphanumeric sequences and counts special syntax/punctuation symbols.
     fn count_tokens(text: &str) -> usize {
-        text.split_whitespace().count()
+        let mut tokens: f64 = 0.0;
+        let mut in_word = false;
+        for c in text.chars() {
+            if c.is_alphanumeric() {
+                if !in_word {
+                    tokens += 1.2;
+                    in_word = true;
+                }
+            } else {
+                in_word = false;
+                if !c.is_whitespace() {
+                    tokens += 0.75;
+                }
+            }
+        }
+        tokens.round() as usize
     }
 
     /// Find the 0-indexed line number of the first error or warning in raw text.
@@ -1346,8 +1366,17 @@ mod benchmark {
         let raw_lines: Vec<&str> = txt.lines().filter(|l| !l.trim().is_empty()).collect();
 
         let mut events: Vec<TaskEvent> = Vec::new();
-        for (seq, line) in raw_lines.iter().enumerate() {
-            events.extend(session.parse_line(line, seq as u64, tool.as_ref()));
+        let mut unparsed_error_lines = 0;
+        let error_words = ["error", "failed", "panic", "exception", "fatal", "fail"];
+        for (seq, &line) in raw_lines.iter().enumerate() {
+            let line_events = session.parse_line(line, seq as u64, tool.as_ref());
+            let has_diagnostic = line_events.iter().any(|e| e.event_type != "log");
+            let line_lower = line.to_lowercase();
+            let contains_error = error_words.iter().any(|&w| line_lower.contains(w));
+            if contains_error && !has_diagnostic {
+                unparsed_error_lines += 1;
+            }
+            events.extend(line_events);
         }
 
         let raw_tokens = count_tokens(&txt);
@@ -1358,6 +1387,8 @@ mod benchmark {
             if structured_tokens > 0 { raw_tokens as f64 / structured_tokens as f64 } else { 0.0 };
 
         let raw_first_error_line = find_first_error_line(&raw_lines);
+        let (merged_events, _pairs_merged) = pair_merger::merge_diagnostic_location_pairs(events);
+        let events = merged_events;
         let structured_first_error_idx = find_first_error_event(&events);
 
         let error_faster = match (raw_first_error_line, structured_first_error_idx) {
@@ -1423,6 +1454,7 @@ mod benchmark {
             events_with_location,
             events_with_code,
             diagnostic_events,
+            unparsed_error_lines,
         }
     }
 
@@ -1490,6 +1522,8 @@ mod benchmark {
             all_results.iter().map(|r| r.events_with_location).sum();
         let total_events_with_code: usize = all_results.iter().map(|r| r.events_with_code).sum();
         let total_diagnostic_events: usize = all_results.iter().map(|r| r.diagnostic_events).sum();
+        let total_unparsed_error_lines: usize =
+            all_results.iter().map(|r| r.unparsed_error_lines).sum();
 
         let bench = BenchmarkResult {
             total_fixtures,
@@ -1505,6 +1539,7 @@ mod benchmark {
             total_events_with_location,
             total_events_with_code,
             total_diagnostic_events,
+            total_unparsed_error_lines,
             details: all_results,
         };
 

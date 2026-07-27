@@ -228,63 +228,25 @@ fn parse_key_value(s: &str) -> Option<(String, String)> {
 
 // ── Built-in parser loading ──────────────────────────────────────────────────
 
-/// Embedded builtin parser TOML definitions.
-/// Each entry is `(filename, content)` where filename is used for logging.
-pub const BUILTIN_TOML: &[(&str, &str)] = &[
-    // Tier 1: Original 10 parsers
-    ("tsc.toml", include_str!("../../../parsers/builtin/tsc.toml")),
-    ("cargo.toml", include_str!("../../../parsers/builtin/cargo.toml")),
-    ("jest.toml", include_str!("../../../parsers/builtin/jest.toml")),
-    ("vite.toml", include_str!("../../../parsers/builtin/vite.toml")),
-    ("eslint.toml", include_str!("../../../parsers/builtin/eslint.toml")),
-    ("go.toml", include_str!("../../../parsers/builtin/go.toml")),
-    ("python.toml", include_str!("../../../parsers/builtin/python.toml")),
-    ("cc.toml", include_str!("../../../parsers/builtin/cc.toml")),
-    ("npm.toml", include_str!("../../../parsers/builtin/npm.toml")),
-    ("webpack.toml", include_str!("../../../parsers/builtin/webpack.toml")),
-    // Tier 2: M2 expansion — 10 additional parsers
-    ("prettier.toml", include_str!("../../../parsers/builtin/prettier.toml")),
-    ("swc.toml", include_str!("../../../parsers/builtin/swc.toml")),
-    ("esbuild.toml", include_str!("../../../parsers/builtin/esbuild.toml")),
-    ("clippy.toml", include_str!("../../../parsers/builtin/clippy.toml")),
-    ("make.toml", include_str!("../../../parsers/builtin/make.toml")),
-    ("gradle.toml", include_str!("../../../parsers/builtin/gradle.toml")),
-    ("cargo-test.toml", include_str!("../../../parsers/builtin/cargo-test.toml")),
-    ("mocha.toml", include_str!("../../../parsers/builtin/mocha.toml")),
-    ("pip.toml", include_str!("../../../parsers/builtin/pip.toml")),
-    ("pnpm.toml", include_str!("../../../parsers/builtin/pnpm.toml")),
-    // Tier 3: Infrastructure & cloud tools
-    ("terraform.toml", include_str!("../../../parsers/builtin/terraform.toml")),
-    ("kubectl.toml", include_str!("../../../parsers/builtin/kubectl.toml")),
-    ("helm.toml", include_str!("../../../parsers/builtin/helm.toml")),
-    ("aws.toml", include_str!("../../../parsers/builtin/aws.toml")),
-    ("docker-cli.toml", include_str!("../../../parsers/builtin/docker.toml")),
-    // Tier 4: Modern JS/Python ecosystem
-    ("uv.toml", include_str!("../../../parsers/builtin/uv.toml")),
-    ("ruff.toml", include_str!("../../../parsers/builtin/ruff.toml")),
-    ("turbo.toml", include_str!("../../../parsers/builtin/turbo.toml")),
-    ("nx.toml", include_str!("../../../parsers/builtin/nx.toml")),
-    ("deno.toml", include_str!("../../../parsers/builtin/deno.toml")),
-    ("bun.toml", include_str!("../../../parsers/builtin/bun.toml")),
-    ("biome.toml", include_str!("../../../parsers/builtin/biome.toml")),
-    ("oxlint.toml", include_str!("../../../parsers/builtin/oxlint.toml")),
-    ("vitest.toml", include_str!("../../../parsers/builtin/vitest.toml")),
-    // Tier 5: Universal tools
-    ("git.toml", include_str!("../../../parsers/builtin/git.toml")),
-    ("curl.toml", include_str!("../../../parsers/builtin/curl.toml")),
-    ("ssh.toml", include_str!("../../../parsers/builtin/ssh.toml")),
-];
+#[derive(rust_embed::RustEmbed)]
+#[folder = "parsers/builtin/"]
+#[include = "*.toml"]
+struct BuiltinAssets;
 
 /// Load all builtin parser definitions.
 /// Returns `(filename, def)` pairs. Logs warnings for parse failures.
-pub fn load_builtins() -> Vec<(&'static str, TomlParserDef)> {
-    BUILTIN_TOML
-        .iter()
-        .filter_map(|(name, content)| match TomlParserDef::parse(content) {
-            Ok(def) => Some((*name, def)),
-            Err(e) => {
-                tracing::error!("builtin parser '{}': {}", name, e);
-                None
+pub fn load_builtins() -> Vec<(String, TomlParserDef)> {
+    BuiltinAssets::iter()
+        .filter_map(|file_path| {
+            let name = file_path.to_string();
+            let file = BuiltinAssets::get(&file_path)?;
+            let content = std::str::from_utf8(file.data.as_ref()).ok()?;
+            match TomlParserDef::parse(content) {
+                Ok(def) => Some((name, def)),
+                Err(e) => {
+                    tracing::error!("builtin parser '{}': {}", name, e);
+                    None
+                }
             }
         })
         .collect()
