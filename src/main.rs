@@ -9,7 +9,7 @@ mod proxy;
     name = "arshy",
     version,
     about = "AI Agent native shell — structured output, auto-mode intelligence, command filtering",
-    long_about = "Arshy is a structured shell execution layer for AI agents. It replaces raw Bash with typed, queryable command execution: smart sync for short commands, async structured output for long commands, and 20 built-in parsers for common build/test tools."
+    long_about = "Arshy is a structured shell execution layer for AI agents. It replaces raw Bash with typed, queryable command execution: smart sync for short commands, async structured output for long commands, and 37 built-in parsers for common build/test tools."
 )]
 pub struct Cli {
     /// Run as MCP stdio proxy (for Claude Code / Cursor integration).
@@ -117,9 +117,6 @@ pub enum CliCommand {
         /// Output format: pretty (terminal UI), json (raw JSON), auto (default)
         #[arg(long, default_value = "auto")]
         format: String,
-        /// Open interactive web dashboard in the browser
-        #[arg(long)]
-        web: bool,
     },
     /// Manage parsers
     Parser {

@@ -37,7 +37,6 @@ regex = "1"
 libc = "0.2"
 
 notify = "7"
-rhai = { version = "1.24", features = ["sync"] }
 rust-embed = { version = "8", features = ["include-exclude"] }
 
 [dev-dependencies]

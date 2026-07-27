@@ -1,6 +1,5 @@
 //! CLI command dispatch — connects to daemon via UDS and executes user commands.
 
-pub mod dashboard;
 pub mod render;
 pub mod shell_wrapper;
 
@@ -63,9 +62,7 @@ pub async fn dispatch(cli: Cli) -> Result<()> {
         Some(CliCommand::InstallSystemd) => install_systemd(),
         Some(CliCommand::Doctor) => doctor(config_path, log_level),
         Some(CliCommand::Benchmark) => run_benchmark(),
-        Some(CliCommand::Analyze { format, web }) => {
-            analyze(config_path, log_level, &format, web).await
-        }
+        Some(CliCommand::Analyze { format }) => analyze(config_path, log_level, &format).await,
         Some(CliCommand::Parser { action }) => parser_action(action, config_path, log_level).await,
         Some(CliCommand::Hook { action }) => match action {
             crate::HookAction::Install => shell_wrapper::install_hook(),
@@ -1467,7 +1464,6 @@ async fn analyze(
     config_path: Option<PathBuf>,
     log_level: Option<String>,
     format: &str,
-    web: bool,
 ) -> Result<()> {
     let mut daemon = connect(config_path, log_level).await?;
     let request = Request {
@@ -1477,10 +1473,6 @@ async fn analyze(
         params: serde_json::json!({}),
     };
     let response = ipc::send_request(&mut daemon, &request).await?;
-
-    if web || format == "web" {
-        return dashboard::render_web_dashboard(&response.result);
-    }
 
     match format {
         "json" => {

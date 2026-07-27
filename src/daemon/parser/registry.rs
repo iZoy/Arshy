@@ -2,7 +2,7 @@
 //!
 //! Sources (in priority order):
 //! 1. Builtin parsers (embedded TOML, compiled into binary)
-//! 2. User parsers (filesystem, `~/.arshy/parsers/*.toml` / `*.rhai`)
+//! 2. User parsers (filesystem, `~/.arshy/parsers/*.toml`)
 //!
 //! Same-name user parsers override builtins.
 
@@ -17,7 +17,7 @@ fn starts_with_ignore_ascii_case(haystack: &str, prefix: &str) -> bool {
     haystack.as_bytes()[..prefix.len()].eq_ignore_ascii_case(prefix.as_bytes())
 }
 
-use super::rhai::StatefulPattern;
+use super::stateful::StatefulPattern;
 use super::toml::LinePattern;
 use super::toml_def;
 use super::{ParsedTool, ParserType};
@@ -39,8 +39,6 @@ pub struct ParserEntry {
     pub line_patterns: Vec<LinePattern>,
     /// Compiled stateful patterns (for stateful parsers). Empty for TOML-only parsers.
     pub stateful_patterns: Vec<StatefulPattern>,
-    /// Rhai script source (for `.rhai` user parsers). None for TOML parsers.
-    pub rhai_script: Option<String>,
     /// Minimum tool version required (semver, inclusive). None = no minimum.
     pub min_version: Option<String>,
     /// Maximum tool version supported (semver, inclusive). None = no maximum.
@@ -89,7 +87,6 @@ impl ParserRegistry {
             priority: 0,
             line_patterns: vec![],
             stateful_patterns: vec![],
-            rhai_script: None,
             min_version: None,
             max_version: None,
             schema_version: "1.0".into(),
@@ -274,12 +271,11 @@ fn def_to_entry(def: toml_def::TomlParserDef, source: ParserSource) -> ParserEnt
         tool_name: def.meta.name.clone(),
         detect_patterns: def.meta.detect.clone(),
         detect_full_patterns: def.meta.detect_full.clone(),
-        parser_type: if is_stateful { ParserType::Rhai } else { ParserType::Toml },
+        parser_type: if is_stateful { ParserType::Stateful } else { ParserType::Toml },
         source,
         priority: def.meta.priority,
         line_patterns: if is_stateful { Vec::new() } else { def.to_line_patterns() },
         stateful_patterns: if is_stateful { def.to_stateful_patterns() } else { Vec::new() },
-        rhai_script: None,
         min_version: def.meta.min_version.clone(),
         max_version: def.meta.max_version.clone(),
         schema_version: def.meta.schema_version.clone(),
@@ -289,7 +285,7 @@ fn def_to_entry(def: toml_def::TomlParserDef, source: ParserSource) -> ParserEnt
 }
 
 /// Load a user parser from a filesystem path.
-/// Supports `.toml` (declarative) and `.rhai` (stateful) files.
+/// Supports `.toml` files (declarative, stateless or stateful patterns).
 fn load_user_parser(path: &std::path::Path) -> Option<ParserEntry> {
     let ext = path.extension()?.to_str()?;
     let stem = path.file_stem()?.to_str()?;
@@ -303,38 +299,6 @@ fn load_user_parser(path: &std::path::Path) -> Option<ParserEntry> {
                 entry.detect_patterns = vec![stem.to_string()];
             }
             Some(entry)
-        }
-        "rhai" => {
-            // Load rhai script content from filesystem.
-            let content = match std::fs::read_to_string(path) {
-                Ok(c) => c,
-                Err(e) => {
-                    tracing::warn!("cannot read rhai file '{}': {}", path.display(), e);
-                    return None;
-                }
-            };
-            // Validate syntax before registering.
-            if let Err(e) = rhai::Engine::new().compile(&content) {
-                tracing::warn!("rhai syntax error in '{}': {}", path.display(), e);
-                return None;
-            }
-            Some(ParserEntry {
-                name: stem.to_string(),
-                tool_name: stem.to_string(),
-                detect_patterns: vec![stem.to_string()],
-                detect_full_patterns: vec![],
-                parser_type: ParserType::Rhai,
-                source: ParserSource::User,
-                priority: 100, // user parsers get high priority
-                line_patterns: Vec::new(),
-                stateful_patterns: Vec::new(),
-                rhai_script: Some(content),
-                min_version: None,
-                max_version: None,
-                schema_version: "1.0".into(),
-                since_version: None,
-                deprecated_count: 0,
-            })
         }
         _ => None,
     }
@@ -370,7 +334,7 @@ mod tests {
 
         let tool = registry.detect("npm install").unwrap();
         assert_eq!(tool.tool_name, "npm");
-        assert_eq!(tool.parser_type, ParserType::Rhai);
+        assert_eq!(tool.parser_type, ParserType::Stateful);
     }
 
     #[test]
@@ -419,7 +383,7 @@ mod tests {
         let registry = ParserRegistry::load(&config).unwrap();
 
         let npm = registry.get("npm").unwrap();
-        assert_eq!(npm.parser_type, ParserType::Rhai);
+        assert_eq!(npm.parser_type, ParserType::Stateful);
         assert!(!npm.stateful_patterns.is_empty(), "npm should have stateful patterns");
         assert!(npm.line_patterns.is_empty(), "npm should have no line patterns");
     }

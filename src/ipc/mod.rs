@@ -15,7 +15,6 @@ pub const METHOD_QUERY: &str = "task/query";
 pub const METHOD_LIST: &str = "task/list";
 pub const METHOD_KILL: &str = "task/kill";
 pub const METHOD_TAIL: &str = "task/tail";
-pub const METHOD_STDIN: &str = "task/stdin";
 pub const METHOD_STATUS: &str = "daemon/status";
 pub const METHOD_PRUNE: &str = "daemon/prune";
 pub const METHOD_SHUTDOWN: &str = "daemon/shutdown";

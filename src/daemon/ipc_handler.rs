@@ -8,7 +8,7 @@
 use crate::ipc::{
     self, ErrorResponse, JsonRpcError, Notification, QueryParams, Request, Response, RunTaskParams,
     METHOD_CD, METHOD_HEALTH, METHOD_KILL, METHOD_LIST, METHOD_PRUNE, METHOD_QUERY, METHOD_RUN,
-    METHOD_SHUTDOWN, METHOD_STATS, METHOD_STATUS, METHOD_STDIN, METHOD_SUBSCRIBE, METHOD_TAIL,
+    METHOD_SHUTDOWN, METHOD_STATS, METHOD_STATUS, METHOD_SUBSCRIBE, METHOD_TAIL,
 };
 use crate::Result;
 use serde::Serialize;
@@ -348,17 +348,28 @@ async fn dispatch(
                 )
                 .await?;
             let mut resp = serde_json::to_value(&result)?;
-            // Include structured events in the run response so agents get everything
-            // in one round-trip (no separate arshy_query needed).
+            // Adaptive inline events: keep the one-round-trip flow (validated by
+            // dogfooding — see commit ec523d3) while honoring token restraint.
+            // Failure → up to 20 error-severity events; success → up to 5
+            // warning/info events. Full detail stays available via arshy_query.
+            let failed = result.exit_code.unwrap_or(0) != 0;
+            let (inline_limit, severity_filter) =
+                if failed { (20, Some("error".to_string())) } else { (5, None) };
             let query = QueryParams {
                 task_id: result.task_id.clone(),
-                limit: 200,
+                limit: inline_limit,
+                severity: severity_filter,
                 include_logs: false,
                 ..Default::default()
             };
             if let Ok((events, total)) = store.query_events(&query) {
+                let shown = events.len();
                 resp["events"] = serde_json::to_value(&events).unwrap_or_default();
                 resp["event_count"] = serde_json::json!(total);
+                if let Some((truncated, hint)) = truncation_hint(shown, total, &result.task_id) {
+                    resp["events_truncated"] = serde_json::json!(truncated);
+                    resp["events_hint"] = serde_json::json!(hint);
+                }
             }
             Ok(resp)
         }
@@ -451,7 +462,6 @@ async fn dispatch(
             let stats = store.get_stats(db_path)?;
             Ok(serde_json::to_value(&stats)?)
         }
-        METHOD_STDIN => Err(crate::ArshyError::Ipc("stdin write not supported yet".into())),
         ipc::METHOD_PARSER_RELOAD => {
             let diff = executor.reload_parsers()?;
             Ok(serde_json::json!({ "diff": diff }))
@@ -497,6 +507,24 @@ fn bus_event_to_notification(event: &BusEvent) -> Option<Notification> {
 fn daemon_uptime_secs() -> u64 {
     static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
     START.get_or_init(std::time::Instant::now).elapsed().as_secs()
+}
+
+/// Build the `events_truncated` / `events_hint` fields for a run response when
+/// the inlined event sample is smaller than the total event count.
+///
+/// Returns `None` when everything fits (no truncation signal needed).
+fn truncation_hint(shown: usize, total: usize, task_id: &str) -> Option<(bool, String)> {
+    if shown < total {
+        Some((
+            true,
+            format!(
+                "Showing {}/{} events. Call arshy_query(task_id:\"{}\") for the rest.",
+                shown, total, task_id
+            ),
+        ))
+    } else {
+        None
+    }
 }
 
 // ── Integration tests ──────────────────────────────────────────────────────
@@ -575,6 +603,11 @@ mod tests {
         assert_eq!(resp.result["status"], "completed");
         assert_eq!(resp.result["exit_code"], 0);
         assert!(resp.result["duration_ms"].as_u64().unwrap() > 0);
+        // Adaptive inline: success path returns a small events sample.
+        assert!(resp.result["events"].is_array());
+        assert!(resp.result["event_count"].is_u64());
+        // No events for `echo` → no truncation signal.
+        assert!(resp.result.get("events_truncated").is_none());
     }
 
     #[tokio::test]
@@ -591,6 +624,9 @@ mod tests {
             .unwrap();
         assert_eq!(resp.result["status"], "failed");
         assert_eq!(resp.result["exit_code"], 42);
+        // Adaptive inline: failure path returns error-severity events (none here).
+        assert!(resp.result["events"].is_array());
+        assert!(resp.result["event_count"].is_u64());
     }
 
     #[tokio::test]
@@ -1430,5 +1466,22 @@ mod tests {
         let (mut conn, _notif_rx, _store, _tmp) = spawn_daemon_pair().await;
         let resp = conn.send_request(METHOD_SUBSCRIBE, serde_json::json!({})).await.unwrap();
         assert!(resp.result.get("error").is_some());
+    }
+
+    // ── Adaptive inline unit tests ────────────────────────────────────────
+
+    #[test]
+    fn test_truncation_hint_none_when_all_fit() {
+        assert!(truncation_hint(0, 0, "t1").is_none());
+        assert!(truncation_hint(5, 5, "t1").is_none());
+    }
+
+    #[test]
+    fn test_truncation_hint_some_when_truncated() {
+        let (truncated, hint) = truncation_hint(5, 42, "task-abc").unwrap();
+        assert!(truncated);
+        assert!(hint.contains("5/42"));
+        assert!(hint.contains("task-abc"));
+        assert!(hint.contains("arshy_query"));
     }
 }

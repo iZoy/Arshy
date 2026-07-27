@@ -32,7 +32,7 @@ use std::collections::HashMap;
 use serde::Deserialize;
 
 use super::redos;
-use super::rhai::StatefulPattern;
+use super::stateful::StatefulPattern;
 use super::toml::LinePattern;
 
 // ── TOML schema types ────────────────────────────────────────────────────────
@@ -121,7 +121,7 @@ impl TomlParserDef {
         toml::from_str(content).map_err(|e| format!("TOML parse error: {}", e))
     }
 
-    /// Whether this is a stateful (Rhai-type) parser.
+    /// Whether this is a stateful (Stateful-type) parser.
     pub fn is_stateful(&self) -> bool {
         self.meta.parser_type == "stateful"
     }

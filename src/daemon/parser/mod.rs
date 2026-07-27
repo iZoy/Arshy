@@ -5,7 +5,7 @@
 //! Architecture:
 //! - `toml_def` — TOML file format deserialization
 //! - `toml` — stateless line-by-line matching
-//! - `rhai` — stateful cross-line matching
+//! - `stateful` — stateful cross-line matching
 //! - `crash` — universal crash/traceback detection
 //! - `registry` — loads and deduplicates parser entries
 //! - `detect` — tool extraction and version detection
@@ -21,7 +21,7 @@ mod loader;
 pub mod pair_merger;
 mod redos;
 mod registry;
-pub mod rhai;
+pub mod stateful;
 pub mod toml;
 pub mod toml_def;
 
@@ -167,7 +167,7 @@ impl Engine {
                         .collect();
 
                     // Filter stateful patterns similarly
-                    let stateful_patterns: Vec<rhai::StatefulPattern> = entry.stateful_patterns.iter()
+                    let stateful_patterns: Vec<stateful::StatefulPattern> = entry.stateful_patterns.iter()
                         .filter(|p| {
                             if p.deprecated {
                                 if p.replaced_by.is_some() {
@@ -184,15 +184,10 @@ impl Engine {
                         .collect();
 
                     let stateful = if !stateful_patterns.is_empty() {
-                        Some(rhai::StatefulParser::with_patterns(&entry.name, stateful_patterns))
-                    } else if let Some(ref script) = entry.rhai_script {
-                        match rhai::StatefulParser::with_script(script) {
-                            Ok(p) => Some(p),
-                            Err(e) => {
-                                tracing::error!("rhai script '{}': {}", entry.name, e);
-                                None
-                            }
-                        }
+                        Some(stateful::StatefulParser::with_patterns(
+                            &entry.name,
+                            stateful_patterns,
+                        ))
                     } else {
                         None
                     };
@@ -242,7 +237,7 @@ impl Engine {
 /// A per-task parser session that holds a pre-built TOML parser and state.
 pub struct ParserSession {
     toml_parser: Option<toml::TomlParser>,
-    stateful: Option<rhai::StatefulParser>,
+    stateful: Option<stateful::StatefulParser>,
 }
 
 impl ParserSession {
@@ -254,7 +249,7 @@ impl ParserSession {
     ///
     /// Pipeline order:
     /// 1. Format detection (JSON line) — highest priority for structured data
-    /// 2. Stateful parser (Rhai/state-machine)
+    /// 2. Stateful parser (state-machine patterns)
     /// 3. TOML parser (regex patterns)
     /// 4. Crash parser (universal crash detection)
     /// 5. Heuristic error filter
@@ -325,7 +320,7 @@ pub struct ParsedTool {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ParserType {
     Toml,
-    Rhai,
+    Stateful,
     Raw,
 }
 

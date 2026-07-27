@@ -1,7 +1,7 @@
 //! File-system watcher for hot-reloading parser changes.
 //!
 //! Uses `notify` v7 for filesystem event monitoring.
-//! When a `.toml` or `.rhai` parser file is created, modified, or deleted,
+//! When a `.toml` parser file is created, modified, or deleted,
 //! invokes the callback to trigger a registry reload.
 
 use crate::Result;
@@ -12,7 +12,7 @@ use std::time::Duration;
 
 /// A file watcher for parser directories.
 ///
-/// Watches configured directories for changes to `.toml` and `.rhai` files.
+/// Watches configured directories for changes to `.toml` files.
 /// When a change is detected, invokes the provided callback.
 ///
 /// Dropping the watcher stops the background thread.
@@ -80,7 +80,7 @@ fn is_parser_event(event: &Event) -> bool {
         EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_) => event
             .paths
             .iter()
-            .any(|p| matches!(p.extension().and_then(|e| e.to_str()), Some("toml") | Some("rhai"))),
+            .any(|p| matches!(p.extension().and_then(|e| e.to_str()), Some("toml"))),
         _ => false,
     }
 }
@@ -100,7 +100,8 @@ mod tests {
     }
 
     #[test]
-    fn test_is_parser_event_rhai() {
+    fn test_is_parser_event_rhai_ignored() {
+        // .rhai scripts are no longer supported; only .toml parser files trigger reload.
         let event = Event {
             kind: EventKind::Modify(notify::event::ModifyKind::Data(
                 notify::event::DataChange::Content,
@@ -108,7 +109,7 @@ mod tests {
             paths: vec![PathBuf::from("/tmp/custom.rhai")],
             attrs: Default::default(),
         };
-        assert!(is_parser_event(&event));
+        assert!(!is_parser_event(&event));
     }
 
     #[test]
@@ -137,7 +138,7 @@ mod tests {
     fn test_is_parser_event_remove() {
         let event = Event {
             kind: EventKind::Remove(notify::event::RemoveKind::File),
-            paths: vec![PathBuf::from("/tmp/deleted.rhai")],
+            paths: vec![PathBuf::from("/tmp/deleted.toml")],
             attrs: Default::default(),
         };
         assert!(is_parser_event(&event));
