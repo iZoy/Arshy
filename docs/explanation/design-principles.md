@@ -32,7 +32,7 @@ Agent 可执行任意命令，但系统必须有多层安全兜底。
 
 新工具的输出格式不断出现，解析能力必须可扩展且可维护。
 
-设计决策：三级 parser 架构 — TOML 声明式（schema v1.0，含 deprecated/replaced_by/since_version）、Rhai 脚本、Crash/Raw 兜底。Parser 热重载 + diff 审计。`ARSHY_BLESS=1` 自动生成 test fixture。ReDoS 静态校验拒绝危险正则。
+设计决策：三级 parser 架构 — TOML 声明式（schema v1.0，含 deprecated/replaced_by/since_version，支持无状态与有状态模式）、Crash/Raw 兜底。Parser 热重载 + diff 审计。`ARSHY_BLESS=1` 自动生成 test fixture。ReDoS 静态校验拒绝危险正则。
 
 ### 6. MCP 原生，自描述
 

@@ -9,7 +9,7 @@ Parser 管道是 Arshy 的核心：将命令的原始文本输出转化为结构
 每行输出按优先级依次尝试，命中即停止：
 
 ```
-行 → 格式检测(JSON/NDJSON/YAML/CSV) → Stateful(Rhai) → TOML(regex) → Crash(通用) → Heuristic(启发式) → Raw
+行 → 格式检测(JSON/NDJSON/YAML/CSV) → Stateful(模式状态机) → TOML(regex) → Crash(通用) → Heuristic(启发式) → Raw
 ```
 
 ### 1. 格式检测（新增）
@@ -25,14 +25,14 @@ Parser 管道是 Arshy 的核心：将命令的原始文本输出转化为结构
 
 实现：`json.rs` 中的 `try_parse_line()` 作为第一级，`try_parse()` 作为全量输出检测。
 
-### 2. Stateful Parser（Rhai 引擎）
+### 2. Stateful Parser（模式状态机）
 
 跨行有状态匹配。适用场景：
 - npm install 的多行错误块
 - webpack 的 chunk 编译错误（ERROR + 后续位置行）
 - 需要在多行间追踪状态的复杂格式
 
-实现：`StatefulPattern` 含 `state_condition`/`state_transition`，跨行保持状态。Rhai 脚本模式支持 `on_line()` / `on_complete()` 回调。
+实现：`StatefulPattern` 含 `state_condition`/`state_transition`，跨行保持状态。模式由 TOML 定义加载，见 `stateful.rs`。
 
 ### 3. Line Patterns（TOML 无状态）
 

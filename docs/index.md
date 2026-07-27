@@ -14,7 +14,6 @@ AI Agent 的原生 Shell。安装即接管 — 无需修改 CLAUDE.md，无需�
 
 - [配置](guides/configuration.md) — 配置文件格式、环境变量、分层覆盖、版本化、安全边界
 - [自定义 Parser（TOML）](guides/custom-parser-toml.md) — 声明式正则匹配、deprecated/replaced_by 生命周期
-- [自定义 Parser（Rhai）](guides/custom-parser-rhai.md) — 脚本化跨行解析
 - [安全](guides/security.md) — 命令过滤、沙箱路径、权限分级、审计日志、socket 权限
 - [Daemon 管理](guides/daemon-management.md) — 启停、PID、空闲退出、健康检查退避
 - [故障排查](guides/troubleshooting.md) — 常见问题及解决
@@ -26,7 +25,6 @@ AI Agent 的原生 Shell。安装即接管 — 无需修改 CLAUDE.md，无需�
 - [MCP 协议](reference/mcp-protocol.md) — 工具定义、资源、通知、retryable 错误
 - [IPC 协议](reference/ipc-protocol.md) — JSON-RPC 方法、错误码、数据类型
 - [Parser TOML 格式](reference/parser-toml-format.md) — TOML parser 定义规范（v1.0 schema）
-- [Parser Rhai API](reference/parser-rhai-api.md) — 脚本引擎 API 参考
 - [错误码](reference/error-codes.md) — JSON-RPC 错误码及重试语义
 
 ## 规范
@@ -51,7 +49,7 @@ Agent: arshy_exec(command: "cargo test")
 
 ### 6 级 Parser 管道
 ```
-行 → 格式检测(JSON/NDJSON/YAML/CSV) → Stateful(Rhai) → TOML(regex) → Crash(通用) → Heuristic(启发式) → Raw
+行 → 格式检测(JSON/NDJSON/YAML/CSV) → Stateful(模式状态机) → TOML(regex) → Crash(通用) → Heuristic(启发式) → Raw
 ```
 
 ### 智能输出

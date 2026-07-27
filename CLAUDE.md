@@ -48,7 +48,7 @@ arshy parser list                  # list loaded parsers
 
 ## Architecture
 
-Two-binary Rust crate (~14,500 lines) implementing an MCP server that replaces raw Bash for AI agents.
+Two-binary Rust crate (~22,000 lines) implementing an MCP server that replaces raw Bash for AI agents.
 
 ### Two-Binary Design
 
@@ -61,7 +61,7 @@ Communication: JSON-RPC 2.0 over Unix Domain Socket, JSON Lines framing.
 
 1. Agent calls `arshy_exec` MCP tool -> proxy translates to IPC request
 2. Daemon executor spawns command via PTY
-3. Output flows through 6-layer parser pipeline: JSON -> Rhai stateful -> TOML regex -> Crash detection -> Heuristic error filter -> Raw fallback
+3. Output flows through 6-layer parser pipeline: JSON -> Stateful patterns -> TOML regex -> Crash detection -> Heuristic error filter -> Raw fallback
 4. Events deduplicated (consecutive identical lines collapsed), stored in SQLite, published via EventBus
 5. Error events enriched with source context (±3 lines) and git change correlation
 6. Results returned as structured MCP response
@@ -74,7 +74,7 @@ Communication: JSON-RPC 2.0 over Unix Domain Socket, JSON Lines framing.
 | Executor | `src/daemon/exec/mod.rs` | Task scheduling, auto-mode intelligence (~1620 lines) |
 | IPC Handler | `src/daemon/ipc_handler.rs` | JSON-RPC dispatch, notification routing (~1344 lines) |
 | Parser Engine | `src/daemon/parser/mod.rs` | 6-layer pipeline orchestration (~715 lines) |
-| Parsers | `src/daemon/parser/*.rs` | toml.rs, rhai.rs, crash.rs, heuristic.rs, dedup.rs, json.rs, detect.rs |
+| Parsers | `src/daemon/parser/*.rs` | toml.rs, stateful.rs, crash.rs, heuristic.rs, dedup.rs, json.rs, detect.rs |
 | Context | `src/daemon/context/` | Source context enrichment + git correlation |
 | Store | `src/daemon/store/` | SQLite CRUD, prune, version cache |
 | Config | `src/config/` | Loading priority: CLI > env > file > defaults |

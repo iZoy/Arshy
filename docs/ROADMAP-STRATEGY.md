@@ -118,8 +118,8 @@ arshy 是**执行层**——控制命令的整个生命周期。
 | 里程碑 | 优先级 | 状态 |
 |--------|--------|------|
 | 多 agent 支持 (Cursor, Codex, Copilot, Gemini) | P0 | ✅ Cursor |
-| Hook 拦截模式 (零配置透明接入) | P0 | ⬜ |
-| 发布 v0.2.0 (GitHub Release) | P0 | 🔄 待发 |
+| Hook 拦截模式 (零配置透明接入) | P0 | ✅ |
+| 发布 v0.2.0 (GitHub Release) | P0 | ✅ 已发 |
 | Dogfooding (永久实践：所有开发命令走 arshy，积累 stats 数据) | P0 | ✅ 进行中 |
 | 社区发布 (README 完善 + 社区推广) | P1 | ✅ README 重写 |
 | 收集 10 个用户的反馈 | P1 | ⬜ |

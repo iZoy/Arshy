@@ -58,7 +58,7 @@ Short commands (ls, git status, echo) return instantly as plain text. Long comma
 - **Terminal UI** -- `arshy run "cargo build" --format pretty` for structured visualization.
 - **`arshy doctor`** -- diagnose MCP integration issues with a single command.
 - **`arshy analyze`** -- impact analysis report across recent tasks.
-- **Custom parsers** -- TOML (declarative regex) or Rhai (scriptable stateful) for community contributions.
+- **Custom parsers** -- TOML (declarative regex, stateless or stateful patterns) for community contributions.
 
 ## Configuration
 

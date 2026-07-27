@@ -86,7 +86,7 @@ Agent → arshy_exec(command: "cargo test")
 每行输出按优先级依次尝试，命中即停止：
 
 ```
-行 → 格式检测(JSON/NDJSON/YAML/CSV) → Stateful(Rhai) → TOML(regex) → Crash(通用) → Heuristic(启发式) → Raw
+行 → 格式检测(JSON/NDJSON/YAML/CSV) → Stateful(模式状态机) → TOML(regex) → Crash(通用) → Heuristic(启发式) → Raw
 ```
 
 第一级命中则跳过后续级别。Pattern 编译时经过 ReDoS 安全校验。
@@ -125,7 +125,7 @@ arshyd (crate: bin, daemon)
 ├── parser     — 解析引擎
 │   ├── toml_def — TOML schema v1.0 格式定义
 │   ├── toml     — 无状态逐行匹配
-│   ├── rhai     — 有状态脚本引擎
+│   ├── stateful — 有状态模式匹配
 │   ├── crash    — 5 语言通用崩溃检测
 │   ├── json     — 格式检测（JSON/NDJSON/YAML/CSV）
 │   ├── redos    — ReDoS 安全校验

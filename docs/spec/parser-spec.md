@@ -31,7 +31,6 @@ A parser definition is a single TOML file. It contains:
 |------|--------|----------|
 | **TOML (stateless)** | Regex line-by-line | Most tools — compiler errors, linter warnings, build output |
 | **TOML (stateful)** | Regex + state machine | Tools whose output spans multiple lines and requires context |
-| **Rhai script** | `.rhai` scripting | Complex multi-line output, deeply nested formats |
 
 Tier selection is declared in `[meta] parser_type`. Most parsers use the default (stateless TOML).
 
@@ -239,57 +238,6 @@ state_condition = "has_error=true"
 In this example:
 1. When `npm ERR!` is seen, an error event is emitted AND `has_error` is set to `"true"`
 2. The summary pattern only matches if `has_error` is `"true"` — so a summary is only emitted when there was an error
-
----
-
-## 4. Rhai Script Parser
-
-For output formats that cannot be expressed as line-by-line regex (deeply nested, multi-line blocks, context-dependent), a `.rhai` script provides full control.
-
-### 4.1 Script API
-
-```rhai
-fn on_line(line, ctx) {
-    // Called once per output line
-    // line: string — the current line
-    // ctx  — context object (see below)
-}
-
-fn on_complete(exit_code, ctx) {
-    // Called after the command finishes
-    // exit_code: integer — process exit code
-}
-```
-
-### 4.2 Context object (`ctx`)
-
-| Method | Signature | Description |
-|--------|-----------|-------------|
-| `emit` | `ctx.emit(type, severity, message)` | Emit an event |
-| `emit_at` | `ctx.emit_at(type, severity, message, file, line)` | Emit an event with location |
-| `state_get` | `ctx.state_get(key) -> string` | Read state value |
-| `state_set` | `ctx.state_set(key, value)` | Write state value |
-| `line_number` | `ctx.line_number() -> int` | Current line number (1-indexed) |
-
-### 4.3 Example
-
-```rhai
-fn on_line(line, ctx) {
-    if line.starts_with("Error:") {
-        ctx.emit("diagnostic", "error", line.subslicing(6));
-    } else if line.starts_with("  at ") {
-        // Multi-line pattern: error on previous line, location on this line
-        ctx.emit_at("diagnostic", "error", ctx.state_get("last_error"), line.subslicing(5), 0);
-    }
-    ctx.state_set("last_error", line);
-}
-
-fn on_complete(exit_code, ctx) {
-    if exit_code != 0 {
-        ctx.emit("summary", "error", "Command failed with exit code " + exit_code.to_string());
-    }
-}
-```
 
 ---
 
@@ -607,7 +555,7 @@ This section describes expected runtime behavior for implementations of this spe
 Lines flow through parsers in this order:
 
 1. **JSON/NDJSON detection** — if output is valid JSON, parse directly
-2. **Stateful parsers** (TOML stateful / Rhai scripts)
+2. **Stateful parsers** (TOML stateful patterns)
 3. **Stateless TOML parsers** — line-by-line regex matching
 4. **Crash parser** — universal fallback for panics/tracebacks
 5. **Raw fallback** — return stdout as plain text

@@ -157,6 +157,6 @@ Arshy requires Rust 1.75 or later.
 | `~/.local/share/arshy/arshyd.sock` | Unix socket (daemon IPC) |
 | `~/.local/share/arshy/arshy.db` | SQLite database (WAL mode) |
 | `~/.local/share/arshy/arshyd.pid` | Daemon PID file |
-| `~/.arshy/parsers/` | User custom parsers (TOML / Rhai) |
+| `~/.arshy/parsers/` | User custom parsers (TOML) |
 | `~/.claude.json` | Claude Code MCP server config |
 | `~/.claude/settings.json` | Claude Code permissions |
