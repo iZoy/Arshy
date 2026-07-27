@@ -1,6 +1,5 @@
 # Rust
 /target/
-Cargo.lock
 
 # IDE
 .idea/
@@ -20,3 +19,11 @@ Cargo.lock
 
 # MCP local config (contains personal paths)
 .mcp.json
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Local agent tooling state (not part of the project)
+.workbuddy/
+.superpowers/
