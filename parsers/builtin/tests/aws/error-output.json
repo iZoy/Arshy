@@ -10,9 +10,10 @@
     "type": "log"
   },
   {
-    "message": "An error occurred (InvalidInstanceID.NotFound) when calling the DescribeInstances operation: The instance ID 'i-1234567890abcdef0' does not exist",
+    "code": "InvalidInstanceID.NotFound",
+    "message": "The instance ID 'i-1234567890abcdef0' does not exist",
     "severity": "error",
-    "type": "log"
+    "type": "error"
   },
   {
     "message": "$ aws iam create-user --user-name admin",

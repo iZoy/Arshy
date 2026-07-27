@@ -7,7 +7,7 @@ schema_version = "1"
 
 [[pattern]]
 name = "aws-error"
-regex = '(?i)^An error occurred\s*\((\w+)\)\s*(?:when calling the \w+ operation)?:\s*(.+)'
+regex = '(?i)^An error occurred\s*\(([\w.]+)\)\s*(?:when calling the \w+ operation)?:\s*(.+)'
 event_type = "error"
 severity = "error"
 fields = { code = 1, message = 2 }
