@@ -40,7 +40,7 @@
 后台常驻进程，职责：
 1. 监听 UDS 连接（`Semaphore(64)` 速率限制）
 2. 执行命令（Executor，PTY 分配）
-3. 解析输出（Parser Engine，5 级管道）
+3. 解析输出（Parser Engine，6 级管道）
 4. 持久化数据（Store，SQLite WAL）
 5. 安全过滤（Security，命令黑名单 + 沙箱路径 + 审计日志）
 6. 遥测计数（Telemetry，原子计数器）
@@ -73,7 +73,7 @@ Agent → arshy_exec(command: "cargo test")
               ├─ Security check
               ├─ Parser detection
               ├─ PTY spawn
-              ├─ 5 级 Parser 管道
+              ├─ 6 级 Parser 管道
               ├─ 事件存储到 SQLite
               ├─ 计算 summary + root_cause + project_context
               │
@@ -81,12 +81,12 @@ Agent → arshy_exec(command: "cargo test")
                    {status, exit_code, summary, root_cause, project_context, events[]}
 ```
 
-### Parser 管道（5 级）
+### Parser 管道（6 级）
 
 每行输出按优先级依次尝试，命中即停止：
 
 ```
-行 → 格式检测(JSON/NDJSON/YAML/CSV) → Stateful(Rhai) → TOML(regex) → Crash(通用) → Raw
+行 → 格式检测(JSON/NDJSON/YAML/CSV) → Stateful(Rhai) → TOML(regex) → Crash(通用) → Heuristic(启发式) → Raw
 ```
 
 第一级命中则跳过后续级别。Pattern 编译时经过 ReDoS 安全校验。

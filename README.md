@@ -18,6 +18,13 @@ When an AI Agent runs a shell command via raw Bash, it gets unstructured text. A
 
 ### Install
 
+**One-Click Installer (macOS & Linux):**
+```bash
+curl -fsSL https://raw.githubusercontent.com/iZoy/Arshy/main/install/install.sh | sh
+```
+This script automatically detects your platform, compiles/downloads the binaries, configures transparent shell hooks, and registers background services under launchd (macOS) or systemd (Linux).
+
+**Or install from source manually:**
 ```bash
 git clone https://github.com/iZoy/Arshy.git && cd arshy
 cargo build --release
@@ -71,6 +78,7 @@ See [Configuration](docs/guides/configuration.md) for all options.
 ## Documentation
 
 - [Getting Started](docs/getting-started/install.md)
+- [Product Philosophy & Token Restraint](docs/explanation/philosophy.md)
 - [Configuration](docs/guides/configuration.md)
 - [Custom Parsers](docs/guides/custom-parser-toml.md)
 - [Architecture](docs/explanation/architecture.md)

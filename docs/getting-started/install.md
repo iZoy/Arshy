@@ -2,11 +2,21 @@
 
 ## Prerequisites
 
-- **Rust 1.75+** ([rustup.rs](https://rustup.rs))
 - **macOS or Linux**
 - SQLite is bundled -- no system dependency needed.
+- If installing from source manually, **Rust 1.75+** is required.
 
-## From Source
+## One-Click Installer (Recommended)
+
+Run the following command to automatically detect your environment, install the correct binary, configure transparent shell shims, and start the daemon:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/iZoy/Arshy/main/install/install.sh | sh
+```
+
+For more details on Arshy's design decisions and token savings, see [Product Philosophy & Token Restraint](../explanation/philosophy.md).
+
+## From Source (Manual)
 
 ```bash
 git clone https://github.com/iZoy/Arshy.git
