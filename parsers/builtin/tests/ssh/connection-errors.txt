@@ -1,0 +1,3 @@
+ssh: connect to host example.com port 22: Connection refused
+Permission denied (publickey).
+Host key verification failed.

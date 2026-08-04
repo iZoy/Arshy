@@ -1,0 +1,26 @@
+[
+  {
+    "file": "check.py",
+    "line": 5,
+    "message": "Traceback (most recent call last):",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "message": "    validate()",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": "    assert user.is_active, \"user must be active\"",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "file": "check.py",
+    "line": 2,
+    "message": "AssertionError: user must be active",
+    "severity": "error",
+    "type": "diagnostic"
+  }
+]

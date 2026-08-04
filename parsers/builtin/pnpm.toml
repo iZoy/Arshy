@@ -1,0 +1,34 @@
+[meta]
+name = "pnpm"
+description = "pnpm package manager"
+detect = ["pnpm"]
+parser_type = "stateful"
+priority = 50
+
+[[pattern]]
+name = "pnpm-added"
+regex = '^\s*Packages: \+(\d+)'
+event_type = "summary"
+severity = "info"
+state_transition = "packages_added=done"
+
+[[pattern]]
+name = "pnpm-error"
+regex = '^ERR_PNPM_(\w+)\s+(.+)$'
+event_type = "diagnostic"
+severity = "error"
+fields = { message = 2 }
+state_transition = "has_error=true"
+
+[[pattern]]
+name = "pnpm-warn"
+regex = '^warn\s+(.+)$'
+event_type = "diagnostic"
+severity = "warning"
+fields = { message = 1 }
+
+[[pattern]]
+name = "pnpm-progress"
+regex = '^\s*Progress: resolved (\d+)'
+event_type = "diagnostic"
+severity = "info"

@@ -1,0 +1,6 @@
+warning: unused variable: `x`
+  --> src/lib.rs:22:9
+warning: dead code
+  --> src/module.rs:15:1
+warning: deprecated function `old_api` used
+  --> src/main.rs:8:5

@@ -1,0 +1,39 @@
+[meta]
+name = "terraform"
+description = "Terraform infrastructure tool"
+detect = ["terraform"]
+priority = 50
+
+[[pattern]]
+name = "terraform-error"
+regex = '^Error: (.+)$'
+event_type = "diagnostic"
+severity = "error"
+fields = { message = 1 }
+
+[[pattern]]
+name = "terraform-warning"
+regex = '^Warning: (.+)$'
+event_type = "diagnostic"
+severity = "warning"
+fields = { message = 1 }
+
+[[pattern]]
+name = "terraform-location"
+regex = '^\s+on (.+?) line (\d+):'
+event_type = "location"
+severity = "info"
+fields = { file = 1, line = 2 }
+
+[[pattern]]
+name = "terraform-resource-error"
+regex = '╷\s*$|│ Error: (.+)$|╵\s*$'
+event_type = "diagnostic"
+severity = "error"
+fields = { message = 1 }
+
+[[pattern]]
+name = "terraform-plan-summary"
+regex = '^(Plan:|No changes\.|Apply complete!)'
+event_type = "summary"
+severity = "info"

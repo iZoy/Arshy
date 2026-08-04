@@ -1,0 +1,38 @@
+[meta]
+name = "helm"
+description = "Helm Kubernetes package manager"
+detect = ["helm"]
+priority = 50
+
+[[pattern]]
+name = "helm-error"
+regex = '^Error: (.+)$'
+event_type = "diagnostic"
+severity = "error"
+fields = { message = 1 }
+
+[[pattern]]
+name = "helm-warning"
+regex = '^WARNING: (.+)$'
+event_type = "diagnostic"
+severity = "warning"
+fields = { message = 1 }
+
+[[pattern]]
+name = "helm-template-error"
+regex = '^Error: template: (.+):(\d+): (.+)$'
+event_type = "diagnostic"
+severity = "error"
+fields = { file = 1, line = 2, message = 3 }
+
+[[pattern]]
+name = "helm-install-status"
+regex = '^(STATUS:|NAME:|LAST DEPLOYED:)'
+event_type = "summary"
+severity = "info"
+
+[[pattern]]
+name = "helm-hooks"
+regex = '^(hooks|NOTES):'
+event_type = "summary"
+severity = "info"

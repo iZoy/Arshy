@@ -1,0 +1,24 @@
+[
+  {
+    "message": "  1 passing (100ms)",
+    "severity": "info",
+    "type": "summary"
+  },
+  {
+    "message": "  1 failing",
+    "severity": "error",
+    "type": "summary"
+  },
+  {
+    "message": "Login",
+    "severity": "error",
+    "type": "test_result"
+  },
+  {
+    "file": "test/login.test.js",
+    "line": 8,
+    "message": "expected 200 to equal 500:",
+    "severity": "error",
+    "type": "diagnostic"
+  }
+]

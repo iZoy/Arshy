@@ -1,0 +1,16 @@
+[
+  {
+    "file": "main.c",
+    "line": 42,
+    "message": "missing separator.  Stop.",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "file": "main.c",
+    "line": 10,
+    "message": "unused variable 'x'",
+    "severity": "warning",
+    "type": "diagnostic"
+  }
+]

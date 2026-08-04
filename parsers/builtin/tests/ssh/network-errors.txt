@@ -1,0 +1,3 @@
+user@server: Permission denied (publickey).
+rsync: host.example.com: Network is unreachable
+ssh: connect to host badhost port 22: Connection refused

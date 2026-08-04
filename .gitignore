@@ -1,0 +1,31 @@
+# Rust
+/target/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# macOS
+.DS_Store
+
+# Obsidian / local tooling state
+.obsidian/
+
+# Local non-versioned assets (brand-design files, personal files)
+.localfile/
+
+# Environment
+.env*
+
+# MCP local config (contains personal paths)
+.mcp.json
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Local agent tooling state (not part of the project)
+.workbuddy/
+.superpowers/

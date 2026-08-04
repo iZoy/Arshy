@@ -1,0 +1,114 @@
+[
+  {
+    "message": "Error getting workspace status",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "message": "Unable to list AWS profiles. This is likely a bug in the AWS SDK for Go.",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "message": "╷",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "message": "│",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": "│   on main.tf line 15, in resource \"aws_instance\" \"web\":",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": "│   15:   instance_type = var.instance_type.name",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": "│",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": "│ This object does not have an attribute named \"name\".",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": "Unsupported attribute",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "message": "╵",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "message": "╷",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "message": "│",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": "│   on variables.tf line 3, in variable \"region\":",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": "│    3: variable \"region\" {",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": "│",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": "│ The argument \"default\" is required, but no definition was found.",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": "Missing required argument",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "message": "╵",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "file": "variables.tf",
+    "line": 22,
+    "message": "Value for undeclared variable",
+    "severity": "warning",
+    "type": "diagnostic"
+  },
+  {
+    "message": "  22: variable \"extra\" {",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": "The variable \"extra\" was provided but not declared as a variable in the root module.",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": "Plan: 3 to add, 1 to change, 0 to destroy.",
+    "severity": "info",
+    "type": "summary"
+  }
+]

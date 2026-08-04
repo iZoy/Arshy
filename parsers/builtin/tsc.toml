@@ -1,0 +1,32 @@
+[meta]
+name = "tsc"
+description = "TypeScript compiler"
+detect = ["tsc"]
+priority = 50
+
+[[pattern]]
+name = "ts-error"
+regex = '^(.+?)\((\d+),(\d+)\): error (TS\d+): (.+)$'
+event_type = "diagnostic"
+severity = "error"
+fields = { file = 1, line = 2, column = 3, code = 4, message = 5 }
+
+[[pattern]]
+name = "ts-warning"
+regex = '^(.+?)\((\d+),(\d+)\): warning (TS\d+): (.+)$'
+event_type = "diagnostic"
+severity = "warning"
+fields = { file = 1, line = 2, column = 3, code = 4, message = 5 }
+
+[[pattern]]
+name = "ts-error-alt"
+regex = '^(.+?):(\d+):(\d+) - error (TS\d+): (.+)$'
+event_type = "diagnostic"
+severity = "error"
+fields = { file = 1, line = 2, column = 3, code = 4, message = 5 }
+
+[[pattern]]
+name = "ts-summary"
+regex = '^Found (\d+) errors?\.$'
+event_type = "summary"
+severity = "error"

@@ -1,0 +1,69 @@
+[package]
+name = "arshy"
+version = "0.1.0"
+edition = "2021"
+description = "AI Agent's structured execution layer — structured output, security sandbox, MCP server"
+license = "MIT"
+repository = "https://github.com/iZoy/Arshy"
+homepage = "https://github.com/iZoy/Arshy"
+keywords = ["mcp", "ai-agent", "shell", "cli", "structured-output"]
+categories = ["command-line-utilities", "development-tools"]
+readme = "README.md"
+exclude = [
+    "/.agents",
+    "/.claude",
+    "/.github",
+    "/.localfile",
+    "/.mcp.json",
+    "/.obsidian",
+    "/.pre-commit-config.yaml",
+    "/.superpowers",
+    "/.workbuddy",
+    "/.gitignore",
+    "/CODEOWNERS",
+    "/CONTRIBUTING.md",
+    "/Formula",
+    "/SECURITY.md",
+    "/arshy",
+    "/docs",
+    "/scripts",
+]
+
+[[bin]]
+name = "arshy"
+path = "src/main.rs"
+
+[[bin]]
+name = "arshyd"
+path = "src/daemon/main.rs"
+
+[lib]
+name = "arshy_lib"
+path = "src/lib.rs"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+clap = { version = "4", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
+thiserror = "2"
+chrono = { version = "0.4", features = ["serde"] }
+dirs = "5"
+uuid = { version = "1", features = ["v4"] }
+regex = "1"
+libc = "0.2"
+
+notify = "7"
+rust-embed = { version = "8", features = ["include-exclude"] }
+
+[dev-dependencies]
+tempfile = "3"
+serial_test = "3"
+
+[profile.release]
+opt-level = 2
+strip = "symbols"
+lto = "thin"

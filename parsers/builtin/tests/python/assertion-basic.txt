@@ -1,0 +1,6 @@
+Traceback (most recent call last):
+  File "check.py", line 5, in <module>
+    validate()
+  File "check.py", line 2, in validate
+    assert user.is_active, "user must be active"
+AssertionError: user must be active

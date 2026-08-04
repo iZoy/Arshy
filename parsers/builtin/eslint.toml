@@ -1,0 +1,40 @@
+[meta]
+name = "eslint"
+description = "ESLint linter"
+detect = ["eslint"]
+priority = 50
+
+[[pattern]]
+name = "eslint-diagnostic"
+regex = '^\s+(\d+):(\d+)\s+(error|warning)\s+(.+?)\s+(\S+)$'
+event_type = "diagnostic"
+severity = "error"
+fields = { line = 1, column = 2, severity = 3, message = 4, code = 5 }
+
+[[pattern]]
+name = "eslint-location"
+regex = '^(.+?):(\d+):(\d+)$'
+event_type = "location"
+severity = "info"
+fields = { file = 1, line = 2, column = 3 }
+
+[[pattern]]
+name = "eslint-summary"
+regex = '^✖ (\d+) problems? \((\d+) errors?, (\d+) warnings?\)'
+event_type = "summary"
+severity = "error"
+fields = { message = 0 }
+
+[[pattern]]
+name = "eslint-file-header"
+regex = '^/(.+)'
+event_type = "location"
+severity = "info"
+fields = { file = 1 }
+
+[[pattern]]
+name = "eslint-rule-id"
+regex = '^\s+(error|warning)\s+(.+?)\s+(\S+)$'
+event_type = "diagnostic"
+severity = "error"
+fields = { severity = 1, message = 2, code = 3 }

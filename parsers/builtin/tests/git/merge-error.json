@@ -1,0 +1,26 @@
+[
+  {
+    "message": "refusing to merge unrelated histories",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "file": "src/app.ts",
+    "line": 0,
+    "message": "error: Your local changes to the following files would be overwritten by merge:",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "message": "Aborting",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "file": "Please commit your changes or stash them before you merge.",
+    "line": 0,
+    "message": "\tPlease commit your changes or stash them before you merge.",
+    "severity": "error",
+    "type": "location"
+  }
+]

@@ -1,0 +1,53 @@
+[meta]
+name = "jest"
+description = "Jest / Vitest test runner"
+detect = ["jest", "vitest"]
+priority = 50
+
+[[pattern]]
+name = "test-fail"
+regex = '^FAIL (.+)$'
+event_type = "test_result"
+severity = "error"
+fields = { file = 1 }
+
+[[pattern]]
+name = "test-pass"
+regex = '^PASS (.+)$'
+event_type = "test_result"
+severity = "info"
+fields = { file = 1 }
+
+[[pattern]]
+name = "test-summary"
+regex = '^Tests:\s+(?:(\d+) failed,\s*)?(?:(\d+) passed,\s*)?(\d+) total'
+event_type = "summary"
+severity = "info"
+
+[[pattern]]
+name = "test-suite-summary"
+regex = '^Test Suites:\s+(.+)$'
+event_type = "summary"
+severity = "info"
+fields = { message = 1 }
+
+[[pattern]]
+name = "test-time"
+regex = '^Time:\s+(.+)$'
+event_type = "summary"
+severity = "info"
+fields = { message = 1 }
+
+[[pattern]]
+name = "test-case-pass"
+regex = '^\s*✓\s+(.+)$'
+event_type = "test_result"
+severity = "info"
+fields = { message = 1 }
+
+[[pattern]]
+name = "test-case-fail"
+regex = '^\s*[✕✗×]\s+(.+)$'
+event_type = "test_result"
+severity = "error"
+fields = { message = 1 }

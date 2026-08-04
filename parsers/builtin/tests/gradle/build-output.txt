@@ -1,0 +1,4 @@
+Main.java:42: error: cannot find symbol
+Main.java:10: warning: unused import
+FAILURE: Build failed with an exception.
+BUILD SUCCESSFUL in 5s

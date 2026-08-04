@@ -1,0 +1,70 @@
+/home/user/project/src/app.ts
+  1:10  error  Unexpected any, specify a different type        @typescript-eslint/no-explicit-any
+  2:5   error  'x' is defined but never used                  no-unused-vars
+  3:12  error  Missing return type on function                 @typescript-eslint/explicit-function-return-type
+  5:3   error  Forbidden non-null assertion                    @typescript-eslint/no-non-null-assertion
+  7:1   error  Expected 1 empty line after import statement    import/newline-after-import
+  8:15  error  Strings must use singlequote                   quotes
+  9:10  error  Missing semicolon                               semi
+ 10:8   error  Expected '===' and instead saw '=='             eqeqeq
+ 12:1   error  Unexpected console statement                    no-console
+ 13:5   error  'arr' is never reassigned, use 'const' instead  prefer-const
+ 15:3   error  Unexpected var, use let or const instead        no-var
+ 16:10  error  Do not access Object.prototype method 'hasOwnProperty' directly  no-prototype-builtins
+ 18:1   error  Function 'processData' has too many statements (52). Maximum allowed is 50  max-statements
+ 20:5   error  Unexpected todo comment                        no-warning-comments
+ 22:1   error  File 'app.ts' must be the sole module          import/no-self-import
+ 24:3   error  Avoid deep nesting of callbacks                max-nested-callbacks
+ 26:10  error  Parsing error: Unexpected token                parse-error
+ 28:5   warning  'setTimeout' is not defined                  no-undef
+ 30:3   warning  Prefer template literals over string concatenation  prefer-template
+ 32:10  warning  Arrow function should not return assignment   no-return-assign
+ 34:1   warning  This line has a trailing whitespace           no-trailing-spaces
+
+/home/user/project/src/utils.ts
+  1:1   error  Default export of a module must be the first statement  import/first
+  3:10  error  Unexpected any, specify a different type        @typescript-eslint/no-explicit-any
+  5:5   error  'debug' is defined but never used              no-unused-vars
+  7:12  error  Missing return type on function                 @typescript-eslint/explicit-function-return-type
+  9:3   error  Forbidden non-null assertion                    @typescript-eslint/no-non-null-assertion
+ 11:1   error  Expected 1 empty line after import statement    import/newline-after-import
+ 13:15  error  Strings must use singlequote                   quotes
+ 15:10  error  Missing semicolon                               semi
+ 17:8   error  Expected '===' and instead saw '=='             eqeqeq
+ 19:1   error  Unexpected console statement                    no-console
+ 21:5   error  'result' is never reassigned, use 'const' instead  prefer-const
+ 23:3   error  Unexpected var, use let or const instead        no-var
+ 25:10  error  Do not access Object.prototype method 'hasOwnProperty' directly  no-prototype-builtins
+ 27:1   error  Arrow function has too many parameters (5). Maximum allowed is 3  max-params
+ 29:5   error  Unexpected todo comment                        no-warning-comments
+ 31:1   error  Avoid using await inside loops                 no-await-in-loop
+ 33:10  error  Parsing error: Unexpected token                parse-error
+ 35:5   warning  'setTimeout' is not defined                  no-undef
+ 37:3   warning  Prefer template literals over string concatenation  prefer-template
+ 39:10  warning  Arrow function should not return assignment   no-return-assign
+ 41:1   warning  This line has a trailing whitespace           no-trailing-spaces
+
+/home/user/project/src/types.ts
+  1:1   error  Default export of a module must be the first statement  import/first
+  3:10  error  Unexpected any, specify a different type        @typescript-eslint/no-explicit-any
+  5:5   error  'cache' is defined but never used              no-unused-vars
+  7:12  error  Missing return type on function                 @typescript-eslint/explicit-function-return-type
+  9:3   error  Forbidden non-null assertion                    @typescript-eslint/no-non-null-assertion
+ 11:1   error  Expected 1 empty line after import statement    import/newline-after-import
+ 13:15  error  Strings must use singlequote                   quotes
+ 15:10  error  Missing semicolon                               semi
+ 17:8   error  Expected '===' and instead saw '=='             eqeqeq
+ 19:1   error  Unexpected console statement                    no-console
+ 21:5   error  'config' is never reassigned, use 'const' instead  prefer-const
+ 23:3   error  Unexpected var, use let or const instead        no-var
+ 25:10  error  Do not access Object.prototype method 'hasOwnProperty' directly  no-prototype-builtins
+ 27:1   error  Arrow function has too many parameters (5). Maximum allowed is 3  max-params
+ 29:5   error  Unexpected todo comment                        no-warning-comments
+ 31:1   error  Prefer default export for the module           import/prefer-default-export
+ 33:10  error  Parsing error: Unexpected token                parse-error
+ 35:5   warning  'fetch' is not defined                       no-undef
+ 37:3   warning  Prefer template literals over string concatenation  prefer-template
+ 39:10  warning  Arrow function should not return assignment   no-return-assign
+ 41:1   warning  This line has a trailing whitespace           no-trailing-spaces
+
+✖ 63 problems (57 errors, 6 warnings)

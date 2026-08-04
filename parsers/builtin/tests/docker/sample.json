@@ -1,0 +1,56 @@
+[
+  {
+    "message": "Pulling from library/nginx",
+    "severity": "info",
+    "type": "progress"
+  },
+  {
+    "code": "a2abf6c4d29d",
+    "message": "Pull complete",
+    "severity": "info",
+    "type": "progress"
+  },
+  {
+    "code": "a9edb18cadd1",
+    "message": "Pull complete",
+    "severity": "info",
+    "type": "progress"
+  },
+  {
+    "code": "589b7251471a",
+    "message": "Pull complete",
+    "severity": "info",
+    "type": "progress"
+  },
+  {
+    "message": "Digest: sha256:0d17b565c37bcbd895e9d92315a05c1c3c9a29f762b011a10c54a66cd53c9b31",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": "Status: Downloaded newer image for nginx:latest",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": "IPv4 forwarding is disabled",
+    "severity": "warning",
+    "type": "warning"
+  },
+  {
+    "message": "Conflict. The container name \"/web\" is already in use",
+    "severity": "error",
+    "type": "error"
+  },
+  {
+    "code": "a1b2c3d4e5f6",
+    "message": "Successfully built a1b2c3d4e5f6",
+    "severity": "info",
+    "type": "success"
+  },
+  {
+    "message": "myapp:latest",
+    "severity": "info",
+    "type": "success"
+  }
+]

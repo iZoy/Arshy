@@ -1,0 +1,42 @@
+[meta]
+name = "pip"
+description = "pip package installer"
+detect = ["pip", "pip3"]
+parser_type = "stateful"
+priority = 50
+
+[[pattern]]
+name = "pip-installed"
+regex = '^Successfully installed (.+)'
+event_type = "summary"
+severity = "info"
+state_transition = "installed=done"
+
+[[pattern]]
+name = "pip-error"
+regex = '^(ERROR: .+|Could not install .+)'
+event_type = "diagnostic"
+severity = "error"
+fields = { message = 1 }
+state_transition = "has_error=true"
+
+[[pattern]]
+name = "pip-warning"
+regex = '^(WARNING: .+)'
+event_type = "diagnostic"
+severity = "warning"
+fields = { message = 1 }
+
+[[pattern]]
+name = "pip-requirement-satisfied"
+regex = '^Requirement already satisfied: (.+)'
+event_type = "diagnostic"
+severity = "info"
+fields = { message = 1 }
+
+[[pattern]]
+name = "pip-collecting"
+regex = '^Collecting (.+)'
+event_type = "diagnostic"
+severity = "info"
+fields = { message = 1 }

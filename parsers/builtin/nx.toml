@@ -1,0 +1,33 @@
+[meta]
+name = "nx"
+description = "Nx monorepo build tool"
+detect = ["nx"]
+priority = 50
+
+[[pattern]]
+name = "nx-error"
+regex = '^ERROR\s+(.+)$'
+event_type = "diagnostic"
+severity = "error"
+fields = { message = 1 }
+
+[[pattern]]
+name = "nx-task"
+regex = '^\s*(.+?)\s+(.+?):\s+(.+)$'
+event_type = "log"
+severity = "info"
+fields = { code = 1, message = 3 }
+
+[[pattern]]
+name = "nx-success"
+regex = '^\s*Successfully ran target (.+) for (.+) projects'
+event_type = "summary"
+severity = "info"
+fields = { message = 0 }
+
+[[pattern]]
+name = "nx-failed"
+regex = '^\s*Failed to run target (.+) for (.+) projects'
+event_type = "summary"
+severity = "error"
+fields = { message = 0 }

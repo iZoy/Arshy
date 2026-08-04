@@ -1,0 +1,32 @@
+[meta]
+name = "make"
+description = "GNU Make build tool"
+detect = ["make"]
+priority = 50
+
+[[pattern]]
+name = "make-error"
+regex = '^(.+?):(\d+): \*\*\* (.+)$'
+event_type = "diagnostic"
+severity = "error"
+fields = { file = 1, line = 2, message = 3 }
+
+[[pattern]]
+name = "make-recipe-error"
+regex = '^make: \*\*\* \[(.+?)\] Error (\d+)$'
+event_type = "diagnostic"
+severity = "error"
+fields = { message = 1, code = 2 }
+
+[[pattern]]
+name = "make-cc-warning"
+regex = '^(.+?):(\d+):(\d+): warning: (.+)$'
+event_type = "diagnostic"
+severity = "warning"
+fields = { file = 1, line = 2, column = 3, message = 4 }
+
+[[pattern]]
+name = "make-no-rule"
+regex = '^make: \*\*\* No rule to make target'
+event_type = "diagnostic"
+severity = "error"

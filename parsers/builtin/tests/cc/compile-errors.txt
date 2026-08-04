@@ -1,0 +1,2 @@
+main.c:42:5: error: implicit declaration of function 'printf'
+main.c:10:1: warning: unused variable 'x'

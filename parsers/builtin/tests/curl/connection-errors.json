@@ -1,0 +1,17 @@
+[
+  {
+    "message": "Failed to connect to localhost port 3000: Connection refused",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "message": "SSL certificate problem: unable to get local issuer certificate",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "message": "Operation timed out after 30000 milliseconds with 0 bytes received",
+    "severity": "error",
+    "type": "diagnostic"
+  }
+]

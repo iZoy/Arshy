@@ -1,0 +1,7 @@
+    File "tests/test_login.py", line 15
+E       AssertionError: expected 200, got 500
+FAILED tests/test_login.py::test_login_success
+    File "tests/test_api.py", line 42
+E       KeyError: 'user_id'
+FAILED tests/test_api.py::test_get_user
+========================= 2 failed, 1 passed in 0.15s =========================

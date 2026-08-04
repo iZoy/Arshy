@@ -1,0 +1,4 @@
+WARNING in ./src/utils.ts
+WARNING in ./src/components/old.ts
+ERROR in ./src/index.ts
+ERROR in ./src/app.ts

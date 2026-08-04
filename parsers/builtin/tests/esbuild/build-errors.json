@@ -1,0 +1,24 @@
+[
+  {
+    "file": "src/app.ts",
+    "line": 5,
+    "message": "Could not resolve \"missing-module\"",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "message": "      5 │ import { foo } from \"missing-module\";",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": "        ╵ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": "build failed with 2 errors",
+    "severity": "error",
+    "type": "diagnostic"
+  }
+]

@@ -1,0 +1,8 @@
+error: error validating "deployment.yaml": error validating data: ValidationError(Deployment.spec.replicas): invalid type for io.k8s.api.apps.v1.DeploymentSpec.replicas: got "string", expected "integer"
+Warning: apps/v1beta1 Deployment is deprecated, use apps/v1 instead.
+Error from server (NotFound): deployments.apps "my-app" not found
+NAME                     READY   STATUS             RESTARTS   AGE
+nginx-7d8b49557c-abc12   1/1     Running            0          5d
+nginx-7d8b49557c-def34   0/1     CrashLoopBackOff   3          5d
+   5m   Normal   Pulling           pod/nginx-7d8b49557c-abc12   Pulling image "nginx:latest"
+   2m   Warning  FailedScheduling  pod/nginx-7d8b49557c-def34   0/3 nodes available

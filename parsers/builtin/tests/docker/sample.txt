@@ -1,0 +1,10 @@
+Pulling from library/nginx
+a2abf6c4d29d: Pull complete
+a9edb18cadd1: Pull complete
+589b7251471a: Pull complete
+Digest: sha256:0d17b565c37bcbd895e9d92315a05c1c3c9a29f762b011a10c54a66cd53c9b31
+Status: Downloaded newer image for nginx:latest
+WARNING: IPv4 forwarding is disabled
+Error response from daemon: Conflict. The container name "/web" is already in use
+Successfully built a1b2c3d4e5f6
+Successfully tagged myapp:latest

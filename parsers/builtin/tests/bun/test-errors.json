@@ -1,0 +1,53 @@
+[
+  {
+    "message": "Cannot find module './config' from 'src/index.ts'",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "2322",
+    "file": "src/app.ts",
+    "line": 15,
+    "message": "Type 'string' is not assignable to type 'number'.",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "message": "should add two numbers",
+    "severity": "info",
+    "type": "test_result"
+  },
+  {
+    "message": "should handle zero",
+    "severity": "info",
+    "type": "test_result"
+  },
+  {
+    "message": "should divide by zero",
+    "severity": "error",
+    "type": "test_result"
+  },
+  {
+    "message": "3 pass",
+    "severity": "info",
+    "type": "summary"
+  },
+  {
+    "message": "1 fail",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": "installed 35 packages",
+    "severity": "info",
+    "type": "summary"
+  },
+  {
+    "code": "2339",
+    "file": "src/utils.ts",
+    "line": 42,
+    "message": "Property 'fnd' does not exist on type 'Array<any>'.",
+    "severity": "error",
+    "type": "diagnostic"
+  }
+]

@@ -1,0 +1,135 @@
+error[E0308]: mismatched types
+  --> src/models/user.rs:15:20
+   |
+15 |     pub name: String,
+   |                ^^^^^^ expected `String`, found `&str`
+   |
+   = note: expected type `String`
+              found type `&str`
+
+error[E0308]: mismatched types
+  --> src/models/user.rs:22:25
+   |
+22 |     pub email: Option<String>,
+   |                          ^^^^^^ expected `String`, found `&str`
+
+error[E0599]: no method named `save` found for struct `User`
+  --> src/handlers/auth.rs:45:10
+   |
+45 |     user.save(&pool).await?;
+   |          ^^^^ method not found in `User`
+
+error[E0277]: the trait bound `DatabasePool: sqlx::Executor` is not satisfied
+  --> src/handlers/auth.rs:50:20
+   |
+50 |     sqlx::query("INSERT INTO users ...")
+   |                    ^^^^^^^^^^^^^^^^^^^^ the trait `sqlx::Executor` is not implemented for `DatabasePool`
+
+error[E0308]: mismatched types
+  --> src/handlers/auth.rs:65:15
+   |
+65 |     let id: i64 = row.get("id");
+   |               ^^^ expected `i64`, found `String`
+
+error[E0308]: mismatched types
+  --> src/models/post.rs:12:18
+   |
+12 |     pub title: String,
+   |                ^^^^^^ expected `String`, found `&str`
+
+error[E0308]: mismatched types
+  --> src/models/post.rs:18:22
+   |
+18 |     pub body: Option<String>,
+   |                        ^^^^^^ expected `String`, found `&str`
+
+error[E0599]: no method named `publish` found for struct `Post`
+  --> src/handlers/posts.rs:30:10
+   |
+30 |     post.publish().await?;
+   |          ^^^^^^^ method not found in `Post`
+
+error[E0277]: `?` couldn't convert the error type
+  --> src/handlers/posts.rs:35:50
+   |
+35 |     let posts = sqlx::query_as!(Post, "SELECT * FROM posts").fetch_all(&pool).await?;
+   |                                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `From<sqlx::Error>` is not implemented for `AppError`
+
+error[E0308]: mismatched types
+  --> src/handlers/posts.rs:50:22
+   |
+50 |     let author: String = row.get("author_id");
+   |                  ^^^^^^ expected `String`, found `i64`
+
+error[E0599]: no method named `delete` found for struct `Post`
+  --> src/handlers/posts.rs:60:10
+   |
+60 |     post.delete(&pool).await?;
+   |          ^^^^^^ method not found in `Post`
+
+error[E0277]: the trait bound `AppError: From<ValidationError>` is not satisfied
+  --> src/middleware/validation.rs:20:20
+   |
+20 |     validate(&req).map_err(AppError::from)?;
+   |                    ^^^^^^^^^^^^^^^^^^^^^^^^ the trait `From<ValidationError>` is not implemented for `AppError`
+
+error[E0308]: mismatched types
+  --> src/middleware/validation.rs:35:25
+   |
+35 |     let rules: Vec<Rule> = config.get("rules");
+   |                          ^^^^^^^^^^^^^^^^^^^^^^ expected `Vec<Rule>`, found `Value`
+
+error[E0599]: no method named `check` found for struct `Validator`
+  --> src/middleware/validation.rs:45:15
+   |
+45 |     validator.check(&input)?;
+   |               ^^^^^ method not found in `Validator`
+
+error[E0308]: mismatched types
+  --> src/config.rs:10:18
+   |
+10 |     pub port: u16,
+   |                ^^ expected `u16`, found `String`
+
+error[E0308]: mismatched types
+  --> src/config.rs:15:22
+   |
+15 |     pub database_url: String,
+   |                      ^^^^^^ expected `String`, found `&str`
+
+error[E0599]: no method named `connect` found for struct `DatabaseConfig`
+  --> src/main.rs:25:20
+   |
+25 |     let pool = db.connect().await?;
+   |                    ^^^^^^^ method not found in `DatabaseConfig`
+
+warning: unused import `std::collections::HashMap`
+  --> src/models/user.rs:3:5
+   |
+3  | use std::collections::HashMap;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused variable `debug`
+  --> src/handlers/auth.rs:12:9
+   |
+12 |     let debug = true;
+   |         ^^^^^ help: prefix with an underscore: `_debug`
+
+warning: unused import `chrono::Utc`
+  --> src/models/post.rs:5:5
+   |
+5  | use chrono::Utc;
+   |     ^^^^^^^^^^
+
+warning: variable does not need to be mutable
+  --> src/handlers/posts.rs:20:13
+   |
+20 |     let mut posts = Vec::new();
+   |         ----^^^^^
+   |         |
+   |         help: remove this `mut`
+
+error: aborting due to 17 previous errors; 4 warnings emitted
+
+Some errors have detailed explanations: E0308, E0277, E0599.
+For more information about an error, try `rustc --explain E0308`.

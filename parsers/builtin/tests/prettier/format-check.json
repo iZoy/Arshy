@@ -1,0 +1,12 @@
+[
+  {
+    "message": "src/app.ts",
+    "severity": "warning",
+    "type": "diagnostic"
+  },
+  {
+    "message": "src/utils.ts",
+    "severity": "warning",
+    "type": "diagnostic"
+  }
+]

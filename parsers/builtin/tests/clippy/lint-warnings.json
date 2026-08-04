@@ -1,0 +1,16 @@
+[
+  {
+    "file": "src/lib.rs",
+    "line": 15,
+    "message": "unneeded return statement",
+    "severity": "warning",
+    "type": "diagnostic"
+  },
+  {
+    "file": "src/main.rs",
+    "line": 42,
+    "message": "mismatched types",
+    "severity": "error",
+    "type": "diagnostic"
+  }
+]

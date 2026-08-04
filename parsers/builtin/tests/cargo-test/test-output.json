@@ -1,0 +1,33 @@
+[
+  {
+    "file": "handler::test_parse",
+    "line": 0,
+    "message": "test handler::test_parse ... ok",
+    "severity": "info",
+    "type": "test_result"
+  },
+  {
+    "file": "handler::test_invalid",
+    "line": 0,
+    "message": "test handler::test_invalid ... FAILED",
+    "severity": "error",
+    "type": "test_result"
+  },
+  {
+    "file": "handler::test_ignored",
+    "line": 0,
+    "message": "test handler::test_ignored ... ignored",
+    "severity": "info",
+    "type": "test_result"
+  },
+  {
+    "message": "   Compiling myapp v0.1.0",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": "test result: FAILED. 1 passed; 1 failed; 1 ignored; 0 measured; 0 filtered out; 0.01s",
+    "severity": "error",
+    "type": "summary"
+  }
+]

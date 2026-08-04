@@ -1,0 +1,44 @@
+[
+  {
+    "message": "{",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": "    \"Account\": \"123456789012\",",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": "    \"Arn\": \"arn:aws:iam::123456789012:user/devuser\",",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": "    \"UserId\": \"AIDACKCEVSQ6C2EXAMPLE\"",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": "}",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "code": "AccessDeniedException",
+    "message": "User: arn:aws:iam::123456789012:user/devuser is not authorized to perform: redshift:DescribeClusters",
+    "severity": "error",
+    "type": "error"
+  },
+  {
+    "message": "Unable to locate credentials",
+    "severity": "error",
+    "type": "error"
+  },
+  {
+    "code": "ResourceNotFoundException",
+    "message": "Function not found",
+    "severity": "error",
+    "type": "error"
+  }
+]

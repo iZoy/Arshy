@@ -1,0 +1,31 @@
+[
+  {
+    "code": "no-debugger",
+    "file": "src/index.ts",
+    "line": 5,
+    "message": "'debugger' statement is not allowed",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "no-unused-vars",
+    "file": "src/utils.ts",
+    "line": 12,
+    "message": "'count' is defined but never used",
+    "severity": "warning",
+    "type": "diagnostic"
+  },
+  {
+    "code": "eqeqeq",
+    "file": "src/app.tsx",
+    "line": 24,
+    "message": "Expected '===' and instead saw '=='",
+    "severity": "warning",
+    "type": "diagnostic"
+  },
+  {
+    "message": "Found 1 error",
+    "severity": "error",
+    "type": "summary"
+  }
+]

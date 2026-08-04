@@ -1,0 +1,32 @@
+[meta]
+name = "turbo"
+description = "Turborepo monorepo build tool"
+detect = ["turbo"]
+priority = 50
+
+[[pattern]]
+name = "turbo-error"
+regex = '^ERROR\s+(.+)$'
+event_type = "diagnostic"
+severity = "error"
+fields = { message = 1 }
+
+[[pattern]]
+name = "turbo-task"
+regex = '^\s*(.+?):(.+?):\s+(.+)$'
+event_type = "log"
+severity = "info"
+fields = { code = 1, message = 3 }
+
+[[pattern]]
+name = "turbo-summary"
+regex = ' Tasks:\s+(\d+) successful'
+event_type = "summary"
+severity = "info"
+fields = { message = 0 }
+
+[[pattern]]
+name = "turbo-cache"
+regex = '^\s*Cache:\s+(.+)%'
+event_type = "summary"
+severity = "info"

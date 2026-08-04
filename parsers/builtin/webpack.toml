@@ -1,0 +1,42 @@
+[meta]
+name = "webpack"
+description = "Webpack bundler"
+detect = ["webpack"]
+parser_type = "stateful"
+priority = 50
+
+[[pattern]]
+name = "webpack-error"
+regex = '^ERROR in (.+)'
+event_type = "diagnostic"
+severity = "error"
+fields = { message = 1 }
+state_transition = "has_error=true"
+
+[[pattern]]
+name = "webpack-warning"
+regex = '^WARNING in (.+)'
+event_type = "diagnostic"
+severity = "warning"
+fields = { message = 1 }
+
+[[pattern]]
+name = "webpack-module-not-found"
+regex = '^Module not found: (.+)$'
+event_type = "diagnostic"
+severity = "error"
+fields = { message = 1 }
+
+[[pattern]]
+name = "webpack-source-location"
+regex = '^\s*@\s+(.+?)\s+(\d+):(\d+)'
+event_type = "location"
+severity = "info"
+fields = { file = 1, line = 2, column = 3 }
+
+[[pattern]]
+name = "webpack-summary"
+regex = '^webpack compiled with (\d+) errors?'
+event_type = "summary"
+severity = "error"
+fields = { message = 0 }

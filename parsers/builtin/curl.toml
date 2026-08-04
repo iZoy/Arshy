@@ -1,0 +1,64 @@
+[meta]
+name = "curl"
+description = "curl HTTP client"
+detect = ["curl"]
+priority = 50
+deprecated = true
+
+[[pattern]]
+name = "curl-ssl-error"
+regex = '^curl: \(60\) (.+)$'
+event_type = "diagnostic"
+severity = "error"
+fields = { message = 1 }
+
+[[pattern]]
+name = "curl-connect-error"
+regex = '^curl: \(7\) (.+)$'
+event_type = "diagnostic"
+severity = "error"
+fields = { message = 1 }
+
+[[pattern]]
+name = "curl-timeout"
+regex = '^curl: \(28\) (.+)$'
+event_type = "diagnostic"
+severity = "error"
+fields = { message = 1 }
+
+[[pattern]]
+name = "curl-error"
+regex = '^curl: \((\d+)\) (.+)$'
+event_type = "diagnostic"
+severity = "error"
+fields = { code = 1, message = 2 }
+
+[[pattern]]
+name = "curl-http-error"
+regex = '^(HTTP/[0-9.]+)\s+(\d{3})\s*(.*)$'
+event_type = "diagnostic"
+severity = "error"
+fields = { code = 1, message = 3 }
+deprecated = true
+replaced_by = "curl-http-status"
+
+[[pattern]]
+name = "curl-http-status"
+regex = '^(HTTP/[0-9.]+)\s+(\d{3})\s*(.*)$'
+event_type = "diagnostic"
+severity = "info"
+fields = { code = 2, message = 3 }
+
+[[pattern]]
+name = "curl-header"
+regex = '^([A-Z][a-zA-Z-]+):\s+(.+)$'
+event_type = "data"
+severity = "info"
+fields = { code = 1, message = 2 }
+
+[[pattern]]
+name = "curl-json"
+regex = '^\s*[\{\[]'
+event_type = "data"
+severity = "info"
+fields = { message = 0 }

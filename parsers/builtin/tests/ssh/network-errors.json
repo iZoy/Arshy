@@ -1,0 +1,17 @@
+[
+  {
+    "message": "user@server: Permission denied (publickey).",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "message": "host.example.com",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "message": "Connection refused",
+    "severity": "error",
+    "type": "diagnostic"
+  }
+]

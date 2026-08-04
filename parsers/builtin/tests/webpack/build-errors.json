@@ -1,0 +1,22 @@
+[
+  {
+    "message": "./src/utils.ts",
+    "severity": "warning",
+    "type": "diagnostic"
+  },
+  {
+    "message": "./src/components/old.ts",
+    "severity": "warning",
+    "type": "diagnostic"
+  },
+  {
+    "message": "./src/index.ts",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "message": "./src/app.ts",
+    "severity": "error",
+    "type": "diagnostic"
+  }
+]

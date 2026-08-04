@@ -1,0 +1,36 @@
+[
+  {
+    "message": " ✓ tests/math.test.ts > Math > adds numbers (2ms)",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "file": "tests/example.test.ts",
+    "line": 0,
+    "message": "Example > should fail",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "file": "tests/example.test.ts",
+    "line": 10,
+    "message": "expected 1 to deeply equal 2",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "message": " ✓ tests/utils.test.ts > Utils > formats date (1ms)",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": "Tests  1 failed | 2 passed",
+    "severity": "error",
+    "type": "summary"
+  },
+  {
+    "message": "Duration",
+    "severity": "info",
+    "type": "summary"
+  }
+]

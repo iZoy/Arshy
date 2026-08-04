@@ -1,0 +1,6 @@
+  1 passing (100ms)
+  1 failing
+
+  1) Login
+     AssertionError: expected 200 to equal 500:
+      at Context.<anonymous> (test/login.test.js:8:14)

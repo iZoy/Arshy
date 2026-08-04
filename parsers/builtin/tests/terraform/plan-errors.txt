@@ -1,0 +1,28 @@
+Error: Error getting workspace status
+
+Error: Unable to list AWS profiles. This is likely a bug in the AWS SDK for Go.
+
+╷
+│ Error: Unsupported attribute
+│
+│   on main.tf line 15, in resource "aws_instance" "web":
+│   15:   instance_type = var.instance_type.name
+│
+│ This object does not have an attribute named "name".
+╵
+
+╷
+│ Error: Missing required argument
+│
+│   on variables.tf line 3, in variable "region":
+│    3: variable "region" {
+│
+│ The argument "default" is required, but no definition was found.
+╵
+
+Warning: Value for undeclared variable
+  on variables.tf line 22:
+  22: variable "extra" {
+The variable "extra" was provided but not declared as a variable in the root module.
+
+Plan: 3 to add, 1 to change, 0 to destroy.

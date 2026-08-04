@@ -1,0 +1,41 @@
+[meta]
+name = "aws"
+description = "AWS CLI"
+detect = ["aws"]
+priority = 50
+schema_version = "1.0"
+
+[[pattern]]
+name = "aws-error"
+regex = '(?i)^An error occurred\s*\(([\w.]+)\)\s*(?:when calling the \w+ operation)?:\s*(.+)'
+event_type = "error"
+severity = "error"
+fields = { code = 1, message = 2 }
+
+[[pattern]]
+name = "aws-access-denied"
+regex = '(?i)(?:AccessDenied|UnauthorizedOperation|InvalidClientTokenId)'
+event_type = "error"
+severity = "error"
+fields = { message = 0 }
+
+[[pattern]]
+name = "aws-no-credentials"
+regex = '(?i)Unable to locate credentials|No credentials'
+event_type = "error"
+severity = "error"
+fields = { message = 0 }
+
+[[pattern]]
+name = "aws-throttling"
+regex = '(?i)Throttling(?:Exception)?|RequestLimitExceeded'
+event_type = "error"
+severity = "error"
+fields = { message = 0 }
+
+[[pattern]]
+name = "aws-not-found"
+regex = '(?i)(?:\w+)NotFoundException|ResourceNotFound|NoSuchEntity'
+event_type = "error"
+severity = "error"
+fields = { message = 0 }

@@ -1,0 +1,67 @@
+[meta]
+name = "python"
+description = "Python / pytest"
+detect = ["python", "python3", "pytest"]
+priority = 50
+
+[[pattern]]
+name = "python-traceback-location"
+regex = '^\s*File "(.+?)", line (\d+)'
+event_type = "location"
+severity = "error"
+fields = { file = 1, line = 2 }
+
+[[pattern]]
+name = "python-traceback-header"
+regex = '^Traceback \(most recent call last\):$'
+event_type = "diagnostic"
+severity = "error"
+fields = { message = 0 }
+
+[[pattern]]
+name = "python-syntax-error"
+regex = '^\s*SyntaxError: (.+)$'
+event_type = "diagnostic"
+severity = "error"
+fields = { message = 1 }
+
+[[pattern]]
+name = "python-import-error"
+regex = '^\s*(?:ImportError|ModuleNotFoundError): (.+)$'
+event_type = "diagnostic"
+severity = "error"
+fields = { message = 1 }
+
+[[pattern]]
+name = "python-assertion"
+regex = '^E\s+(.+)$'
+event_type = "diagnostic"
+severity = "error"
+fields = { message = 1 }
+
+[[pattern]]
+name = "pytest-fail"
+regex = '^FAILED (.+)$'
+event_type = "test_result"
+severity = "error"
+fields = { file = 1 }
+
+[[pattern]]
+name = "pytest-pass"
+regex = '^PASSED (.+)$'
+event_type = "test_result"
+severity = "info"
+fields = { file = 1 }
+
+[[pattern]]
+name = "pytest-summary"
+regex = '^=+ .*(?:failed|passed).+ in .+ =+$'
+event_type = "summary"
+severity = "info"
+
+[[pattern]]
+name = "python-exception-line"
+regex = '^(\w+Error|\w+Exception|AssertionError|KeyboardInterrupt|SystemExit|BaseException): (.+)$'
+event_type = "diagnostic"
+severity = "error"
+fields = { message = 0 }

@@ -1,0 +1,5 @@
+?? docs/superpowers/
+M src/daemon/exec/mod.rs
+A src/daemon/analytics.rs
++++ b/src/main.rs
+ 3 files changed, 150 insertions(+), 20 deletions(-)

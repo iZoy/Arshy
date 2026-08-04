@@ -1,0 +1,5 @@
+  ✘ [ERROR] Could not resolve "missing-module"
+    src/app.ts:5:1:
+      5 │ import { foo } from "missing-module";
+        ╵ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+error: build failed with 2 errors

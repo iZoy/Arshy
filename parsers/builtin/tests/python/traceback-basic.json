@@ -1,0 +1,26 @@
+[
+  {
+    "file": "demo.py",
+    "line": 7,
+    "message": "Traceback (most recent call last):",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "message": "    main()",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": "    result = 1 / 0",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "file": "demo.py",
+    "line": 4,
+    "message": "ZeroDivisionError: division by zero",
+    "severity": "error",
+    "type": "diagnostic"
+  }
+]

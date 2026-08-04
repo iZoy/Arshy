@@ -1,0 +1,48 @@
+[meta]
+name = "kubectl"
+description = "kubectl Kubernetes CLI"
+detect = ["kubectl"]
+priority = 50
+schema_version = "1.0"
+
+[[pattern]]
+name = "kubectl-error"
+regex = '(?i)^error:\s*(.+)'
+event_type = "error"
+severity = "error"
+fields = { message = 1 }
+
+[[pattern]]
+name = "kubectl-server-error"
+regex = '(?i)Error from server\s*(?:\((?:NotFound|Forbidden|Unauthorized|Conflict)\))?:\s*(.+)'
+event_type = "error"
+severity = "error"
+fields = { message = 1 }
+
+[[pattern]]
+name = "kubectl-warning"
+regex = '(?i)^warning:\s*(.+)'
+event_type = "warning"
+severity = "warning"
+fields = { message = 1 }
+
+[[pattern]]
+name = "kubectl-resource-action"
+regex = '(\w+)\.(\S+)/(\w+)\s+(created|configured|unchanged|deleted|scaled)'
+event_type = "action"
+severity = "info"
+fields = { message = 0 }
+
+[[pattern]]
+name = "kubectl-pod-status-bad"
+regex = '(\S+)\s+(\d+)/(\d+)\s+(CrashLoopBackOff|ImagePullBackOff|ErrImagePull|Error|OOMKilled|Pending)\b'
+event_type = "pod_status"
+severity = "error"
+fields = { message = 0 }
+
+[[pattern]]
+name = "kubectl-pod-status-ok"
+regex = '(\S+)\s+(\d+)/(\d+)\s+(Running|Completed)\b'
+event_type = "pod_status"
+severity = "info"
+fields = { message = 0 }

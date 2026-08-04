@@ -1,0 +1,188 @@
+{
+  "snapshot": {
+    "date": "2026-08-03",
+    "stamp": "20260803-220721",
+    "arshy_version": "arshy 0.2.0",
+    "git_commit": "e0de73f",
+    "git_dirty_files": "22"
+  },
+  "stats": {
+    "avg_duration_ms": 1262.0,
+    "by_status": {
+      "completed": 107,
+      "failed": 111,
+      "killed": 1,
+      "running": 0,
+      "timeout": 0
+    },
+    "context_enriched": 106,
+    "correlated_errors": 0,
+    "db_size_bytes": 530834,
+    "dedup_collapsed": 429,
+    "failure_rate": 0.5068493150684932,
+    "p50_duration_ms": 163,
+    "p99_duration_ms": 17175,
+    "parser_coverage_pct": 73.73880245167373,
+    "per_parser_usage": [
+      {
+        "count": 129,
+        "parser": "cargo"
+      },
+      {
+        "count": 48,
+        "parser": "cargo-test"
+      },
+      {
+        "count": 8,
+        "parser": "python"
+      },
+      {
+        "count": 4,
+        "parser": "go"
+      },
+      {
+        "count": 3,
+        "parser": "tsc"
+      },
+      {
+        "count": 1,
+        "parser": "npm"
+      },
+      {
+        "count": 1,
+        "parser": "uv"
+      },
+      {
+        "count": 1,
+        "parser": "git"
+      },
+      {
+        "count": 1,
+        "parser": "make"
+      }
+    ],
+    "purpose_breakdown": [
+      {
+        "avg_duration_ms": 171.42307692307693,
+        "failed": 86,
+        "failure_rate": 66.15384615384616,
+        "purpose": "dogfood",
+        "total": 130
+      },
+      {
+        "avg_duration_ms": 3470.318181818182,
+        "failed": 8,
+        "failure_rate": 12.12121212121212,
+        "purpose": "real",
+        "total": 66
+      },
+      {
+        "avg_duration_ms": 1089.2173913043478,
+        "failed": 17,
+        "failure_rate": 73.91304347826087,
+        "purpose": "sample",
+        "total": 23
+      }
+    ],
+    "total_agent_delivered_bytes": 107621,
+    "total_agent_skipped_events": 557,
+    "total_agent_visible_events": 1564,
+    "total_codes_extracted": 119,
+    "total_contexts_enriched": 106,
+    "total_errors": 334,
+    "total_events": 2121,
+    "total_locations_extracted": 1339,
+    "total_raw_output_bytes": 143248,
+    "total_tasks": 219
+  },
+  "analyze": {
+    "command_patterns": {
+      "commands_run_multiple_times": 15,
+      "long_cmd_pct": 16.43835616438356,
+      "short_cmd_pct": 83.56164383561644,
+      "top_retried": [
+        [
+          "rustc /tmp/arshy_dogfood.rs",
+          85
+        ],
+        [
+          "cargo test",
+          48
+        ],
+        [
+          "cargo build",
+          22
+        ],
+        [
+          "cargo fmt",
+          8
+        ],
+        [
+          "./node_modules/.bin/tsc --noEmit",
+          7
+        ],
+        [
+          "python3 -c",
+          7
+        ],
+        [
+          "cargo clippy",
+          5
+        ],
+        [
+          "echo hello-integration-test",
+          5
+        ],
+        [
+          "cargo doc",
+          5
+        ],
+        [
+          "go build",
+          3
+        ]
+      ],
+      "total_retry_runs": 191,
+      "unique_commands": 28
+    },
+    "generated_at": "2026-08-03T14:07:21.160475+00:00",
+    "information_density": {
+      "avg_fields_per_event": 4.737388024516737,
+      "events_with_code": 119,
+      "events_with_context": 106,
+      "events_with_hint": 0,
+      "events_with_location": 1339,
+      "structured_event_pct": 64.54502593116455
+    },
+    "repair_loop": {
+      "avg_fix_duration_ms": 40872,
+      "avg_retries_to_fix": 1.0,
+      "fastest_fix_ms": 40872,
+      "fix_loops": 1
+    },
+    "summary": {
+      "avg_tasks_per_day": 219.0,
+      "date_range_days": 1,
+      "total_errors": 334,
+      "total_events": 2121,
+      "total_tasks": 219
+    },
+    "temporal": {
+      "avg_events_per_day": 2121.0,
+      "avg_tasks_per_day": 219.0,
+      "date_range": [
+        "2026-08-03",
+        "2026-08-03"
+      ],
+      "span_days": 1
+    },
+    "token_efficiency": {
+      "agent_skipped_events": 557,
+      "agent_visible_events": 1564,
+      "estimated_token_savings_pct": 24.870853345247404,
+      "noise_pct": 26.26119754832626,
+      "total_agent_delivered_bytes": 107621,
+      "total_raw_output_bytes": 143248
+    }
+  }
+}

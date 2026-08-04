@@ -1,0 +1,32 @@
+[
+  {
+    "message": "Compiling serde v1.0.210",
+    "severity": "info",
+    "type": "summary"
+  },
+  {
+    "message": "Compiling arshy v0.1.0 (/Users/dev/arshy)",
+    "severity": "info",
+    "type": "summary"
+  },
+  {
+    "message": "Checking arshy_lib v0.1.0 (/Users/dev/arshy)",
+    "severity": "info",
+    "type": "summary"
+  },
+  {
+    "message": "Downloading crates.io",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": "Finished `test` profile [unoptimized + debuginfo] target(s) in 3.46s",
+    "severity": "info",
+    "type": "summary"
+  },
+  {
+    "message": "Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s",
+    "severity": "info",
+    "type": "summary"
+  }
+]

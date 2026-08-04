@@ -1,0 +1,15 @@
+$ aws s3 cp myfile.txt s3://my-bucket/
+upload failed: ./myfile.txt to s3://my-bucket/myfile.txt An error occurred (NoSuchBucket) when calling the PutObject operation: The specified bucket does not exist
+
+$ aws ec2 describe-instances --instance-ids i-1234567890abcdef0
+An error occurred (InvalidInstanceID.NotFound) when calling the DescribeInstances operation: The instance ID 'i-1234567890abcdef0' does not exist
+
+$ aws iam create-user --user-name admin
+An error occurred (AccessDenied) when calling the CreateUser operation: User: arn:aws:iam::123456789012:user/developer is not authorized to perform: iam:CreateUser on resource: arn:aws:iam::123456789012:user/admin
+
+$ aws s3 ls s3://nonexistent-bucket/
+Error: An error occurred (NoSuchBucket) when calling the ListObjectsV2 operation: The specified bucket does not exist
+
+$ aws cloudformation describe-stacks --stack-name my-stack
+| StackId | StackStatus |
+| arn:aws:cloudformation:us-east-1:123456789012:stack/my-stack/abc123 | CREATE_FAILED |

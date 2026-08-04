@@ -1,0 +1,103 @@
+[meta]
+name = "docker"
+description = "Docker CLI"
+detect = ["docker"]
+priority = 50
+schema_version = "1.0"
+
+[[pattern]]
+name = "docker-build-error"
+regex = '^(ERROR|error)\[.+\]: (.+)$'
+event_type = "diagnostic"
+severity = "error"
+fields = { message = 2 }
+
+[[pattern]]
+name = "docker-build-location"
+regex = '^\s*--> (.+?):(\d+)$'
+event_type = "location"
+severity = "info"
+fields = { file = 1, line = 2 }
+
+[[pattern]]
+name = "docker-daemon-error"
+regex = '(?i)Error response from daemon:\s*(.+)'
+event_type = "error"
+severity = "error"
+fields = { message = 1 }
+
+[[pattern]]
+name = "docker-no-such"
+regex = '(?i)Error: No such (container|image|volume|network):\s*(.+)'
+event_type = "error"
+severity = "error"
+fields = { message = 0 }
+
+[[pattern]]
+name = "docker-cannot-start"
+regex = '(?i)Error: (?:failed to|cannot) start'
+event_type = "error"
+severity = "error"
+fields = { message = 0 }
+
+[[pattern]]
+name = "docker-port-conflict"
+regex = '(?i)Bind for .+?:\d+ failed: port is already allocated'
+event_type = "error"
+severity = "error"
+fields = { message = 0 }
+
+[[pattern]]
+name = "docker-permission-denied"
+regex = '(?i)permission denied while trying to connect'
+event_type = "error"
+severity = "error"
+fields = { message = 0 }
+
+[[pattern]]
+name = "docker-error"
+regex = '^(Error|error): (.+)$'
+event_type = "diagnostic"
+severity = "error"
+fields = { message = 2 }
+
+[[pattern]]
+name = "docker-warning"
+regex = '(?i)^WARNING:\s*(.+)'
+event_type = "warning"
+severity = "warning"
+fields = { message = 1 }
+
+[[pattern]]
+name = "docker-pull-status"
+regex = 'Pulling from\s+(\S+)'
+event_type = "progress"
+severity = "info"
+fields = { message = 0 }
+
+[[pattern]]
+name = "docker-pull-layer"
+regex = '([a-f0-9]+):\s+(Pull complete|Already exists|Downloading|Verifying Checksum)'
+event_type = "progress"
+severity = "info"
+fields = { code = 1, message = 2 }
+
+[[pattern]]
+name = "docker-build-success"
+regex = 'Successfully built ([a-f0-9]+)'
+event_type = "success"
+severity = "info"
+fields = { code = 1 }
+
+[[pattern]]
+name = "docker-tag"
+regex = 'Successfully tagged (\S+)'
+event_type = "success"
+severity = "info"
+fields = { message = 1 }
+
+[[pattern]]
+name = "docker-status"
+regex = '^\[.+\] (DONE|ERROR|CACHED)\s'
+event_type = "summary"
+severity = "info"
