@@ -34,6 +34,7 @@
 - [IPC 协议](reference/ipc.md) — JSON-RPC 方法、数据结构、错误码
 - [Parser 参考](reference/parsers.md) — 37 个内置 parser、TOML schema、fixture 约定
 - [错误码参考表](reference/reference-codes.md) — 非显而易见退出码的含义（docker/kubectl/aws）
+- [指标定义](reference/metrics.md) — `daemon/stats` / `daemon/analyze` / `benchmark` 字段含义、诚实边界与引用守则
 
 ## 概念解释（Explanation · 理解导向）
 

@@ -1,0 +1,15 @@
+FAIL src/utils/format.test.ts
+  ● formatCurrency › should format USD
+    expect(received).toBe(expected)
+    Expected: "$1,234.56"
+    Received: "$1234.56"
+      at Object.<anonymous> (src/utils/format.test.ts:14:24)
+      at processTicksAndRejections (node:internal/process/task_queues:95:5)
+
+FAIL src/api/login.test.ts
+  ● login flow › rejects invalid credentials
+    TypeError: Cannot read properties of undefined (reading 'token')
+      at Object.<anonymous> (src/api/login.test.ts:42:18)
+      at Object.<anonymous> (src/api/login.test.ts:55:5)
+
+Tests:       2 failed, 18 passed, 20 total

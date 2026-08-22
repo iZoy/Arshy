@@ -1,0 +1,67 @@
+[
+  {
+    "message": "code ERESOLVE",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "message": "npm ERR!",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": "ERESOLVE unable to resolve dependency tree",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "message": "While resolving: myapp@1.0.0",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "message": "Found: react@17.0.2",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "message": "Could not resolve dependency:",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "message": "npm ERR!",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": "peer react@\"^18.0.0\" from @mui/material@5.14.0",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "message": "Conflicting peer dependency: react@18.0.0",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "message": "Fix the upstream dependency conflict, or retry",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "message": "deprecated request@2.88.0",
+    "severity": "warning",
+    "type": "diagnostic"
+  },
+  {
+    "message": "deprecated har-validator@5.1.5",
+    "severity": "warning",
+    "type": "diagnostic"
+  },
+  {
+    "message": "A complete log of this run can be found in:",
+    "severity": "error",
+    "type": "diagnostic"
+  }
+]

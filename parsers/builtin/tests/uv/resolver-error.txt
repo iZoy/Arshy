@@ -1,0 +1,7 @@
+Resolving dependencies (4.7s)
+error: Because myapp depends on requests (>=2.30.0) and requests (==2.28.0), version solving failed.
+  Because myapp depends on requests (>=2.30.0)
+   and requests (==2.28.0), version solving failed.
+ hint: It looks like you have multiple incompatible versions of requests in your dependency tree.
+ Resolved 47 packages in 4.71s
+   Built myapp @ file:///tmp/myapp

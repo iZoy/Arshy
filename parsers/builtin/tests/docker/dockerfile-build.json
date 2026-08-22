@@ -1,0 +1,62 @@
+[
+  {
+    "message": "Sending build context to Docker daemon  3.072kB",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": "Step 1/5 : FROM node:18-alpine",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": " ---> a2abf6c4d29d",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": "Step 2/5 : WORKDIR /app",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": " ---> Running in 9d3c4a8e1f2b",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": "Step 3/5 : COPY package*.json ./",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": "ERROR [internal] load metadata for docker.io/library/node:18-alpine",
+    "severity": "error",
+    "type": "log"
+  },
+  {
+    "message": "Step 4/5 : RUN npm install",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": " ---> Running in 4b8e1c9d2a3f",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": "Step 5/5 : COPY . .",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": "Get \"https://registry-1.docker.io/v2/\": dial tcp: lookup registry-1.docker.io: no such host",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": "ERROR[Builder] failed to fetch build context: Get \"https://registry-1.docker.io/v2/\": dial tcp: lookup registry-1.docker.io on 127.0.0.11:53: no such host",
+    "severity": "error",
+    "type": "diagnostic"
+  }
+]

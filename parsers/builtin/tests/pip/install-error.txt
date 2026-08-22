@@ -1,0 +1,5 @@
+Collecting mypackage==1.0.0
+  Downloading mypackage-1.0.0.tar.gz (50 kB)
+ERROR: Could not find a version that satisfies the requirement mypackage==1.0.0 (from versions: 0.1.0, 0.2.0, 0.5.0)
+ERROR: No matching distribution found for mypackage==1.0.0
+WARNING: The script pip3 is installed in '/usr/local/bin' which is not on PATH.

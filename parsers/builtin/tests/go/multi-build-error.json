@@ -1,0 +1,54 @@
+[
+  {
+    "file": "./main.go",
+    "line": 14,
+    "message": "undefined: fmt.PrintfX",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "file": "./handler.go",
+    "line": 42,
+    "message": "undefined: fmt.Printf",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "file": "./handler.go",
+    "line": 55,
+    "message": "cannot use x (variable of type string) as type int",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "file": "./handler.go",
+    "line": 67,
+    "message": "too many arguments in call to process",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "file": "./router.go",
+    "line": 13,
+    "message": "imported and not used: \"net/url\"",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "message": "mypackage/cmd",
+    "severity": "error",
+    "type": "test_result"
+  },
+  {
+    "message": "mypackage/auth",
+    "severity": "info",
+    "type": "test_result"
+  },
+  {
+    "file": "./service/auth.go",
+    "line": 8,
+    "message": "missing return at end of function",
+    "severity": "error",
+    "type": "diagnostic"
+  }
+]

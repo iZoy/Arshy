@@ -1,0 +1,8 @@
+./main.go:14:2: undefined: fmt.PrintfX
+./handler.go:42:15: undefined: fmt.Printf
+./handler.go:55:9: cannot use x (variable of type string) as type int
+./handler.go:67:22: too many arguments in call to process
+./router.go:13:1: imported and not used: "net/url"
+./service/auth.go:8:6: missing return at end of function
+FAIL	mypackage/cmd	0.012s
+ok  	mypackage/auth	0.003s

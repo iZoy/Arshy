@@ -324,6 +324,22 @@ pub struct StatsResponse {
     /// Per-parser usage counts (top parsers by task count).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub per_parser_usage: Option<Vec<ParserCount>>,
+    /// Basis used to compute `estimated_token_savings_pct`.
+    ///
+    /// Honest telemetry: the savings number is only as trustworthy as how we
+    /// measured it. The 10% fallback heuristic in `get_stats()` was a silent
+    /// contributor to the published figure — this field makes it explicit.
+    ///
+    /// - `"measured"`: every task had an exact `agent_delivered_bytes`.
+    /// - `"estimated"`: at least one task used the 10% fallback heuristic;
+    ///   treat the savings figure as approximate.
+    /// - `"none"`: no raw output yet (nothing to measure).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub savings_basis: Option<String>,
+    /// Number of tasks whose `agent_delivered_bytes` was the 10% fallback
+    /// heuristic rather than a measured value. Honest counter for QA / CI.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub savings_fallback_task_count: Option<u64>,
     /// Total raw output bytes across all tasks.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub total_raw_output_bytes: Option<u64>,

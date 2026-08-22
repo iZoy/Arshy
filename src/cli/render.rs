@@ -570,24 +570,12 @@ pub fn render_analyze(result: &serde_json::Value) -> String {
     );
     let _ = writeln!(out);
 
-    box_top(&mut out);
-    box_line(&mut out, &format!("{}TOKEN EFFICIENCY{}", BOLD, RESET));
-    box_divider(&mut out);
-    box_line(
-        &mut out,
-        &format!("  Agent-visible events:  {} ({:.1}%)", fmt_commas(agent_visible), visible_pct),
-    );
-    box_line(
-        &mut out,
-        &format!(
-            "  Agent-skipped events:  {} ({:.1}%)   \u{2190} noise filtered",
-            fmt_commas(agent_skipped),
-            skipped_pct
-        ),
-    );
-    box_line(&mut out, &format!("  Estimated savings:     ~{:.0}% tokens", savings_pct));
-    box_bottom(&mut out);
-    let _ = writeln!(out);
+    // Phase A (Q-2): token savings is a marketing figure, not a user-facing
+    // metric. The computed value is still available via `--format json`
+    // (and for the `measure-savings` reproducibility script) — but the pretty
+    // default render does not surface it. Internal honest measurement is
+    // preserved; we just do not advertise it to end users.
+    let _ = (agent_visible, agent_skipped, visible_pct, skipped_pct, savings_pct);
 
     box_top(&mut out);
     box_line(&mut out, &format!("{}INFORMATION DENSITY{}", BOLD, RESET));
@@ -898,12 +886,27 @@ mod tests {
 
     #[test]
     fn render_analyze_reports_sections() {
+        // Phase A (Q-2): the user-facing analyze pretty output no longer
+        // surfaces token savings — it stays in `--format json` for internal /
+        // reproducibility use. We assert the new contract.
         let s = strip_ansi(&render_analyze(&json!({
             "summary": {"total_tasks": 5},
-            "command_patterns": {"top_retried": []}
+            "command_patterns": {"top_retried": []},
+            "token_efficiency": {
+                "agent_visible_events": 10,
+                "agent_skipped_events": 3,
+                "estimated_token_savings_pct": 28.0
+            }
         })));
         assert!(s.contains("ARSHY IMPACT REPORT"));
-        assert!(s.contains("TOKEN EFFICIENCY"));
+        assert!(
+            !s.contains("TOKEN EFFICIENCY"),
+            "user-facing analyze must not display token savings"
+        );
+        assert!(
+            !s.contains("Estimated savings"),
+            "user-facing analyze must not display savings pct"
+        );
         assert!(s.contains("INFORMATION DENSITY"));
     }
 

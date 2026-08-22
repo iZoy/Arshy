@@ -1,0 +1,14 @@
+ FAIL  src/calc/tax.test.ts > tax calculation > applies state tax
+AssertionError: expected 107.5 to be 108.75
+ ❯ src/calc/tax.test.ts:18:23
+
+ FAIL  src/api/auth.test.ts > auth > refresh token
+Error: jwt expired
+ ❯ src/api/auth.test.ts:42:14
+     40|   const token = await refresh()
+     41|   expect(token).toBeDefined()
+       |                  ^
+     42|   expect(token.exp).toBeGreaterThan(Date.now() / 1000)
+
+Test Files  2 failed (2)
+     Tests  2 failed | 18 passed (20)

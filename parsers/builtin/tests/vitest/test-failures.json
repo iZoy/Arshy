@@ -1,0 +1,60 @@
+[
+  {
+    "file": "src/calc/tax.test.ts",
+    "line": 0,
+    "message": "tax calculation > applies state tax",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "file": "src/calc/tax.test.ts",
+    "line": 18,
+    "message": "expected 107.5 to be 108.75",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "file": "src/api/auth.test.ts",
+    "line": 0,
+    "message": "auth > refresh token",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "file": "src/api/auth.test.ts",
+    "line": 42,
+    "message": "jwt expired",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "message": "     40|   const token = await refresh()",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": "     41|   expect(token).toBeDefined()",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": "       |                  ^",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": "     42|   expect(token.exp).toBeGreaterThan(Date.now() / 1000)",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": "Tests  2 failed | 18 passed",
+    "severity": "error",
+    "type": "summary"
+  },
+  {
+    "message": "Test Files  2 failed (2)",
+    "severity": "error",
+    "type": "diagnostic"
+  }
+]

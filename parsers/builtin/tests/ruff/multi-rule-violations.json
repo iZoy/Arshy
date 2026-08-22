@@ -1,0 +1,47 @@
+[
+  {
+    "code": "F401",
+    "file": "src/main.py",
+    "line": 15,
+    "message": "`os` imported but unused",
+    "severity": "warning",
+    "type": "diagnostic"
+  },
+  {
+    "code": "E711",
+    "file": "src/utils.py",
+    "line": 23,
+    "message": "Comparison to `None` should be `if x is None:`",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "E302",
+    "file": "src/utils.py",
+    "line": 30,
+    "message": "Expected 2 blank lines, found 1",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "B006",
+    "file": "src/api/client.py",
+    "line": 42,
+    "message": "Do not use mutable data structures for argument defaults",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "message": "Found 5 errors.",
+    "severity": "error",
+    "type": "summary"
+  },
+  {
+    "code": "F841",
+    "file": "src/api/client.py",
+    "line": 55,
+    "message": "Local variable `result` is assigned to but never used",
+    "severity": "error",
+    "type": "diagnostic"
+  }
+]

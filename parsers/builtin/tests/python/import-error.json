@@ -1,0 +1,26 @@
+[
+  {
+    "file": "app/main.py",
+    "line": 3,
+    "message": "Traceback (most recent call last):",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "message": "    from utils.helpers import process_data",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": "    from utils.helpers import process_data",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "file": "app/main.py",
+    "line": 3,
+    "message": "cannot import name 'process_data' from 'utils.helpers' (/tmp/utils/helpers.py)",
+    "severity": "error",
+    "type": "diagnostic"
+  }
+]

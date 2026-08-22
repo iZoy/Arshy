@@ -1,0 +1,9 @@
+ WARN  3 deprecated subdependencies found: fsevents@1.2.13, glob@7.2.3, inflight@1.0.6
+Packages: +127
++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+Progress: resolved 127, reused 89, downloaded 38, added 127, done
+ WARN  Issues with peer dependencies found
+.
+└─┬ my-app 1.0.0
+  └── ✕ unmet peer react@"^18.0.0" found react@17.0.2
+ ERR_PNPM_PEER_DEP_ISSUES  Unmet peer dependencies

@@ -1,0 +1,83 @@
+[
+  {
+    "file": "src/utils/format.test.ts",
+    "line": 0,
+    "message": "FAIL src/utils/format.test.ts",
+    "severity": "error",
+    "type": "test_result"
+  },
+  {
+    "message": "  ● formatCurrency › should format USD",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": "    expect(received).toBe(expected)",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": "    Expected: \"$1,234.56\"",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": "    Received: \"$1234.56\"",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "code": "node",
+    "file": "src/utils/format.test.ts",
+    "line": 14,
+    "message": "      at Object.<anonymous> (src/utils/format.test.ts:14:24)",
+    "severity": "error",
+    "type": "crash"
+  },
+  {
+    "file": "src/api/login.test.ts",
+    "line": 0,
+    "message": "FAIL src/api/login.test.ts",
+    "severity": "error",
+    "type": "test_result"
+  },
+  {
+    "message": "  ● login flow › rejects invalid credentials",
+    "severity": "info",
+    "type": "log"
+  },
+  {
+    "message": "    TypeError: Cannot read properties of undefined (reading 'token')",
+    "severity": "error",
+    "type": "log"
+  },
+  {
+    "code": "node",
+    "file": "node:internal/process/task_queues",
+    "line": 95,
+    "message": "      at processTicksAndRejections (node:internal/process/task_queues:95:5)",
+    "severity": "error",
+    "type": "crash"
+  },
+  {
+    "code": "node",
+    "file": "src/api/login.test.ts",
+    "line": 42,
+    "message": "      at Object.<anonymous> (src/api/login.test.ts:42:18)",
+    "severity": "error",
+    "type": "crash"
+  },
+  {
+    "message": "Tests:       2 failed, 18 passed, 20 total",
+    "severity": "info",
+    "type": "summary"
+  },
+  {
+    "code": "node",
+    "file": "src/api/login.test.ts",
+    "line": 55,
+    "message": "      at Object.<anonymous> (src/api/login.test.ts:55:5)",
+    "severity": "error",
+    "type": "crash"
+  }
+]

@@ -1,0 +1,12 @@
+Sending build context to Docker daemon  3.072kB
+Step 1/5 : FROM node:18-alpine
+ ---> a2abf6c4d29d
+Step 2/5 : WORKDIR /app
+ ---> Running in 9d3c4a8e1f2b
+Step 3/5 : COPY package*.json ./
+ERROR [internal] load metadata for docker.io/library/node:18-alpine
+ERROR[Builder] failed to fetch build context: Get "https://registry-1.docker.io/v2/": dial tcp: lookup registry-1.docker.io on 127.0.0.11:53: no such host
+Step 4/5 : RUN npm install
+ ---> Running in 4b8e1c9d2a3f
+Step 5/5 : COPY . .
+Get "https://registry-1.docker.io/v2/": dial tcp: lookup registry-1.docker.io: no such host

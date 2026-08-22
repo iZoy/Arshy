@@ -1,0 +1,6 @@
+src/main.py:15:5: F401 [*] `os` imported but unused
+src/utils.py:23:9: E711 Comparison to `None` should be `if x is None:`
+src/utils.py:30:1: E302 Expected 2 blank lines, found 1
+src/api/client.py:42:16: B006 Do not use mutable data structures for argument defaults
+src/api/client.py:55:5: F841 Local variable `result` is assigned to but never used
+Found 5 errors.

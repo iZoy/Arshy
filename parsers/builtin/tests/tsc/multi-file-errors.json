@@ -1,0 +1,55 @@
+[
+  {
+    "code": "TS2322",
+    "file": "src/components/Button.tsx",
+    "line": 12,
+    "message": "Type '\"submit\"' is not assignable to type 'HTMLButtonType'.",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "TS7006",
+    "file": "src/components/Button.tsx",
+    "line": 18,
+    "message": "Parameter 'e' implicitly has an 'any' type.",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "TS2304",
+    "file": "src/hooks/useFetch.ts",
+    "line": 7,
+    "message": "Cannot find name 'AbortController'.",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "TS6133",
+    "file": "src/hooks/useFetch.ts",
+    "line": 15,
+    "message": "'response' is declared but never used.",
+    "severity": "warning",
+    "type": "diagnostic"
+  },
+  {
+    "code": "TS2345",
+    "file": "src/api/client.ts",
+    "line": 33,
+    "message": "Argument of type 'string | undefined' is not assignable to parameter of type 'string'.",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "code": "TS2300",
+    "file": "src/types/index.ts",
+    "line": 2,
+    "message": "Duplicate identifier 'User'.",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "message": "Found 5 errors and 1 warning in 4 files.",
+    "severity": "warning",
+    "type": "diagnostic"
+  }
+]

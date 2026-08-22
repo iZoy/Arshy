@@ -70,6 +70,7 @@ impl super::Store {
         let mut total_codes_extracted: u64 = 0;
         let mut total_contexts_enriched: u64 = 0;
         let mut total_agent_delivered_bytes: u64 = 0;
+        let mut savings_fallback_task_count: u64 = 0;
         let mut parser_usage: std::collections::HashMap<String, u64> =
             std::collections::HashMap::new();
 
@@ -95,14 +96,34 @@ impl super::Store {
             total_codes_extracted += record.metrics.codes_extracted;
             total_contexts_enriched += record.metrics.contexts_enriched;
 
-            let delivered = if record.metrics.agent_delivered_bytes > 0 {
-                record.metrics.agent_delivered_bytes
+            // Honest telemetry (Phase A): track whether each task contributed
+            // a measured value or fell back to the 10% heuristic. The fallback
+            // fires for any task that produced structured events but never
+            // passed through the enrichment path that records exact delivered
+            // bytes — the savings figure must label itself honestly.
+            let (delivered, used_fallback) = if record.metrics.agent_delivered_bytes > 0 {
+                (record.metrics.agent_delivered_bytes, false)
             } else if record.task.events_count > 0 {
-                record.metrics.raw_output_bytes / 10
+                (record.metrics.raw_output_bytes / 10, true)
             } else {
-                record.metrics.raw_output_bytes
+                (record.metrics.raw_output_bytes, false)
             };
+            if used_fallback {
+                savings_fallback_task_count += 1;
+            }
             total_agent_delivered_bytes += delivered;
+
+            // Honest telemetry: warn once if the savings fallback fired.
+            // Surfacing this in the daemon log makes the metric self-documenting
+            // for operators; the JSON field `savings_basis` carries the same
+            // information to programmatic consumers.
+            if savings_fallback_task_count > 0 {
+                tracing::warn!(
+                    "token savings used 10% fallback heuristic for {} of {} tasks —                      treat estimated_token_savings_pct as approximate (see savings_basis field)",
+                    savings_fallback_task_count,
+                    tasks.len()
+                );
+            }
 
             if let Some(ref parser) = record.task.parser_name {
                 *parser_usage.entry(parser.clone()).or_insert(0) += 1;
@@ -224,6 +245,18 @@ impl super::Store {
             },
             total_agent_delivered_bytes: if total_agent_delivered_bytes > 0 {
                 Some(total_agent_delivered_bytes)
+            } else {
+                None
+            },
+            savings_basis: if total_raw_output_bytes == 0 {
+                Some("none".to_string())
+            } else if savings_fallback_task_count > 0 {
+                Some("estimated".to_string())
+            } else {
+                Some("measured".to_string())
+            },
+            savings_fallback_task_count: if savings_fallback_task_count > 0 {
+                Some(savings_fallback_task_count)
             } else {
                 None
             },
@@ -396,6 +429,56 @@ mod tests {
         let names: Vec<&str> = parsers.iter().map(|p| p.parser.as_str()).collect();
         assert!(names.contains(&"cargo"));
         assert!(names.contains(&"tsc"));
+    }
+
+    #[test]
+    fn stats_savings_basis_measured_when_delivered_known() {
+        // Phase A (Q-2): when every task records an exact
+        // agent_delivered_bytes, savings_basis must be "measured" and the
+        // fallback counter must be None (no heuristic used).
+        let (store, _tmp) = test_store();
+        let mut task = make_task("t1", "cargo test", TaskStatus::Failed);
+        task.events_count = 5;
+        store.insert_task(&task).unwrap();
+        store.update_task_raw_output_bytes("t1", 1000).unwrap();
+        store.update_task_agent_delivered_bytes("t1", 100).unwrap();
+
+        let stats = store.get_stats().unwrap();
+        assert_eq!(stats.savings_basis.as_deref(), Some("measured"));
+        assert_eq!(stats.savings_fallback_task_count, None);
+        // raw=1000, delivered=100 → savings = 90%
+        let delivered = stats.total_agent_delivered_bytes.unwrap();
+        assert_eq!(delivered, 100);
+        assert_eq!(stats.total_raw_output_bytes, Some(1000));
+    }
+
+    #[test]
+    fn stats_savings_basis_estimated_when_fallback_used() {
+        // Phase A (Q-2): when a task has events but no measured delivered
+        // bytes, the 10% fallback fires. savings_basis must be
+        // "estimated" and the fallback counter must report 1.
+        let (store, _tmp) = test_store();
+        let mut task = make_task("t1", "python script", TaskStatus::Failed);
+        task.events_count = 3;
+        store.insert_task(&task).unwrap();
+        store.update_task_raw_output_bytes("t1", 1000).unwrap();
+        // Deliberately do NOT call update_task_agent_delivered_bytes.
+
+        let stats = store.get_stats().unwrap();
+        assert_eq!(stats.savings_basis.as_deref(), Some("estimated"));
+        assert_eq!(stats.savings_fallback_task_count, Some(1));
+        // Fallback delivered = raw / 10 = 100
+        assert_eq!(stats.total_agent_delivered_bytes, Some(100));
+    }
+
+    #[test]
+    fn stats_savings_basis_none_when_no_raw_output() {
+        let (store, _tmp) = test_store();
+        // Empty store → no raw bytes → basis = "none".
+        let stats = store.get_stats().unwrap();
+        assert_eq!(stats.savings_basis.as_deref(), Some("none"));
+        assert_eq!(stats.total_raw_output_bytes, None);
+        assert_eq!(stats.total_agent_delivered_bytes, None);
     }
 
     #[test]
