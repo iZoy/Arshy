@@ -275,9 +275,14 @@ async fn intercept_and_run(_exe_name: &str, _args: &[String], command: String) -
     // `bash -c` from an agent bring up arshyd transparently.
     let mut daemon = crate::proxy::connect_or_start(&cfg, &socket_path).await?;
 
+    // Default cwd to the shell-proxy's current directory. Without this,
+    // the daemon records cwd=None and compute_enhanced_project_context's git
+    // diff stat falls back to the daemon's own cwd — leaking the wrong repo's
+    // diff into agent_delivered_bytes. Phase B Q-3 fix.
+    let cwd = std::env::current_dir().ok().map(|p| p.to_string_lossy().into_owned());
     let params = RunTaskParams {
         command,
-        cwd: None,
+        cwd,
         timeout_ms: None,
         mode: "auto".into(),
         parse_hint: None,

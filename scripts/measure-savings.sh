@@ -169,10 +169,14 @@ while IFS= read -r line; do
     cmd=$(awk -F'::' '{print $3}' <<<"$line")
 
     OUT="$WORK/run_${eco}.json"
-    # Note: do NOT `|| echo "{}"` here — failing commands are expected
-    # to produce structured error events, and their non-zero exit code would
-    # trigger the `||` and wipe the successful JSON output.
-    "$ARSHY" run "$cmd" --format json >"$OUT" 2>/dev/null
+    # Pin each workload's cwd to a clean directory ($WORK is a fresh mktemp
+    # dir, never a git repo). Without --cwd, the CLI defaults cwd to the
+    # user's cwd when invoking the script — and if that's a git repo (e.g.
+    # the arshy source dir), compute_enhanced_project_context adds the
+    # repo's git diff stat to agent_delivered_bytes, inflating the metric.
+    # We use --cwd explicitly so all workloads have a consistent, non-git
+    # cwd. (Phase B Q-3 fix.)
+    "$ARSHY" run "$cmd" --cwd "$WORK" --format json >"$OUT" 2>/dev/null
     [[ -s "$OUT" ]] || echo '{}' > "$OUT"
 
     task_status="n/a"; task_events=0; task_short="n/a"; task_err=0; task_parser="n/a"

@@ -1,119 +1,90 @@
 {
   "snapshot": {
     "date": "2026-08-23",
-    "stamp": "20260823-013623",
+    "stamp": "20260823-021125",
     "arshy_version": "arshy 0.1.0",
-    "git_commit": "b599b69",
-    "git_dirty_files": "0"
+    "git_commit": "0bd4c30",
+    "git_dirty_files": "10"
   },
   "stats": {
-    "avg_duration_ms": 573.0701754385965,
+    "avg_duration_ms": 71.83333333333333,
     "by_status": {
       "completed": 0,
-      "failed": 57,
+      "failed": 6,
       "killed": 0,
       "running": 0,
       "timeout": 0
     },
-    "context_enriched": 69,
+    "context_enriched": 7,
     "correlated_errors": 0,
-    "db_size_bytes": 90035,
-    "dedup_collapsed": 36,
+    "db_size_bytes": 9950,
+    "dedup_collapsed": 4,
     "failure_rate": 1.0,
-    "p50_duration_ms": 463,
-    "p99_duration_ms": 1447,
-    "parser_coverage_pct": 58.666666666666664,
+    "p50_duration_ms": 57,
+    "p99_duration_ms": 78,
+    "parser_coverage_pct": 58.064516129032256,
     "per_parser_usage": [
       {
-        "count": 15,
+        "count": 1,
         "parser": "python"
       },
       {
-        "count": 10,
+        "count": 1,
         "parser": "go"
       },
       {
-        "count": 9,
-        "parser": "cargo"
+        "count": 1,
+        "parser": "npm"
       },
       {
-        "count": 7,
-        "parser": "npm"
+        "count": 1,
+        "parser": "cargo"
       }
     ],
     "purpose_breakdown": [
       {
-        "avg_duration_ms": 573.0701754385965,
-        "failed": 57,
+        "avg_duration_ms": 71.83333333333333,
+        "failed": 6,
         "failure_rate": 100.0,
         "purpose": "real",
-        "total": 57
+        "total": 6
       }
     ],
     "savings_basis": "measured",
-    "total_agent_delivered_bytes": 174770,
-    "total_agent_skipped_events": 124,
-    "total_agent_visible_events": 176,
-    "total_codes_extracted": 101,
-    "total_contexts_enriched": 69,
-    "total_errors": 212,
-    "total_events": 300,
-    "total_locations_extracted": 128,
-    "total_raw_output_bytes": 17159,
-    "total_tasks": 57
+    "total_agent_delivered_bytes": 694,
+    "total_agent_skipped_events": 13,
+    "total_agent_visible_events": 18,
+    "total_codes_extracted": 11,
+    "total_contexts_enriched": 7,
+    "total_errors": 22,
+    "total_events": 31,
+    "total_locations_extracted": 13,
+    "total_raw_output_bytes": 1868,
+    "total_tasks": 6
   },
   "analyze": {
     "command_patterns": {
       "carrier_distribution": {
-        "python": 15,
-        "script_other": 9,
-        "shell": 26,
-        "shell_composite": 7,
+        "python": 1,
+        "script_other": 1,
+        "shell": 3,
+        "shell_composite": 1,
         "unknown": 0
       },
-      "commands_run_multiple_times": 7,
-      "long_cmd_pct": 42.10526315789473,
-      "short_cmd_pct": 57.89473684210527,
-      "top_retried": [
-        [
-          "go build",
-          10
-        ],
-        [
-          "sh -c",
-          7
-        ],
-        [
-          "npm install",
-          7
-        ],
-        [
-          "python3 -c",
-          5
-        ],
-        [
-          "rustc /tmp/arshy_xeco/rs/main.rs",
-          2
-        ],
-        [
-          "python3 /tmp/arshy_xeco/py/trace.py",
-          2
-        ],
-        [
-          "node /tmp/arshy_xeco/node/break.js",
-          2
-        ]
-      ],
-      "total_retry_runs": 28,
-      "unique_commands": 29
+      "commands_run_multiple_times": 0,
+      "long_cmd_pct": 0.0,
+      "short_cmd_pct": 100.0,
+      "top_retried": [],
+      "total_retry_runs": 0,
+      "unique_commands": 6
     },
-    "generated_at": "2026-08-22T17:36:23.650964+00:00",
+    "generated_at": "2026-08-22T18:11:25.750075+00:00",
     "information_density": {
-      "avg_fields_per_event": 4.993333333333333,
-      "events_with_code": 101,
-      "events_with_context": 69,
-      "events_with_location": 128,
-      "structured_event_pct": 49.333333333333336
+      "avg_fields_per_event": 5.0,
+      "events_with_code": 11,
+      "events_with_context": 7,
+      "events_with_location": 13,
+      "structured_event_pct": 48.38709677419355
     },
     "repair_loop": {
       "avg_fix_duration_ms": 0,
@@ -122,15 +93,15 @@
       "fix_loops": 0
     },
     "summary": {
-      "avg_tasks_per_day": 57.0,
+      "avg_tasks_per_day": 6.0,
       "date_range_days": 1,
-      "total_errors": 212,
-      "total_events": 300,
-      "total_tasks": 57
+      "total_errors": 22,
+      "total_events": 31,
+      "total_tasks": 6
     },
     "temporal": {
-      "avg_events_per_day": 300.0,
-      "avg_tasks_per_day": 57.0,
+      "avg_events_per_day": 31.0,
+      "avg_tasks_per_day": 6.0,
       "date_range": [
         "2026-08-22",
         "2026-08-22"
@@ -138,12 +109,12 @@
       "span_days": 1
     },
     "token_efficiency": {
-      "agent_skipped_events": 124,
-      "agent_visible_events": 176,
-      "estimated_token_savings_pct": 0.0,
-      "noise_pct": 41.333333333333336,
-      "total_agent_delivered_bytes": 174770,
-      "total_raw_output_bytes": 17159
+      "agent_skipped_events": 13,
+      "agent_visible_events": 18,
+      "estimated_token_savings_pct": 62.84796573875803,
+      "noise_pct": 41.935483870967744,
+      "total_agent_delivered_bytes": 694,
+      "total_raw_output_bytes": 1868
     }
   }
 }

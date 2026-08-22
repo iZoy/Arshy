@@ -514,8 +514,7 @@ impl Executor {
                             .map(|evts| {
                                 evts.iter()
                                     .filter(|e| {
-                                        e.get("severity").and_then(|v| v.as_str())
-                                            == Some("error")
+                                        e.get("severity").and_then(|v| v.as_str()) == Some("error")
                                     })
                                     .count() as u64
                             })

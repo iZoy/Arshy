@@ -85,14 +85,7 @@ pub(crate) async fn run_background(mut t: BackgroundTask) -> Result<()> {
 
     // 3-way select: output reading, timeout, or kill signal
     // After this select, handle.wait() is called to get the exit code.
-    let (
-        timed_out,
-        killed,
-        mut seq,
-        raw_output,
-        dedup_collapsed,
-        pairs_merged,
-    ) = tokio::select! {
+    let (timed_out, killed, mut seq, raw_output, dedup_collapsed, pairs_merged) = tokio::select! {
         result = async {
             let mut seq: u64 = 0;
             let mut total_bytes: u64 = 0;
@@ -470,11 +463,8 @@ pub(crate) async fn run_background(mut t: BackgroundTask) -> Result<()> {
 
     // Signal sync waiters
     if let Some(tx) = t.done_tx {
-        let _ = tx.send(CompletionInfo {
-            status: final_status,
-            exit_code: exit_code_val,
-            duration_ms,
-        });
+        let _ =
+            tx.send(CompletionInfo { status: final_status, exit_code: exit_code_val, duration_ms });
     }
 
     Ok(())

@@ -46,6 +46,13 @@ pub(crate) async fn run_command(
     .unwrap_or_default();
     let socket_path = cfg.daemon.expanded_socket_path();
     let mut daemon = crate::proxy::connect_or_start(&cfg, &socket_path).await?;
+    // Default cwd to the CLI's current directory. Without this, the daemon
+    // records cwd=None, and compute_enhanced_project_context's git diff stat
+    // falls back to the daemon's own cwd — leaking the wrong repo's diff
+    // into agent_delivered_bytes and inflating the savings metric. Phase B
+    // Q-3 fix.
+    let cwd =
+        cwd.or_else(|| std::env::current_dir().ok().map(|p| p.to_string_lossy().into_owned()));
     let params = RunTaskParams {
         command: command.into(),
         cwd,

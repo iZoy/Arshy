@@ -167,7 +167,12 @@ pub async fn handle(
     });
 
     let mut line = String::new();
-    let mut default_cwd: Option<String> = None;
+    // Initialize the default cwd to the daemon's startup directory. Without
+    // this, a run() call from an agent that never invoked session/cd would
+    // carry cwd=None, which causes compute_enhanced_project_context to leak
+    // the daemon's git diff stat into agent_delivered_bytes. Phase B Q-3 fix.
+    let mut default_cwd: Option<String> =
+        std::env::current_dir().ok().map(|p| p.to_string_lossy().into_owned());
     loop {
         line.clear();
         let n = reader.read_line(&mut line).await?;

@@ -420,6 +420,62 @@ fn mcp_proxy_raw_action_returns_original_output_and_zero_event_hint() {
 
 #[test]
 #[serial]
+fn e2e_cli_default_cwd_injected_when_missing() {
+    // Phase B (Q-3 fix): when the CLI binary runs without --cwd, the
+    // request to the daemon must carry cwd=$PWD. Otherwise
+    // compute_enhanced_project_context falls back to the daemon's own cwd
+    // (typically arshy source repo) and leaks unrelated git diff stat into
+    // agent_delivered_bytes.
+    //
+    // We spawn the actual CLI binary as a child process so the env::current_dir()
+    // path is exercised end-to-end. The CLI talks to the daemon via IPC,
+    // and we verify the resulting task record has cwd set.
+    let daemon = TestDaemon::spawn();
+
+    // Pick a directory that's definitely not the daemon's cwd.
+    // Use the test source dir as a unique fingerprint.
+    let test_cwd = std::env::current_dir().expect("test runner cwd");
+
+    // Spawn CLI child: a successful composite shell command creates a task
+    // record. \`sh -c '...'\` is composite (not in inspection_tools), so it
+    // goes through the structured (long) path which persists a task record
+    // with cwd. Plain \`echo\` would bypass task creation entirely.
+    let probe_cmd = "sh -c 'echo cwd-default-test arg1 arg2 arg3 arg4 arg5'";
+    // ARSHY_DAEMON_AUTO_START=false prevents the CLI from spawning its own
+    // daemon (which would conflict with the test's TestDaemon on the same socket).
+    let child = std::process::Command::new(arshy_binary())
+        .arg("run")
+        .arg(probe_cmd)
+        .env("ARSHY_DAEMON_SOCKET_PATH", &daemon.socket)
+        .env("ARSHY_STORE_STORE_DIR", daemon._tmp.path().join("store"))
+        .env("ARSHY_DAEMON_LOG_LEVEL", "error")
+        .env("ARSHY_DAEMON_AUTO_START", "false")
+        .current_dir(&test_cwd)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("failed to spawn arshy CLI");
+    let _output = child.wait_with_output().expect("wait CLI");
+    assert!(_output.status.success(), "arshy CLI failed");
+
+    // List tasks and find the one we just created. cwd should be test_cwd
+    // (canonicalized, since macOS resolves /tmp -> /private/tmp).
+    let resp = daemon.rpc(99, "task/list", serde_json::json!({ "limit": 20 }));
+    let tasks = resp["result"].as_array().expect("list should return array");
+    let probe = tasks
+        .iter()
+        .find(|t| t["command"].as_str() == Some(probe_cmd))
+        .expect("should find our probe task in list");
+    let recorded_cwd = probe["cwd"].as_str().expect("task should have cwd");
+    let expected = test_cwd.canonicalize().unwrap_or(test_cwd).to_string_lossy().into_owned();
+    assert_eq!(
+        recorded_cwd, expected,
+        "CLI must default cwd to $PWD when --cwd not provided. recorded={recorded_cwd}, expected={expected}"
+    );
+}
+
+#[test]
+#[serial]
 fn shutdown_exits_daemon_cleanly() {
     let mut daemon = TestDaemon::spawn();
     let resp = daemon.rpc(1, "daemon/shutdown", serde_json::json!({}));
