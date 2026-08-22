@@ -22,6 +22,21 @@ arshy doctor --agent codex   # 验证
 arshy run "echo hello world" # 第一条命令（短命令零开销直出）
 ```
 
+## 实测性能（诚实声明）
+
+6 个主流生态的代表性失败命令实测 token 节省率 **+45.7% 到 +79.9%**（measured，0 fallback）：
+
+| 生态 | 节省率 | 复现 |
+|---|---|---|
+| rustc | **+79.9%** | `scripts/measure-savings.sh` |
+| node  | **+79.0%** | 同上 |
+| python | **+66.2%** | 同上 |
+| go    | **+53.8%** | 同上 |
+| npm   | **+50.0%** | 同上 |
+| cargo (sh-c) | **+45.7%** | 同上 |
+
+完整声明（含诚实边界、引用守则、复现 checklist）：**[`docs/marketing/CLAIMS.md`](docs/marketing/CLAIMS.md)**。
+
 **核心特性**
 
 - **2-tool MCP 模型**：`arshy_exec`（执行/管理任务）+ `arshy_query`（查询事件，支持跨任务全历史搜索）。
@@ -59,6 +74,7 @@ tests/            端到端集成测试（真实 daemon + MCP 代理进程）
 - [配置](docs/how-to/configure.md) · [自定义 Parser](docs/how-to/create-parser.md) · [测试体系](docs/how-to/run-tests.md)
 - [CLI 参考](docs/reference/cli.md) · [MCP 协议](docs/reference/mcp.md) · [IPC 协议](docs/reference/ipc.md) · [Parser 参考](docs/reference/parsers.md) · [错误码参考表](docs/reference/reference-codes.md)
 - [架构](docs/explanation/architecture.md) · [解析管线](docs/explanation/parser-pipeline.md) · [设计原则](docs/explanation/design-principles.md)
+- 营销素材：[`CLAIMS`](docs/marketing/CLAIMS.md)（开发者声明）· [`FAQ`](docs/marketing/FAQ.md)（常见问题）· [`benchmarks`](docs/marketing/benchmarks.md)（vs RTK/Headroom）
 
 ## 许可证
 

@@ -45,6 +45,14 @@
 - [安全模型](explanation/security-model.md) — 威胁模型、命令过滤、路径沙箱、审计
 - [测试体系](explanation/testing.md) — 分层测试策略与质量门禁
 
+## 营销素材（Marketing · 对开发者公开声明）
+
+诚实首发的对外承诺——所有数字可由 `scripts/measure-savings.sh` 复现：
+
+- [性能声明](marketing/CLAIMS.md) — 实测 token 节省率（+45.7% 到 +79.9%）、引用守则、复现 checklist
+- [常见问题](marketing/FAQ.md) — 安装、性能、集成、安全、故障排除
+- [vs RTK / Headroom](marketing/benchmarks.md) — 架构定位对比（非 head-to-head）
+
 ## 决策记录（Decisions）
 
 - [ADR 索引](decisions/README.md) — 已采纳决策与讨论中的草案（从 2026-08 起补齐）
