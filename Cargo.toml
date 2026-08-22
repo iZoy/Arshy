@@ -1,6 +1,6 @@
 [package]
 name = "arshy"
-version = "0.1.0"
+version = "0.0.1"
 edition = "2021"
 description = "AI Agent's structured execution layer — structured output, security sandbox, MCP server"
 license = "MIT"

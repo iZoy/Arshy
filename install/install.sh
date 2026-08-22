@@ -10,12 +10,12 @@ set -e
 #   --agent <id>    after install, wire arshy into that agent (codex, claude-code,
 #                   cursor, vscode, gemini, antigravity, opencode, aider, workbuddy)
 #                   and verify with `arshy doctor --agent <id>`
-#   --version <tag> release tag to download (default: v0.2.0); ignored when building
+#   --version <tag> release tag to download (default: v0.0.1); ignored when building
 #                   from source with cargo
 #   --dry-run       print the plan without changing anything
 
 AGENT=""
-VERSION="v0.2.0"
+VERSION="v0.0.1"
 DRY_RUN=false
 while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -70,7 +70,7 @@ else
     echo "Rust compiler not found. Fetching prebuilt release $VERSION..."
     # Artifact naming must match .github/workflows/release.yml:
     # arshy-${VERSION}-${TARGET}.tar.gz with a rust target triple
-    # (e.g. arshy-v0.2.0-aarch64-apple-darwin.tar.gz).
+    # (e.g. arshy-v0.0.1-aarch64-apple-darwin.tar.gz).
     case "$OS-$ARCH" in
         Darwin-arm64|Darwin-aarch64) TARGET="aarch64-apple-darwin" ;;
         Darwin-x86_64) TARGET="x86_64-apple-darwin" ;;

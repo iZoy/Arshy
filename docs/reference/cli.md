@@ -1,6 +1,6 @@
 # CLI 参考（arshy / arshyd）
 
-> 本文档依据 `src/main.rs` 的 clap 定义与 `./target/debug/arshy --help`、各子命令 `--help` 的实际输出逐项核对（arshy 0.2.0）。
+> 本文档依据 `src/main.rs` 的 clap 定义与 `./target/debug/arshy --help`、各子命令 `--help` 的实际输出逐项核对（arshy v0.0.1）。
 
 `arshy` 是面向 AI Agent 的结构化 shell 执行层。CLI 提供两类入口：
 
@@ -23,7 +23,7 @@ Usage: arshy [OPTIONS] [COMMAND]
 | `--config <CONFIG>` | path | 无（使用默认路径） | 配置文件路径；未指定时使用默认值 + 环境变量覆盖 |
 | `--log-level <LOG_LEVEL>` | string | 无 | 日志级别（`trace`/`debug`/`info`/`warn`/`error`），覆盖配置文件 |
 | `-h, --help` | — | — | 打印帮助 |
-| `-V, --version` | — | — | 打印版本（0.2.0） |
+| `-V, --version` | — | — | 打印版本（0.0.1） |
 
 无子命令时打印一行用法说明并退出（`src/cli/mod.rs` dispatch 的 `None` 分支）。
 

@@ -119,7 +119,7 @@ arshy 是**执行层**——控制命令的整个生命周期。
 |--------|--------|------|
 | 多 agent 支持 (Cursor, Codex, Copilot, Gemini) | P0 | ✅ Cursor |
 | Hook 拦截模式 (零配置透明接入) | P0 | ✅ |
-| 发布 v0.2.0 (GitHub Release) | P0 | ✅ 已发 |
+| 发布 v0.0.1 (GitHub Release) | P0 | ✅ 已发 |
 | Dogfooding (永久实践：所有开发命令走 arshy，积累 stats 数据) | P0 | ✅ 进行中 |
 | 社区发布 (README 完善 + 社区推广) | P1 | ✅ README 重写 |
 | 收集 10 个用户的反馈 | P1 | ⬜ |
@@ -304,6 +304,6 @@ arshy 是**执行层**——控制命令的整个生命周期。
 - `scripts/dogfood.sh` 作为提交前回归验证工具（21/21 通过）
 - 默认输出面向 agent（JSON）；人类观察保留显式通道：`--format pretty` / `stats` / `benchmark` / `analyze`
 
-**下一步：发布 v0.2.0，开始收集用户反馈。**
+**下一步：发布 v0.0.1，开始收集用户反馈。**
 
 **北极星：让 AI Agent 从命令输出中获得比人类开发者更多的信息。**

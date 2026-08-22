@@ -396,8 +396,8 @@ mod tests {
 
     #[test]
     fn default_install_dir_tmp_build_uses_own_dir() {
-        let exe = std::path::Path::new("/opt/arshy/builds/v0.3.0/arshy");
+        let exe = std::path::Path::new("/opt/arshy/builds/v0.0.1/arshy");
         let dir = default_install_dir(exe);
-        assert_eq!(dir, std::path::Path::new("/opt/arshy/builds/v0.3.0"));
+        assert_eq!(dir, std::path::Path::new("/opt/arshy/builds/v0.0.1"));
     }
 }

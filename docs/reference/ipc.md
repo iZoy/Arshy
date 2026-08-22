@@ -1,6 +1,6 @@
 # Daemon IPC 参考
 
-> 本文档依据 `src/ipc/mod.rs`、`src/ipc/transport.rs`、`src/daemon/ipc_handler.rs` 核对（arshy 0.2.0）。
+> 本文档依据 `src/ipc/mod.rs`、`src/ipc/transport.rs`、`src/daemon/ipc_handler.rs` 核对（arshy v0.0.1）。
 
 ## 传输
 

@@ -2,7 +2,7 @@
 
 > **目的**：本文档是 arshy 对开发者社区的**可验证承诺**。所有数字都可以用仓库里的脚本重新跑出来——任何与本文不一致的实测数字以脚本输出为准。
 
-**最后校准**：`arshy 0.1.0` · commit `ebad8c0` · 2026-08-23
+**最后校准**：`arshy v0.0.1` · commit `ebad8c0` · 2026-08-23
 
 ---
 
@@ -106,7 +106,7 @@ scripts/evidence_snapshot.sh    # 写入 docs/evidence/<date>.json
 
 ---
 
-## 4. 实测：响应一致性（v0.3.0 honesty patch）
+## 4. 实测：响应一致性（v0.0.1 honesty patch）
 
 ### 4.1 之前的问题
 

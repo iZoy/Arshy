@@ -1,6 +1,6 @@
 # MCP 协议参考
 
-> 本文档依据 `src/mcp/instructions.rs`、`src/mcp/protocol.rs`、`src/proxy/mod.rs` 核对（arshy 0.2.0）。
+> 本文档依据 `src/mcp/instructions.rs`、`src/mcp/protocol.rs`、`src/proxy/mod.rs` 核对（arshy v0.0.1）。
 
 ## 传输与运行方式
 

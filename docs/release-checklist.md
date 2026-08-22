@@ -1,9 +1,9 @@
 # arshy — 开源发布清单
 
-> 按真实产物重写（2026-08-03，v0.2.0）。**发布动作需用户明确批准后执行**——当前处于开源前冲刺，不部署 GitHub、不打 tag、不 release。
-> 对应仓库：https://github.com/iZoy/Arshy（main 分支，本地领先 origin 50 个提交，未推送）
+> 按真实产物重写（2026-08-03，v0.0.1）。**发布动作需用户明确批准后执行**——当前处于 v0.0.1 发布就绪状态——`v0.0.1` tag 已创建本地，待用户批准后推送 GitHub。
+> 对应仓库：https://github.com/iZoy/Arshy（main 分支，已就绪，待用户批准后推送）
 
-## 真实产物基线（v0.2.0 实测）
+## 真实产物基线（v0.0.1 实测）
 
 | 维度 | 真实数值 |
 |------|---------|
@@ -57,8 +57,8 @@
 
 1. **推送 + 打 tag**
    - `git push origin main`（本地领先 50 提交）
-   - `git tag v0.2.0 && git push origin v0.2.0` → 触发 release.yml
-2. **验证 release 产物**：`arshy-v0.2.0-{aarch64-apple-darwin,x86_64-apple-darwin,x86_64-unknown-linux-gnu,aarch64-unknown-linux-gnu}.tar.gz` + sha256（install.sh 下载 URL 已对齐此命名，含 ARM64 Linux）
+   - `git tag v0.0.1 && git push origin v0.0.1` → 触发 release.yml
+2. **验证 release 产物**：`arshy-v0.0.1-{aarch64-apple-darwin,x86_64-apple-darwin,x86_64-unknown-linux-gnu,aarch64-unknown-linux-gnu}.tar.gz` + sha256（install.sh 下载 URL 已对齐此命名，含 ARM64 Linux）
 3. **无 cargo 机器实测一行安装**（release 前唯一未端到端验证的路径；本机已通过 install.sh --dry-run + release 构建冒烟）
 4. **crates.io**：`cargo publish`（Cargo.toml 已含 license/repository/description/readme/exclude；`cargo package` 本地校验通过——crate 含全部 37 parser + fixtures + LICENSE，仓库专属文件已排除）
 5. **Homebrew**：Formula/arshy.rb 已就绪（`brew install arshy` 走 cargo 构建）。发布产物生成后切换到 prebuilt tarball + sha256（公式内注释已给出模板），实现秒装

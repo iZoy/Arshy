@@ -82,7 +82,7 @@ arshy stats --format json
 # analyze（包含 token_efficiency 块）
 arshy analyze --format json
 
-# 一键复现脚本（v0.3.0+）
+# 一键复现脚本（v0.0.1+）
 ./scripts/measure-savings.sh
 ```
 

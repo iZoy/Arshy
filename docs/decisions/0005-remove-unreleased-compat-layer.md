@@ -6,7 +6,7 @@
 
 ## 背景
 
-项目未发布（v0.1.0，无真实用户），但代码中保留了多种兼容层：legacy MCP 工具名（`arshy_run`/`arshy_list`/`arshy_kill`/`arshy_tail`）、`arshy integrate` CLI 别名、未知工具静默回退到 run。其中"未知工具默认当 run 执行"意味着拼错工具名会**真的执行命令**，属于危险默认。
+项目未发布（v0.0.1，无真实用户），但代码中保留了多种兼容层：legacy MCP 工具名（`arshy_run`/`arshy_list`/`arshy_kill`/`arshy_tail`）、`arshy integrate` CLI 别名、未知工具静默回退到 run。其中"未知工具默认当 run 执行"意味着拼错工具名会**真的执行命令**，属于危险默认。
 
 ## 决策
 

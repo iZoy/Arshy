@@ -37,7 +37,7 @@ curl -fsSL https://raw.githubusercontent.com/iZoy/Arshy/main/install/install.sh 
 1. 创建安装目录 `~/.local/bin`。
 2. 构建或下载二进制：
    - 检测到 `cargo` 时，执行 `cargo build --release` 并把 `target/release/arshy`、`target/release/arshyd` 复制到 `~/.local/bin`。
-   - 否则从 GitHub Releases 下载 `arshy-v0.2.0-<target>.tar.gz` 并解压到 `~/.local/bin`。
+   - 否则从 GitHub Releases 下载 `arshy-v0.0.1-<target>.tar.gz` 并解压到 `~/.local/bin`。
 3. 配置透明 shell 钩子（`arshy hook install`）。
 4. 在 macOS 上对两个二进制做 ad-hoc 代码签名（见第 7 步）。
 5. 打印完成信息。
@@ -59,8 +59,8 @@ curl -fsSL https://raw.githubusercontent.com/iZoy/Arshy/main/install/install.sh 
 # 安装后立即接入某个 agent（如 codex），并自动运行 doctor 验证
 curl -fsSL https://raw.githubusercontent.com/iZoy/Arshy/main/install/install.sh | sh -s -- --agent codex
 
-# 指定发布版本（默认 v0.2.0）
-curl -fsSL https://raw.githubusercontent.com/iZoy/Arshy/main/install/install.sh | sh -s -- --version v0.2.0
+# 指定发布版本（默认 v0.0.1）
+curl -fsSL https://raw.githubusercontent.com/iZoy/Arshy/main/install/install.sh | sh -s -- --version v0.0.1
 
 # 只打印将要执行的操作，不改动任何文件
 curl -fsSL https://raw.githubusercontent.com/iZoy/Arshy/main/install/install.sh | sh -s -- --dry-run
@@ -88,7 +88,7 @@ arshy --version
 预期输出类似：
 
 ```text
-arshy 0.2.0
+arshy v0.0.1
 ```
 
 `which arshy arshyd` 应同时列出 `~/.local/bin/arshy` 和 `~/.local/bin/arshyd` 两条路径。

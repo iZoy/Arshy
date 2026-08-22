@@ -53,7 +53,7 @@ Get the latest version tag from GitHub API, then download:
 INSTALL_DIR="${ARSHY_INSTALL_DIR:-$HOME/.local/bin}"
 mkdir -p "$INSTALL_DIR"
 
-VERSION="0.1.0"  # updated on each release
+VERSION="0.0.1"  # updated on each release
 URL="https://github.com/iZoy/Arshy/releases/download/v${VERSION}/arshy-v${VERSION}-${TARGET}.tar.gz"
 CHECKSUM_URL="${URL}.sha256"
 
