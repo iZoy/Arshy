@@ -293,6 +293,7 @@ mod tests {
             events_count: 0,
             error_count: 0,
             purpose: None,
+            carrier: None,
         }
     }
 

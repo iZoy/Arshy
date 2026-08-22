@@ -57,9 +57,13 @@ impl ArshyError {
             Self::TaskTimeout { .. } => TASK_TIMEOUT,
             Self::AccessDenied(_) => ACCESS_DENIED,
             Self::Blocked(_) => COMMAND_BLOCKED,
-            Self::Ipc(msg) if msg.contains("unknown method") => METHOD_NOT_FOUND,
+            Self::Ipc(msg) if msg.contains("unknown method") || msg.contains("unknown tool") => {
+                METHOD_NOT_FOUND
+            }
             Self::Ipc(msg) if msg.contains("missing") || msg.contains("invalid") => INVALID_PARAMS,
-            Self::Ipc(msg) if msg.contains("rate limit") => RATE_LIMITED,
+            Self::Ipc(msg) if msg.contains("rate limit") || msg.contains("too many concurrent") => {
+                RATE_LIMITED
+            }
             _ => INTERNAL_ERROR,
         }
     }
@@ -69,7 +73,11 @@ impl ArshyError {
         match self {
             Self::TaskTimeout { .. } => true,
             Self::DaemonUnreachable(_) => true,
-            Self::Ipc(msg) if msg.contains("timed out") || msg.contains("connection closed") => {
+            Self::Ipc(msg)
+                if msg.contains("timed out")
+                    || msg.contains("connection closed")
+                    || msg.contains("too many concurrent") =>
+            {
                 true
             }
             Self::Io(_) => true,
@@ -109,6 +117,11 @@ mod tests {
         assert_eq!(ArshyError::AccessDenied("ro".into()).json_rpc_code(), -32003);
         assert_eq!(ArshyError::Blocked("rm -rf /".into()).json_rpc_code(), -32004);
         assert_eq!(ArshyError::Ipc("unknown method: foo".into()).json_rpc_code(), -32601);
+        assert_eq!(ArshyError::Ipc("unknown tool: foo".into()).json_rpc_code(), -32601);
+        assert_eq!(
+            ArshyError::Ipc("too many concurrent tasks: limit 4 reached".into()).json_rpc_code(),
+            -32005
+        );
         assert_eq!(ArshyError::Ipc("missing task_id".into()).json_rpc_code(), -32602);
         assert_eq!(ArshyError::Config("bad".into()).json_rpc_code(), -32603);
     }
@@ -119,6 +132,7 @@ mod tests {
         assert!(ArshyError::DaemonUnreachable("down".into()).is_retryable());
         assert!(ArshyError::Ipc("timed out".into()).is_retryable());
         assert!(ArshyError::Ipc("connection closed".into()).is_retryable());
+        assert!(ArshyError::Ipc("too many concurrent tasks".into()).is_retryable());
         assert!(ArshyError::Io(std::io::Error::other("x")).is_retryable());
 
         assert!(!ArshyError::TaskNotFound("x".into()).is_retryable());

@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::Notify;
 
@@ -67,6 +67,7 @@ impl Default for TaskRecord {
                 events_count: 0,
                 error_count: 0,
                 purpose: None,
+                carrier: None,
             },
             raw_output: None,
             dedup_collapsed: 0,
@@ -79,10 +80,20 @@ impl Default for TaskRecord {
 }
 
 /// Thread-safe JSONL file-based store.
+///
+/// Scale trigger (decision 4): JSONL is intentional — append-only, zero
+/// deps, debuggable. If tasks exceed ~10k or cross-task query latency
+/// exceeds ~200ms, add a derived index (e.g. file → task_id) before
+/// considering a DB migration; no second reversal without measurement.
 pub struct Store {
     dir: PathBuf,
     tasks: Mutex<HashMap<String, TaskRecord>>,
     dirty: AtomicBool,
+    /// Epoch seconds of the most recent task activity. Initialised at open
+    /// time so a never-used daemon still idle-exits after the timeout, and
+    /// refreshed on every execution (short and long paths) so a daemon that
+    /// only served short commands is not treated as idle forever.
+    last_activity: AtomicI64,
     /// Notified whenever `mark_dirty` is called, so the background flush
     /// task can sleep indefinitely while idle instead of polling on a fixed
     /// interval (a 1 Hz poll would needlessly wake the CPU and hurt laptop
@@ -106,6 +117,7 @@ impl Store {
             dir: store_dir,
             tasks: Mutex::new(tasks_map),
             dirty: AtomicBool::new(false),
+            last_activity: AtomicI64::new(chrono::Utc::now().timestamp()),
             notify: Arc::new(Notify::new()),
         })
     }
@@ -136,37 +148,31 @@ impl Store {
         self.notify.notify_one();
     }
 
-    /// Seconds since the most recent task finished, or `None` if any task is
-    /// still running or there are no finished tasks yet.
+    /// Seconds since the most recent task activity, or `None` while a task is
+    /// still running (the system is clearly not idle).
     ///
     /// Used by the idle-exit watchdog in the daemon accept loop: once this
     /// exceeds `daemon.idle_timeout_secs`, the daemon self-exits. A live
-    /// task short-circuits to `None` (the system is clearly not idle).
+    /// task short-circuits to `None`. Activity covers both execution paths:
+    /// long tasks mark on start and completion, short commands mark on start
+    /// — so a daemon serving only short commands (which never touch the
+    /// store) still idle-exits instead of lingering forever.
     pub fn idle_since_secs(&self) -> Result<Option<u64>> {
-        use chrono::DateTime;
         let tasks = self.lock();
-        let now = chrono::Utc::now();
-        let mut latest: Option<DateTime<chrono::Utc>> = None;
         for record in tasks.values() {
             if matches!(record.task.status, crate::ipc::TaskStatus::Running) {
                 return Ok(None);
             }
-            if let Some(ref finished) = record.task.finished_at {
-                if let Ok(dt) = DateTime::parse_from_rfc3339(finished) {
-                    let dt = dt.with_timezone(&chrono::Utc);
-                    if latest.is_none_or(|l| dt > l) {
-                        latest = Some(dt);
-                    }
-                }
-            }
         }
-        match latest {
-            Some(dt) => {
-                let secs = (now - dt).num_seconds();
-                Ok(Some(secs.max(0) as u64))
-            }
-            None => Ok(None),
-        }
+        let last = self.last_activity.load(Ordering::Relaxed);
+        let secs = (chrono::Utc::now().timestamp() - last).max(0) as u64;
+        Ok(Some(secs))
+    }
+
+    /// Record that a task ran (short or long path). Keeps the idle watchdog's
+    /// "time since last activity" fresh for commands that skip the store.
+    pub fn mark_activity(&self) {
+        self.last_activity.store(chrono::Utc::now().timestamp(), Ordering::Relaxed);
     }
 
     /// Flush pending changes to disk if dirty. Returns Ok(()) even if not dirty.
@@ -340,6 +346,7 @@ mod tests {
             events_count: 0,
             error_count: 0,
             purpose: None,
+            carrier: None,
         }
     }
 
@@ -354,6 +361,33 @@ mod tests {
             context: None,
             hint: None,
         }
+    }
+
+    // ── Idle watchdog tests ────────────────────────────────────────────────
+
+    #[test]
+    fn idle_since_secs_empty_store_reports_idle() {
+        let (store, _tmp) = test_store();
+        // An empty store (e.g. a daemon that only served short commands,
+        // which never touch the store) must report an idle time — previously
+        // it returned None and the daemon never idle-exited.
+        assert!(store.idle_since_secs().unwrap().is_some());
+    }
+
+    #[test]
+    fn idle_since_secs_running_task_returns_none() {
+        let (store, _tmp) = test_store();
+        let task = make_task("t1", "sleep 1", TaskStatus::Running);
+        store.insert_task(&task).unwrap();
+        assert!(store.idle_since_secs().unwrap().is_none());
+    }
+
+    #[test]
+    fn mark_activity_refreshes_idle_time() {
+        let (store, _tmp) = test_store();
+        store.mark_activity();
+        let secs = store.idle_since_secs().unwrap().unwrap();
+        assert!(secs <= 1, "idle time should be ~0 right after activity, got {}", secs);
     }
 
     // ── Schema tests ────────────────────────────────────────────────────────

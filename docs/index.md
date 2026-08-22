@@ -33,6 +33,7 @@
 - [MCP 协议](reference/mcp.md) — 工具 schema、资源、通知、版本协商
 - [IPC 协议](reference/ipc.md) — JSON-RPC 方法、数据结构、错误码
 - [Parser 参考](reference/parsers.md) — 37 个内置 parser、TOML schema、fixture 约定
+- [错误码参考表](reference/reference-codes.md) — 非显而易见退出码的含义（docker/kubectl/aws）
 
 ## 概念解释（Explanation · 理解导向）
 
@@ -42,6 +43,10 @@
 - [接入模型](explanation/integration-model.md) — MCP 原生 + bash 代理、零残余哲学
 - [安全模型](explanation/security-model.md) — 威胁模型、命令过滤、路径沙箱、审计
 - [测试体系](explanation/testing.md) — 分层测试策略与质量门禁
+
+## 决策记录（Decisions）
+
+- [ADR 索引](decisions/README.md) — 已采纳决策与讨论中的草案（从 2026-08 起补齐）
 
 ## 产品与设计文档（存档，未随技术文档重写）
 

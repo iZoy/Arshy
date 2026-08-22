@@ -45,7 +45,7 @@ pub struct AgentStatus {
 
 /// A known agent environment and how arshy wires into it.
 pub trait AgentIntegration {
-    /// Stable identifier (e.g. `claude-code`), used by `arshy integrate --agent <id>`.
+    /// Stable identifier (e.g. `claude-code`), used by `arshy setup <id>`.
     fn id(&self) -> &'static str;
     /// Human-readable name.
     fn name(&self) -> &'static str;
@@ -486,7 +486,7 @@ fn merge_codex_config(path: &Path, arshy_bin: &Path, dry_run: bool) -> Result<Ve
     let existing = if path.exists() { std::fs::read_to_string(path)? } else { String::new() };
 
     let block = format!(
-        "\n# arshy: structured execution layer (managed by `arshy integrate`)\n[mcp_servers.arshy]\ncommand = \"{}\"\nargs = [\"--from-mcp\"]\n",
+        "\n# arshy: structured execution layer (managed by `arshy setup`)\n[mcp_servers.arshy]\ncommand = \"{}\"\nargs = [\"--from-mcp\"]\n",
         arshy_bin.to_string_lossy()
     );
 
@@ -608,7 +608,7 @@ impl AgentIntegration for ClaudeCode {
             detail: if active {
                 "arshy reachable via Claude Code".into()
             } else {
-                "run: arshy integrate --agent claude-code".into()
+                "run: arshy setup claude-code".into()
             },
         }
     }
@@ -648,7 +648,7 @@ impl AgentIntegration for Cursor {
             detail: if active {
                 "arshy MCP registered".into()
             } else {
-                "run: arshy integrate --agent cursor".into()
+                "run: arshy setup cursor".into()
             },
         }
     }
@@ -691,7 +691,7 @@ impl AgentIntegration for VsCode {
             detail: if active {
                 "arshy MCP registered".into()
             } else {
-                "run: arshy integrate --agent vscode".into()
+                "run: arshy setup vscode".into()
             },
         }
     }
@@ -731,7 +731,7 @@ impl AgentIntegration for Antigravity {
             detail: if active {
                 "arshy MCP registered".into()
             } else {
-                "run: arshy integrate --agent antigravity".into()
+                "run: arshy setup antigravity".into()
             },
         }
     }
@@ -786,12 +786,11 @@ impl AgentIntegration for Codex {
             detail: if mcp && agents_md {
                 "MCP registered + AGENTS.md instructions".into()
             } else if mcp {
-                "MCP registered; inject AGENTS.md instructions (arshy integrate --agent codex)"
-                    .into()
+                "MCP registered; inject AGENTS.md instructions (arshy setup codex)".into()
             } else if agents_md {
-                "AGENTS.md has instructions; register MCP (arshy integrate --agent codex)".into()
+                "AGENTS.md has instructions; register MCP (arshy setup codex)".into()
             } else {
-                "run: arshy integrate --agent codex".into()
+                "run: arshy setup codex".into()
             },
         }
     }
@@ -911,7 +910,7 @@ impl AgentIntegration for WorkBuddy {
             detail: if hook {
                 "shell hook active; restart WorkBuddy to inherit PATH".into()
             } else {
-                "run: arshy integrate (then restart WorkBuddy)".into()
+                "run: arshy setup workbuddy (then restart WorkBuddy)".into()
             },
         }
     }
@@ -1033,7 +1032,7 @@ pub fn agent_statuses() -> Vec<AgentStatus> {
     all_agents().iter().map(|a| a.status(&home, &arshy_bin, &cwd)).collect()
 }
 
-/// Print the per-agent integration table (used by `arshy integrate --status`).
+/// Print the per-agent integration table (used by `arshy setup --status`).
 pub fn print_agent_status() -> Result<()> {
     println!("arshy agent integrations\n");
     println!("{:<14} {:<22} {:<14} NOTE", "AGENT", "MECHANISM", "STATUS");
@@ -1048,7 +1047,7 @@ pub fn print_agent_status() -> Result<()> {
         };
         println!("{:<14} {:<22} {:<14} {}", s.id, s.mechanism, status, s.detail);
     }
-    println!("\nRun `arshy integrate` to wire up all detected agents.");
+    println!("\nRun `arshy setup` to wire up all detected agents.");
     Ok(())
 }
 

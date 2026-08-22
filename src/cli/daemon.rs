@@ -275,7 +275,20 @@ pub(crate) fn doctor(
         auto_start,
         "set daemon.auto_start = true (ARSHY_DAEMON_AUTO_START=false disables it)"
     );
-    let will_intercept = hook_active && ws_configured && auto_start;
+    let no_intercept = std::env::var("ARSHY_NO_INTERCEPT").is_ok();
+    check!(
+        "ARSHY_NO_INTERCEPT not set (global kill switch)",
+        !no_intercept,
+        "unset ARSHY_NO_INTERCEPT to re-enable bash interception"
+    );
+    let audit_path = home.join(".arshy").join("intercept.jsonl");
+    if audit_path.exists() {
+        let size = std::fs::metadata(&audit_path).map(|m| m.len()).unwrap_or(0);
+        println!("  · interception audit log: {} ({} bytes)", audit_path.display(), size);
+    } else {
+        hint!("No interception audit log yet — created on the first agent `bash -c`.");
+    }
+    let will_intercept = hook_active && ws_configured && auto_start && !no_intercept;
     if will_intercept {
         println!("  ✓ agent `bash -c` in THIS workspace will be intercepted and auto-start arshyd");
     } else {

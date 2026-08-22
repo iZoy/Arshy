@@ -159,18 +159,6 @@ pub enum CliCommand {
         #[arg(long)]
         status: bool,
     },
-    /// Alias of `setup` (kept for compatibility)
-    Integrate {
-        /// Only act on a specific agent id (claude-code, cursor, vscode, antigravity, codex, opencode, aider, workbuddy)
-        #[arg(long)]
-        agent: Option<String>,
-        /// Show what would be done without making changes
-        #[arg(long)]
-        dry_run: bool,
-        /// Only print per-agent integration status (no changes)
-        #[arg(long)]
-        status: bool,
-    },
     /// Copy the current build over the installed arshy/arshyd binaries
     SelfUpdate {
         /// Install directory (default: ~/.local/bin, or the current binary's dir when already installed)

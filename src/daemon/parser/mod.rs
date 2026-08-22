@@ -25,6 +25,7 @@ pub mod toml;
 pub mod toml_def;
 
 pub use json::try_parse as try_parse_json;
+pub use loader::ParserWatcher;
 pub use toml::stderr_looks_like_error;
 
 pub use detect::*;

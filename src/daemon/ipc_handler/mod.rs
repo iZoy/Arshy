@@ -12,6 +12,7 @@ use crate::ipc::{
 };
 use crate::Result;
 use serde::Serialize;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, BufReader, BufWriter};
 use tokio::net::UnixStream;
@@ -346,6 +347,7 @@ async fn dispatch(
                     params.env.as_ref(),
                     params.errors_only,
                     params.purpose.as_deref(),
+                    params.dedup_key.as_deref(),
                 )
                 .await?;
             let mut resp = serde_json::to_value(&result)?;
@@ -392,6 +394,13 @@ async fn dispatch(
                 }
                 None => store.search_events(&params)?,
             };
+            // Restricted code references (non-obvious exit/error codes) are
+            // attached here, on demand — never inlined into stored events.
+            let fallback_tool = match &params.task_id {
+                Some(tid) => store.get_task(tid).ok().flatten().and_then(|t| t.parser_name),
+                None => None,
+            };
+            let events = attach_references(events, executor, &store, fallback_tool);
             Ok(serde_json::json!({ "events": events, "total": total }))
         }
         METHOD_LIST => {
@@ -479,7 +488,8 @@ async fn dispatch(
         }
         ipc::METHOD_PARSER_RELOAD => {
             let diff = executor.reload_parsers()?;
-            Ok(serde_json::json!({ "diff": diff }))
+            let reference_diff = executor.reload_reference()?;
+            Ok(serde_json::json!({ "diff": diff, "reference": reference_diff }))
         }
         ipc::METHOD_ANALYZE => {
             let store_clone = store.clone();
@@ -540,6 +550,47 @@ fn truncation_hint(shown: usize, total: usize, task_id: &str) -> Option<(bool, S
     } else {
         None
     }
+}
+
+/// Attach restricted reference data (what a non-obvious exit/error code
+/// *means*) to query results. Lookup is scoped to the task's tool when
+/// known (per-task query → task parser_name; cross-task search → each
+/// event's task_id), so docker 130 and aws 130 never mix. Events without a
+/// matching reference pass through unchanged.
+fn attach_references(
+    events: Vec<serde_json::Value>,
+    executor: &Executor,
+    store: &Store,
+    fallback_tool: Option<String>,
+) -> Vec<serde_json::Value> {
+    // task_id → tool cache for cross-task search (bounded by event count).
+    let mut tool_cache: HashMap<String, Option<String>> = HashMap::new();
+    events
+        .into_iter()
+        .map(|ev| {
+            let Some(code) = ev.get("code").and_then(|c| c.as_str()) else {
+                return ev;
+            };
+            let tool = ev
+                .get("task_id")
+                .and_then(|t| t.as_str())
+                .and_then(|tid| {
+                    tool_cache.get(tid).cloned().unwrap_or_else(|| {
+                        let t =
+                            store.get_task(tid).ok().flatten().and_then(|task| task.parser_name);
+                        tool_cache.insert(tid.to_string(), t.clone());
+                        t
+                    })
+                })
+                .or_else(|| fallback_tool.clone());
+            let Some(entries) = executor.reference_entries(code, tool.as_deref()) else {
+                return ev;
+            };
+            let mut obj = ev;
+            obj["reference"] = serde_json::to_value(entries).unwrap_or_default();
+            obj
+        })
+        .collect()
 }
 
 // ── Integration tests ──────────────────────────────────────────────────────

@@ -1,0 +1,18 @@
+[meta]
+name = "aws"
+description = "AWS CLI exit codes"
+
+[[entry]]
+code = "1"
+message = "Generic error — the command failed; inspect the error message for the cause"
+source = "https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-quickstart.html"
+
+[[entry]]
+code = "2"
+message = "Usage error — invalid command, option, or argument syntax"
+source = "https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-quickstart.html"
+
+[[entry]]
+code = "130"
+message = "Interrupted by SIGINT (Ctrl+C)"
+source = "https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-quickstart.html"

@@ -7,7 +7,7 @@
 ## 1. 查看接入状态
 
 ```bash
-arshy setup --status        # 等价: arshy integrate --status
+arshy setup --status
 ```
 
 输出表格（实测）：
@@ -18,13 +18,13 @@ arshy agent integrations
 AGENT          MECHANISM              STATUS         NOTE
 ──────────────────────────────────────────────────────────────────────
 claude-code    PreToolUse + MCP       active         arshy reachable via Claude Code
-cursor         MCP                    inactive       run: arshy integrate --agent cursor
-vscode         MCP                    inactive       run: arshy integrate --agent vscode
-antigravity    MCP                    inactive       run: arshy integrate --agent antigravity
-codex          MCP + AGENTS.md        inactive       run: arshy integrate --agent codex
+cursor         MCP                    inactive       run: arshy setup cursor
+vscode         MCP                    inactive       run: arshy setup vscode
+antigravity    MCP                    inactive       run: arshy setup antigravity
+codex          MCP + AGENTS.md        inactive       run: arshy setup codex
 opencode       AGENTS.md              inactive       add arshy instructions to your project AGENTS.md
 aider          AGENTS.md              not found      add arshy instructions to your project AGENTS.md
-workbuddy      GUI PATH               inactive       run: arshy integrate (then restart WorkBuddy)
+workbuddy      GUI PATH               inactive       run: arshy setup workbuddy (then restart WorkBuddy)
 ```
 
 8 个一等 agent 及接入机制（`all_agents()`，`src/cli/integrate.rs`）：
@@ -55,8 +55,6 @@ arshy setup codex        # 只接 Codex
 ```bash
 arshy setup              # 无参数 = 全部检测到的 agent
 ```
-
-（`arshy integrate` 是 `setup` 的兼容别名，行为相同。）
 
 执行内容（`integrate_all`，`src/cli/integrate.rs`）：
 
@@ -147,7 +145,10 @@ bash 代理是**兜底通道**：agent 不通过 MCP 而是直接 `bash -c "..."
 - **模糊父进程**（generic agent、node、python）**必须**有工作区标记才拦截——避免脚本/构建工具被意外接管；
 - **其他 MCP agent**（Copilot CLI、Cline、Roo 等）不在被动拦截白名单里，走 `arshy init` 的项目标记或第 6 节 manual MCP 显式接入；
 - **`ARSHY_BYPASS=1`** 环境变量可跳过拦截（Claude hook 改写命令时设置，防止递归）；
+- **`ARSHY_NO_INTERCEPT=1`** 是全局逃生门：禁用所有拦截（比单条命令的 `ARSHY_BYPASS` 更强）；
 - 拦截失败会回退到真实 shell，并打印 `Arshy interception failed: ... Falling back to real shell...`。
+
+每次 agent 相关的拦截决策（拦截/放行 + 原因 + 父进程 + 命令）都会追加到 `~/.arshy/intercept.jsonl` 审计日志；`arshy doctor` 第 5.5 节会报告开关状态与审计日志情况。
 
 ### 启用/禁用 shim
 

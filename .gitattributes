@@ -1,0 +1,21 @@
+# Normalise line endings to LF on every platform.
+#
+# Without this, Windows checkouts (core.autocrlf=true) get CRLF working
+# trees and `cargo fmt --check` fails locally with "Incorrect newline
+# style" on every file (rustfmt.toml enforces Unix newlines).
+* text=auto
+.gitattributes text eol=lf
+.gitignore text eol=lf
+CODEOWNERS text eol=lf
+LICENSE text eol=lf
+Cargo.lock text eol=lf
+*.py text eol=lf
+*.rs text eol=lf
+*.md text eol=lf
+*.toml text eol=lf
+*.json text eol=lf
+*.txt text eol=lf
+*.sh text eol=lf
+*.rb text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf

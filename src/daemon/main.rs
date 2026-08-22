@@ -1,7 +1,9 @@
 //! Arshy daemon — background process managing shell execution.
 
 use arshy_lib::config::{expand_path, Config};
-use arshy_lib::daemon::{bus, exec, ipc_handler, lifecycle, parser, security, store, telemetry};
+use arshy_lib::daemon::{
+    bus, exec, ipc_handler, lifecycle, parser, reference, security, store, telemetry,
+};
 use arshy_lib::Result;
 use std::sync::Arc;
 use tokio::net::UnixListener;
@@ -142,10 +144,12 @@ async fn main() -> Result<()> {
         max_output_bytes: cfg.daemon.max_output_bytes,
         kill_graceful_ms: cfg.daemon.kill_graceful_ms,
         kill_force_ms: cfg.daemon.kill_force_ms,
+        max_concurrent_tasks: cfg.daemon.max_concurrent_tasks as usize,
     };
     let mut executor = exec::Executor::new(store.clone(), parser_engine.clone(), event_bus.clone())
         .with_config(exec_config)
-        .with_security(&security);
+        .with_security(&security)
+        .with_reference(Arc::new(reference::ReferenceTable::load()?));
 
     if let Some(ref audit_path) = cfg.security.audit_log {
         let expanded = expand_path(std::path::Path::new(audit_path));
@@ -158,6 +162,21 @@ async fn main() -> Result<()> {
 
     // ── Parser hot-reload watcher ─────────────────────────────────────────
     let _watcher = parser_engine.start_watcher()?;
+
+    // ── Reference-table hot-reload watcher ───────────────────────────────
+    // User tables live in ~/.arshy/reference/*.toml; reload on change. The
+    // directory may not exist yet — the watcher starts once it does.
+    let _ref_watcher =
+        parser::ParserWatcher::start(&[std::path::PathBuf::from("${HOME}/.arshy/reference")], {
+            let executor = executor.clone();
+            move || {
+                if let Err(e) = executor.reload_reference() {
+                    tracing::error!("reference hot-reload failed: {}", e);
+                } else {
+                    tracing::info!("reference tables hot-reloaded");
+                }
+            }
+        })?;
 
     // ── Shutdown channel ───────────────────────────────────────────────────
     let (shutdown_tx, shutdown_rx) = watch::channel(false);

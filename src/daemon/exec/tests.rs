@@ -23,8 +23,10 @@ async fn test_executor_run_echo() {
     let (store, parser, bus, _tmp) = setup();
     let executor = Executor::new(store.clone(), parser, bus);
 
-    let result =
-        executor.run("echo hello", None, None, "async", None, None, false, None).await.unwrap();
+    let result = executor
+        .run("echo hello", None, None, "async", None, None, false, None, None)
+        .await
+        .unwrap();
     assert!(!result.task_id.is_empty());
     assert_eq!(result.status, TaskStatus::Running);
 
@@ -60,7 +62,7 @@ async fn test_executor_run_failure() {
     let executor = Executor::new(store.clone(), parser, bus);
 
     let result =
-        executor.run("exit 1", None, None, "async", None, None, false, None).await.unwrap();
+        executor.run("exit 1", None, None, "async", None, None, false, None, None).await.unwrap();
 
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
@@ -75,7 +77,7 @@ async fn test_executor_tail() {
     let executor = Executor::new(store.clone(), parser, bus);
 
     let result = executor
-        .run("printf 'a\nb\nc\n'", None, None, "async", None, None, false, None)
+        .run("printf 'a\nb\nc\n'", None, None, "async", None, None, false, None, None)
         .await
         .unwrap();
 
@@ -91,8 +93,10 @@ async fn test_executor_timeout() {
     let executor = Executor::new(store.clone(), parser, bus)
         .with_config(ExecutorConfig { max_task_duration_ms: 500, ..Default::default() });
 
-    let result =
-        executor.run("sleep 60", None, Some(500), "async", None, None, false, None).await.unwrap();
+    let result = executor
+        .run("sleep 60", None, Some(500), "async", None, None, false, None, None)
+        .await
+        .unwrap();
 
     tokio::time::sleep(std::time::Duration::from_secs(3)).await;
 
@@ -110,8 +114,10 @@ async fn test_executor_sync_mode() {
     let (store, parser, bus, _tmp) = setup();
     let executor = Executor::new(store.clone(), parser, bus);
 
-    let result =
-        executor.run("echo sync_test", None, None, "sync", None, None, false, None).await.unwrap();
+    let result = executor
+        .run("echo sync_test", None, None, "sync", None, None, false, None, None)
+        .await
+        .unwrap();
     // Sync mode should wait for completion and return full result
     assert_eq!(result.status, TaskStatus::Completed);
     assert_eq!(result.exit_code, Some(0));
@@ -127,8 +133,10 @@ async fn auto_short_merges_stderr_into_raw_output() {
     // empty. The zero-overhead short path must still surface it — losing
     // stderr here would leave the agent with only an exit code.
     let cwd = _tmp.path().to_str().unwrap();
-    let result =
-        executor.run("git status", Some(cwd), None, "auto", None, None, false, None).await.unwrap();
+    let result = executor
+        .run("git status", Some(cwd), None, "auto", None, None, false, None, None)
+        .await
+        .unwrap();
     assert!(result.short_command, "git status should take the short path");
     assert_eq!(result.status, TaskStatus::Failed);
     let raw = result.raw_output.as_ref().expect("raw_output populated");
@@ -141,7 +149,7 @@ async fn test_executor_sync_mode_failure() {
     let executor = Executor::new(store.clone(), parser, bus);
 
     let result =
-        executor.run("exit 42", None, None, "sync", None, None, false, None).await.unwrap();
+        executor.run("exit 42", None, None, "sync", None, None, false, None, None).await.unwrap();
     assert_eq!(result.status, TaskStatus::Failed);
     assert_eq!(result.exit_code, Some(42));
 }
@@ -152,7 +160,7 @@ async fn test_executor_kill_graceful() {
     let executor = Executor::new(store.clone(), parser, bus);
 
     let result =
-        executor.run("sleep 60", None, None, "async", None, None, false, None).await.unwrap();
+        executor.run("sleep 60", None, None, "async", None, None, false, None, None).await.unwrap();
     assert_eq!(result.status, TaskStatus::Running);
 
     // Wait a bit for the process to start
@@ -282,8 +290,10 @@ async fn auto_short_returns_raw_output() {
     let (store, parser, bus, _tmp) = setup();
     let executor = Executor::new(store.clone(), parser, bus);
 
-    let result =
-        executor.run("echo fast-path", None, None, "auto", None, None, false, None).await.unwrap();
+    let result = executor
+        .run("echo fast-path", None, None, "auto", None, None, false, None, None)
+        .await
+        .unwrap();
     assert!(result.short_command, "short_command should be true");
     assert_eq!(result.status, TaskStatus::Completed);
     assert_eq!(result.exit_code, Some(0));
@@ -312,6 +322,7 @@ async fn auto_long_uses_smart_sync() {
             None,
             false,
             None,
+            None,
         )
         .await
         .unwrap();
@@ -332,7 +343,7 @@ async fn auto_long_inspect_takes_short_path() {
 
     let result = executor.run(
         "echo this-command-is-definitely-longer-than-eighty-characters-so-it-should-still-use-short-path",
-        None, None, "auto", None, None, false, None,
+        None, None, "auto", None, None, false, None, None,
     ).await.unwrap();
     assert!(result.short_command, "long echo should still use short path");
     assert_eq!(result.status, TaskStatus::Completed);
@@ -347,7 +358,7 @@ async fn auto_piped_short_path() {
     let executor = Executor::new(store.clone(), parser, bus);
 
     let result = executor
-        .run("echo hello | cat", None, None, "auto", None, None, false, None)
+        .run("echo hello | cat", None, None, "auto", None, None, false, None, None)
         .await
         .unwrap();
     assert!(result.short_command, "simple piped cmd should use short path");
@@ -362,8 +373,10 @@ async fn sync_with_short_uses_full_path() {
     let (store, parser, bus, _tmp) = setup();
     let executor = Executor::new(store.clone(), parser, bus);
 
-    let result =
-        executor.run("echo sync-short", None, None, "sync", None, None, false, None).await.unwrap();
+    let result = executor
+        .run("echo sync-short", None, None, "sync", None, None, false, None, None)
+        .await
+        .unwrap();
     // Sync mode: should complete and return structure, not short path
     assert!(!result.short_command, "explicit sync should use full structured path");
     assert_eq!(result.status, TaskStatus::Completed);
@@ -377,8 +390,10 @@ async fn auto_short_failure_has_raw_output() {
     let (store, parser, bus, _tmp) = setup();
     let executor = Executor::new(store.clone(), parser, bus);
 
-    let result =
-        executor.run("nonexistent_xyz", None, None, "auto", None, None, false, None).await.unwrap();
+    let result = executor
+        .run("nonexistent_xyz", None, None, "auto", None, None, false, None, None)
+        .await
+        .unwrap();
     assert!(result.short_command);
     assert_eq!(result.status, TaskStatus::Failed);
     assert!(result.exit_code.unwrap() != 0);
@@ -395,7 +410,7 @@ async fn parse_hint_json_forces_structured_path() {
 
     // Short command with parse_hint="json" → should NOT take short path
     let result = executor
-        .run("echo hello", None, None, "auto", Some("json"), None, false, None)
+        .run("echo hello", None, None, "auto", Some("json"), None, false, None, None)
         .await
         .unwrap();
     assert!(!result.short_command, "parse_hint should force structured path");
@@ -423,6 +438,7 @@ async fn parse_hint_json_with_json_output() {
             Some("json"),
             None,
             false,
+            None,
             None,
         )
         .await
@@ -457,7 +473,7 @@ async fn parse_hint_raw_forces_structured_path() {
 
     // Short command with parse_hint="raw" → structured path
     let result = executor
-        .run("echo hello", None, None, "auto", Some("raw"), None, false, None)
+        .run("echo hello", None, None, "auto", Some("raw"), None, false, None, None)
         .await
         .unwrap();
     assert!(!result.short_command, "any parse_hint should force structured path");
@@ -476,7 +492,7 @@ async fn no_parse_hint_keeps_short_path() {
     let executor = Executor::new(store.clone(), parser, bus);
 
     let result =
-        executor.run("echo fast", None, None, "auto", None, None, false, None).await.unwrap();
+        executor.run("echo fast", None, None, "auto", None, None, false, None, None).await.unwrap();
     assert!(result.short_command, "no hint should keep short path for short commands");
     assert!(result.raw_output.is_some());
 }
@@ -515,6 +531,7 @@ async fn cli_json_output_auto_detected() {
             None,
             None,
             false,
+            None,
             None,
         )
         .await
@@ -558,6 +575,7 @@ async fn parse_hint_json_array_produces_structured_events() {
             None,
             false,
             None,
+            None,
         )
         .await
         .unwrap();
@@ -594,7 +612,7 @@ async fn stderr_recognizes_generic_errors() {
         "async",
         None,
     None,
-    false, None,
+    false, None, None,
     ).await.unwrap();
 
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
@@ -634,6 +652,7 @@ async fn stderr_permission_denied_is_error() {
             None,
             false,
             None,
+            None,
         )
         .await
         .unwrap();
@@ -666,7 +685,7 @@ async fn short_command_with_parse_hint_stores_events() {
 
     // Short command with parse_hint → forced structured path
     let result = executor
-        .run("echo structured", None, None, "auto", Some("raw"), None, false, None)
+        .run("echo structured", None, None, "auto", Some("raw"), None, false, None, None)
         .await
         .unwrap();
 
@@ -687,7 +706,17 @@ async fn non_json_output_no_false_positive() {
 
     // Plain text output
     let result = executor
-        .run("printf 'regular output\nmore output\n'", None, None, "async", None, None, false, None)
+        .run(
+            "printf 'regular output\nmore output\n'",
+            None,
+            None,
+            "async",
+            None,
+            None,
+            false,
+            None,
+            None,
+        )
         .await
         .unwrap();
 
@@ -887,4 +916,58 @@ fn extract_root_cause_traceback_picks_exception() {
     let rc = extract_root_cause(&events).unwrap();
     assert_eq!(rc["message"], "ZeroDivisionError: division by zero");
     assert_eq!(rc["seq"], 4);
+}
+
+// ── Replay protection & concurrency limit ─────────────────────────────
+
+/// The same dedup_key (a proxy replay after connection blip) must return the
+/// same task instead of executing the command twice.
+#[tokio::test]
+async fn run_dedup_key_reuses_same_task() {
+    let (store, parser, bus, _tmp) = setup();
+    let executor = Executor::new(store.clone(), parser, bus);
+
+    let r1 = executor
+        .run("echo dedup", None, None, "async", None, None, false, None, Some("req-1"))
+        .await
+        .unwrap();
+    let r2 = executor
+        .run("echo dedup", None, None, "async", None, None, false, None, Some("req-1"))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        r1.task_id, r2.task_id,
+        "a replayed request with the same dedup_key must reuse the original task"
+    );
+
+    // A different key is a different command invocation.
+    let r3 = executor
+        .run("echo dedup", None, None, "async", None, None, false, None, Some("req-2"))
+        .await
+        .unwrap();
+    assert_ne!(r1.task_id, r3.task_id);
+}
+
+/// `max_concurrent_tasks` must actually bound structured tasks (previously
+/// it was a config field with no enforcement).
+#[tokio::test]
+async fn max_concurrent_tasks_rejects_overflow() {
+    let (store, parser, bus, _tmp) = setup();
+    let executor = Executor::new(store.clone(), parser, bus)
+        .with_config(ExecutorConfig { max_concurrent_tasks: 1, ..Default::default() });
+
+    let r1 =
+        executor.run("sleep 5", None, None, "async", None, None, false, None, None).await.unwrap();
+    assert_eq!(r1.status, TaskStatus::Running);
+
+    let err = executor
+        .run("echo overflow", None, None, "async", None, None, false, None, None)
+        .await
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("too many concurrent tasks"),
+        "overflow must be rejected, got: {}",
+        err
+    );
 }

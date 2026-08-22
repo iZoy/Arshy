@@ -51,7 +51,7 @@
 ### 跨平台
 - [x] macOS（开发主平台，arm64 实测；x86_64 仅编译矩阵）
 - [x] Linux（CI ubuntu-latest 全绿：fmt/clippy/test/doc/dogfood）
-- [ ] Windows (WSL) — 未验证，发布文档标注 "macOS & Linux"
+- [ ] Windows — 不在支持范围（无 WSL 支持计划），发布文档标注 "macOS & Linux"
 
 ## Day 0：发布流程（获批后按序执行）
 

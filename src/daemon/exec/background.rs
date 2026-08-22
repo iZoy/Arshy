@@ -435,6 +435,10 @@ pub(crate) async fn run_background(mut t: BackgroundTask) -> Result<()> {
         });
     }
 
+    // Refresh the idle watchdog's activity stamp at completion so "idle"
+    // counts from the end of the task, not its start.
+    t.store.mark_activity();
+
     // Publish completion event
     t.event_bus.publish(BusEvent {
         connection_id: 0,

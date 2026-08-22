@@ -41,7 +41,7 @@
 |------|-------|------|---------|
 | **RTK** | 61K | 输出过滤器 | Hook 拦截，100+ 硬编码过滤器，14 个 AI 工具 |
 | **Headroom** | 22K | 通用压缩层 | ML 模型，可逆压缩，跨 agent 记忆 |
-| **arshy** | — | 结构化执行层 | PTY 执行，6 层解析管道，语义提取 |
+| **arshy** | — | 结构化执行层 | 非交互管道执行，6 层解析管道，语义提取 |
 
 ### arshy 的独特位置
 
@@ -49,7 +49,7 @@
 
 ```
 RTK/Headroom:  Agent → Bash → 原始输出 → 过滤/压缩 → 精简文本 → Agent
-arshy:         Agent → arshy(MCP) → PTY执行 → 6层解析 → 结构化事件 → Agent
+arshy:         Agent → arshy(MCP) → 管道执行 → 6层解析 → 结构化事件 → Agent
 ```
 
 RTK 和 Headroom 是**后处理层**——在命令执行后压缩文本。
@@ -125,7 +125,7 @@ arshy 是**执行层**——控制命令的整个生命周期。
 | 收集 10 个用户的反馈 | P1 | ⬜ |
 | **发布清单** | | |
 | README 重写 (面向新用户) | P0 | ✅ |
-| 安装文档 (macOS/Linux/Windows WSL) | P0 | ✅ |
+| 安装文档 (macOS/Linux) | P0 | ✅ |
 | arshy doctor 命令 (诊断集成状态) | P0 | ✅ |
 | 错误处理 (daemon 崩溃友好提示) | P0 | ✅ |
 | MCP 自动配置 (Cursor 支持) | P0 | ✅ |
@@ -269,13 +269,22 @@ arshy 是**执行层**——控制命令的整个生命周期。
 
 ---
 
+## 技术债触发线（决策 4：JSONL 维持）
+
+存储层维持 JSONL（追加写、零依赖、可调试），**不主动迁移数据库**。触发线：
+
+- 任务数 > 10,000 或 `arshy query` 跨任务搜索平均延迟 > 200ms 时，先评估**派生索引**（如 `file → task_id` 倒排、惰性重建），而不是直接迁移 SQLite；
+- 迁移必须由测量触发——不做第二次无数据支撑的反转（SQLite→JSONL 已于 2026-06 完成）。
+
+---
+
 ## 总结
 
 **arshy 的技术差异化已经建立。** 37 个 parser、6 层管道、源码上下文、Git 关联——这些是竞品没有的。
 
 **发布清单全部完成：**
 - README 重写 (80 行，面向新用户)
-- 安装文档 (macOS/Linux/Windows WSL)
+- 安装文档 (macOS/Linux)
 - `arshy doctor` 命令 (诊断集成状态)
 - 错误处理 (daemon 崩溃友好提示)
 - MCP 自动配置 (Cursor 支持)
@@ -293,7 +302,7 @@ arshy 是**执行层**——控制命令的整个生命周期。
 - 所有开发命令通过 MCP 走 arshy（AGENTS.md 强制要求）
 - `arshy stats` 积累数据用于分析 parser 覆盖率、错误检测率
 - `scripts/dogfood.sh` 作为提交前回归验证工具（21/21 通过）
-- 不做人用 shell wrapper——arshy 是 agent 的 shell，不是人的 shell
+- 默认输出面向 agent（JSON）；人类观察保留显式通道：`--format pretty` / `stats` / `benchmark` / `analyze`
 
 **下一步：发布 v0.2.0，开始收集用户反馈。**
 

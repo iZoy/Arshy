@@ -24,7 +24,7 @@ arshy 支持 8 个 agent，机制各不相同：
 | `aider` | AGENTS.md |
 | `workbuddy` | GUI PATH |
 
-统一入口是 `arshy setup`（`arshy integrate` 是它的兼容别名）。接入是幂等且可逆的：每个 `setup` 都有对应的 `uninstall`，且提供 `--dry-run` 预演。
+统一入口是 `arshy setup`。接入是幂等且可逆的：每个 `setup` 都有对应的 `uninstall`，且提供 `--dry-run` 预演。
 
 ## 第 1 步：查看各 agent 的检测状态
 
@@ -40,13 +40,13 @@ arshy agent integrations
 AGENT          MECHANISM              STATUS         NOTE
 ──────────────────────────────────────────────────────────────────────
 claude-code    PreToolUse + MCP       active         arshy reachable via Claude Code
-cursor         MCP                    inactive       run: arshy integrate --agent cursor
-vscode         MCP                    inactive       run: arshy integrate --agent vscode
-antigravity    MCP                    inactive       run: arshy integrate --agent antigravity
-codex          MCP + AGENTS.md        inactive       run: arshy integrate --agent codex
+cursor         MCP                    inactive       run: arshy setup cursor
+vscode         MCP                    inactive       run: arshy setup vscode
+antigravity    MCP                    inactive       run: arshy setup antigravity
+codex          MCP + AGENTS.md        inactive       run: arshy setup codex
 opencode       AGENTS.md              inactive       add arshy instructions to your project AGENTS.md
 aider          AGENTS.md              not found      add arshy instructions to your project AGENTS.md
-workbuddy      GUI PATH               inactive       run: arshy integrate (then restart WorkBuddy)
+workbuddy      GUI PATH               inactive       run: arshy setup workbuddy (then restart WorkBuddy)
 ```
 
 - `not found`：机器上没有检测到该 agent（Codex 的检测条件是 `~/.codex` 存在或 `codex` 在 PATH）。
@@ -73,7 +73,7 @@ arshy setup codex --dry-run
 1. 在 `~/.codex/config.toml` 追加（append-only，保留你的注释和其他 `[mcp_servers.*]`）：
 
    ```toml
-   # arshy: structured execution layer (managed by `arshy integrate`)
+   # arshy: structured execution layer (managed by `arshy setup`)
    [mcp_servers.arshy]
    command = "/path/to/arshy"
    args = ["--from-mcp"]
@@ -134,7 +134,7 @@ doctor 只检查 Codex（其余 agent 会被跳过）。它逐项报告：
   Everything looks good! Restart your IDE to activate arshy.
 ```
 
-如果 `codex` 这一行仍显示失败（`run: arshy integrate --agent codex`），回到第 3 步重新执行 `arshy setup codex`，并确认你是在包含 `AGENTS.md` 的项目目录里运行的。
+如果 `codex` 这一行仍显示失败（`run: arshy setup codex`），回到第 3 步重新执行 `arshy setup codex`，并确认你是在包含 `AGENTS.md` 的项目目录里运行的。
 
 ## 第 6 步（可选）：初始化项目工作区
 
@@ -218,7 +218,7 @@ arshy uninstall
 | --- | --- |
 | `setup --status` 里 codex 显示 `not found` | 确认 `~/.codex` 存在或 `codex` 在 PATH；否则 setup 会跳过（提示 `not detected, skipped`） |
 | 重启后 agent 仍看不到 `arshy_exec` | 运行 `arshy doctor --agent codex`，按 5.6 节提示重新 `arshy setup codex`；确认 `~/.codex/config.toml` 里 `command` 指向真实存在的 arshy 绝对路径 |
-| `arshy setup codex --agent codex` 报错 | `setup` 的 agent 是位置参数：`arshy setup codex`；`--agent` 只用于别名 `arshy integrate --agent codex` 和 `arshy doctor --agent codex` |
+| `arshy setup codex --agent codex` 报错 | `setup` 的 agent 是位置参数：`arshy setup codex`；`--agent` 只用于 `arshy doctor --agent codex` |
 | `unknown agent` 报错 | agent id 写错；合法 id 见第 1 步表格 |
 | doctor 显示 daemon 未运行 | `arshy daemon start`，或直接 `arshy run "echo hi"` 触发自动启动 |
 | doctor 显示工作区未 opt-in | 在项目目录运行 `arshy init` |

@@ -130,6 +130,10 @@ pub struct Task {
     /// development workload; stats split these out of failure metrics.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub purpose: Option<String>,
+    /// Execution carrier of the command (Q1 telemetry, ADR-0006):
+    /// `shell` / `shell_composite` / `python` / `script_other` / `unknown`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub carrier: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -212,6 +216,11 @@ pub struct RunTaskParams {
     /// Purpose label for stats (e.g. `dogfood`). Untagged tasks count as real.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub purpose: Option<String>,
+    /// Proxy-injected replay-protection key (the MCP request id). When the
+    /// proxy reconnects and replays a `tools/call` after a connection blip,
+    /// the daemon returns the original result instead of executing twice.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dedup_key: Option<String>,
 }
 
 fn default_mode() -> String {

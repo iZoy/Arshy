@@ -55,6 +55,7 @@ pub(crate) async fn run_command(
         env: None,
         errors_only,
         purpose,
+        dedup_key: None,
     };
     let request = Request {
         jsonrpc: "2.0".into(),
@@ -66,12 +67,21 @@ pub(crate) async fn run_command(
 
     match format {
         "pretty" => {
-            // Pretty format only for explicit human observation via `arshy run "cmd" --format pretty`
-            eprint!("{}", render::render_stats(&response.result));
+            // Explicit human observation via `arshy run "cmd" --format pretty`.
+            eprint!("{}", render::render_run_text(&response.result));
+        }
+        "json" => {
+            println!("{}", serde_json::to_string_pretty(&response.result)?);
         }
         _ => {
-            // Default: JSON for agent consumption. arshy is an agent-first shell.
-            println!("{}", serde_json::to_string_pretty(&response.result)?);
+            // auto: humans get the concise text when stdout is a terminal,
+            // machines get JSON (agent-first shell).
+            use std::io::IsTerminal;
+            if std::io::stdout().is_terminal() {
+                eprint!("{}", render::render_run_text(&response.result));
+            } else {
+                println!("{}", serde_json::to_string_pretty(&response.result)?);
+            }
         }
     }
     let exit_code = response.result.get("exit_code").and_then(|v| v.as_i64()).unwrap_or(0);

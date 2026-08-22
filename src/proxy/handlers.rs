@@ -80,13 +80,27 @@ pub(crate) async fn handle_tool_call(
 ) -> Result<Option<String>> {
     let tool_name = request["params"]["name"].as_str().unwrap_or("");
     let mut args = request["params"]["arguments"].clone();
-    let ipc_method = mcp_tool_to_ipc_method(tool_name, &args);
+    let ipc_method = match mcp_tool_to_ipc_method(tool_name, &args) {
+        Ok(method) => method,
+        Err(e) => {
+            write_json_error(stdout, id, e.json_rpc_code(), &e.to_string(), false).await?;
+            return Ok(None);
+        }
+    };
     // `raw` is a first-class raw-output channel: force format=raw and default
     // to a generous line count (0 = all lines).
     if tool_name == "arshy_exec" && args.get("action").and_then(|v| v.as_str()) == Some("raw") {
         if let Some(obj) = args.as_object_mut() {
             obj.insert("format".into(), serde_json::json!("raw"));
             obj.entry("lines").or_insert(serde_json::json!(200));
+        }
+    }
+    // Replay protection: tag run requests with the MCP request id so a
+    // replayed request (after proxy reconnect) is deduplicated by the daemon
+    // instead of executing the command twice.
+    if ipc_method == ipc::METHOD_RUN {
+        if let Some(obj) = args.as_object_mut() {
+            obj.insert("dedup_key".into(), serde_json::json!(id.to_string()));
         }
     }
 
@@ -361,9 +375,15 @@ pub(crate) async fn handle_resources_read(
 /// 2-tool model:
 /// - `arshy_exec` → action-based dispatch (run/kill/list/tail/cd)
 /// - `arshy_query` → structured event queries
-pub(crate) fn mcp_tool_to_ipc_method(tool_name: &str, args: &serde_json::Value) -> &'static str {
+///
+/// Unknown tools are an error — a typo'd tool name must never silently
+/// fall back to running a command.
+pub(crate) fn mcp_tool_to_ipc_method(
+    tool_name: &str,
+    args: &serde_json::Value,
+) -> Result<&'static str> {
     match tool_name {
-        "arshy_exec" => match args.get("action").and_then(|v| v.as_str()) {
+        "arshy_exec" => Ok(match args.get("action").and_then(|v| v.as_str()) {
             Some("kill") => ipc::METHOD_KILL,
             Some("list") => ipc::METHOD_LIST,
             Some("tail") => ipc::METHOD_TAIL,
@@ -371,13 +391,8 @@ pub(crate) fn mcp_tool_to_ipc_method(tool_name: &str, args: &serde_json::Value) 
             Some("cd") => ipc::METHOD_CD,
             Some("subscribe") => ipc::METHOD_SUBSCRIBE,
             _ => ipc::METHOD_RUN, // "run" is default for arshy_exec
-        },
-        "arshy_query" => ipc::METHOD_QUERY,
-        // Legacy tool names — still supported for backward compatibility
-        "arshy_run" => ipc::METHOD_RUN,
-        "arshy_kill" => ipc::METHOD_KILL,
-        "arshy_list" => ipc::METHOD_LIST,
-        "arshy_tail" => ipc::METHOD_TAIL,
-        _ => ipc::METHOD_RUN,
+        }),
+        "arshy_query" => Ok(ipc::METHOD_QUERY),
+        _ => Err(arshy_lib::ArshyError::Ipc(format!("unknown tool: {}", tool_name))),
     }
 }

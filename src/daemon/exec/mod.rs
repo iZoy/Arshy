@@ -19,7 +19,7 @@ mod tests;
 
 pub(crate) use background::{run_background, BackgroundTask, CompletionInfo};
 pub(crate) use cwd::prepare_cwd;
-pub(crate) use decision::is_short_command;
+pub(crate) use decision::{classify_carrier, is_short_command};
 pub(crate) use enrich::{
     calculate_agent_delivered_bytes, compute_enhanced_project_context, enrich_events,
     extract_root_cause, filter_events_errors_only,
@@ -29,12 +29,13 @@ use crate::ipc::{Task, TaskStatus};
 use crate::ArshyError;
 use crate::Result;
 use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::{oneshot, Mutex as TokioMutex};
+use std::sync::{Arc, RwLock};
+use tokio::sync::{oneshot, Mutex as TokioMutex, Semaphore};
 
 use super::bus::EventBus;
 use super::ipc_handler::RunResult;
 use super::parser::Engine;
+use super::reference::ReferenceTable;
 use super::security::{AuditEntry, AuditLog, CommandFilter, RateLimiter};
 use super::store::Store;
 
@@ -51,6 +52,18 @@ pub struct Executor {
     /// Registry of running tasks' kill signal senders.
     kill_registry: Arc<TokioMutex<HashMap<String, tokio::sync::mpsc::Sender<()>>>>,
     rate_limiter: Arc<TokioMutex<RateLimiter>>,
+    /// Bound on concurrent structured tasks (`daemon.max_concurrent_tasks`).
+    /// Short commands are not limited — they are already bounded by the rate
+    /// limiter and must stay zero-overhead.
+    task_semaphore: Arc<Semaphore>,
+    /// Short-lived cache of run results keyed by the proxy-injected
+    /// `dedup_key` (MCP request id). Prevents a replayed `tools/call` after a
+    /// connection blip from executing the same command twice.
+    run_dedup: Arc<TokioMutex<HashMap<String, (RunResult, std::time::Instant)>>>,
+    /// Restricted error-code reference tables (docker/kubectl/aws exit
+    /// codes, ...). Served on demand through `task/query`; never inlined.
+    /// Reloadable at runtime (user tables hot-reload via file watcher).
+    reference: Arc<RwLock<ReferenceTable>>,
 }
 
 /// Runtime configuration for task execution.
@@ -60,6 +73,7 @@ pub struct ExecutorConfig {
     pub max_output_bytes: u64,
     pub kill_graceful_ms: u64,
     pub kill_force_ms: u64,
+    pub max_concurrent_tasks: usize,
 }
 
 impl Default for ExecutorConfig {
@@ -69,9 +83,18 @@ impl Default for ExecutorConfig {
             max_output_bytes: 10_485_760,    // 10 MB
             kill_graceful_ms: 3_000,
             kill_force_ms: 2_000,
+            max_concurrent_tasks: 4,
         }
     }
 }
+
+/// How long a deduped run result is reused. Covers the proxy's reconnect +
+/// replay window without deduping deliberate repeat commands (every MCP call
+/// carries a fresh request id).
+const RUN_DEDUP_TTL_SECS: u64 = 120;
+
+/// Cap on dedup cache entries to bound memory.
+const RUN_DEDUP_CACHE_MAX: usize = 256;
 
 impl Executor {
     pub fn new(store: Arc<Store>, parser: Arc<Engine>, event_bus: EventBus) -> Self {
@@ -86,11 +109,22 @@ impl Executor {
             audit_log: None,
             kill_registry: Arc::new(TokioMutex::new(HashMap::new())),
             rate_limiter: Arc::new(TokioMutex::new(RateLimiter::disabled())),
+            task_semaphore: Arc::new(Semaphore::new(
+                ExecutorConfig::default().max_concurrent_tasks,
+            )),
+            run_dedup: Arc::new(TokioMutex::new(HashMap::new())),
+            reference: Arc::new(RwLock::new(ReferenceTable::default())),
         }
     }
 
     pub fn with_config(mut self, config: ExecutorConfig) -> Self {
+        self.task_semaphore = Arc::new(Semaphore::new(config.max_concurrent_tasks.max(1)));
         self.config = config;
+        self
+    }
+
+    pub fn with_reference(mut self, reference: Arc<ReferenceTable>) -> Self {
+        self.reference = Arc::new(RwLock::new((*reference).clone()));
         self
     }
 
@@ -140,6 +174,49 @@ impl Executor {
         }
     }
 
+    /// Schedule a command for execution (public entry point).
+    ///
+    /// When `dedup_key` is provided (the proxy passes the MCP request id), a
+    /// repeated call with the same key within the TTL returns the cached
+    /// result instead of executing again — replay protection for the proxy's
+    /// reconnect-and-replay path.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn run(
+        &self,
+        command: &str,
+        cwd: Option<&str>,
+        timeout_ms: Option<u64>,
+        mode: &str,
+        parse_hint: Option<&str>,
+        env: Option<&HashMap<String, String>>,
+        errors_only: bool,
+        purpose: Option<&str>,
+        dedup_key: Option<&str>,
+    ) -> Result<RunResult> {
+        if let Some(key) = dedup_key {
+            let cache = self.run_dedup.lock().await;
+            if let Some((result, at)) = cache.get(key) {
+                if at.elapsed().as_secs() < RUN_DEDUP_TTL_SECS {
+                    return Ok(result.clone());
+                }
+            }
+        }
+
+        let result = self
+            .run_inner(command, cwd, timeout_ms, mode, parse_hint, env, errors_only, purpose)
+            .await?;
+
+        if let Some(key) = dedup_key {
+            let mut cache = self.run_dedup.lock().await;
+            cache.retain(|_, (_, at)| at.elapsed().as_secs() < RUN_DEDUP_TTL_SECS);
+            if cache.len() < RUN_DEDUP_CACHE_MAX {
+                cache.insert(key.to_string(), (result.clone(), std::time::Instant::now()));
+            }
+        }
+
+        Ok(result)
+    }
+
     /// Schedule a command for execution.
     ///
     /// Mode behavior:
@@ -149,7 +226,7 @@ impl Executor {
     ///   long commands get sync with 60s timeout (structured result in 1 call).
     ///   Only commands exceeding 60s degrade to async (returns task_id).
     #[allow(clippy::too_many_arguments)]
-    pub async fn run(
+    async fn run_inner(
         &self,
         command: &str,
         cwd: Option<&str>,
@@ -210,6 +287,15 @@ impl Executor {
         let spawn_cwd = fallback_cwd.or_else(|| cwd_path.clone());
         let env_for_spawn = effective_env.as_ref().or(env);
 
+        // Record activity for the idle watchdog. Every command counts —
+        // short and long — so a daemon that only served short commands
+        // (which never touch the store) still idle-exits.
+        self.store.mark_activity();
+        // Q1 telemetry: execution carrier distribution (all commands, short
+        // and long; persisted per-task for long commands below).
+        let carrier = classify_carrier(command);
+        super::telemetry::record_carrier(carrier.as_str());
+
         let is_auto = mode == "auto";
         let is_explicit_sync = mode == "sync";
         let is_short = is_short_command(command);
@@ -233,6 +319,19 @@ impl Executor {
         }
 
         // ── Full structured path ──────────────────────────────────────────
+        // Enforce `daemon.max_concurrent_tasks` on the structured path. The
+        // short path stays free (it is bounded by the rate limiter) so
+        // zero-overhead commands are never queued behind builds.
+        let _permit = match self.task_semaphore.clone().try_acquire_owned() {
+            Ok(permit) => permit,
+            Err(_) => {
+                return Err(ArshyError::Ipc(format!(
+                    "too many concurrent tasks: limit {} reached (max_concurrent_tasks)",
+                    self.config.max_concurrent_tasks
+                )));
+            }
+        };
+
         // When parse_hint names a parser, use it directly; otherwise auto-detect.
         let tool = if let Some(hint) = parse_hint {
             self.parser.get_by_name(hint).or_else(|| self.parser.detect(command))
@@ -257,6 +356,7 @@ impl Executor {
             events_count: 0,
             error_count: 0,
             purpose: purpose.map(String::from),
+            carrier: Some(carrier.as_str().to_string()),
         };
         self.store.insert_task(&task)?;
         // Store detected tool name for async enrichment (Bug #2 fix)
@@ -315,6 +415,8 @@ impl Executor {
         let task_id_cleanup = task_id.clone();
         let symlink_cleanup = symlink_to_cleanup;
         tokio::spawn(async move {
+            // Hold the concurrency permit for the whole task lifetime.
+            let _permit = _permit;
             if let Err(e) = run_background(task).await {
                 tracing::error!("background task failed: {}", e);
             }
@@ -606,6 +708,32 @@ impl Executor {
     /// Number of loaded parser entries (builtin + user).
     pub fn parser_count(&self) -> usize {
         self.parser.parser_count()
+    }
+
+    /// Look up restricted reference entries for a code, optionally scoped
+    /// to one tool (the task's parser name). When a tool is given, other
+    /// tools' entries for the same code are never returned.
+    pub fn reference_entries(
+        &self,
+        code: &str,
+        tool: Option<&str>,
+    ) -> Option<Vec<super::reference::ReferenceEntry>> {
+        let table = self.reference.read().unwrap_or_else(|e| e.into_inner());
+        table.lookup(code, tool)
+    }
+
+    /// Reload reference tables from disk (builtin + user dir). Returns a
+    /// short diff summary. Used by hot-reload and `parser reload`.
+    pub fn reload_reference(&self) -> Result<String> {
+        let new_table = ReferenceTable::load()?;
+        let mut table = self
+            .reference
+            .write()
+            .map_err(|_| crate::ArshyError::Other("reference lock poisoned".into()))?;
+        let before = table.count();
+        let after = new_table.count();
+        *table = new_table;
+        Ok(format!("reference tables: {} -> {} entries", before, after))
     }
 
     /// Tail the most recent events of a task, or the last `lines` lines of

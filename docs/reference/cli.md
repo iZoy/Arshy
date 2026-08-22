@@ -49,7 +49,6 @@ Usage: arshy [OPTIONS] [COMMAND]
 | `hook` | 管理 shell 集成 hook（`install`/`uninstall`） |
 | `init` | 在当前工作区初始化 arshy（`.arshy.toml`、`.mcp.json`、AGENTS.md 指令块） |
 | `setup` | 将 arshy 接入 agent 环境（一个命令一个 agent） |
-| `integrate` | `setup` 的别名（兼容保留） |
 | `self-update` | 将当前构建复制覆盖已安装的 arshy/arshyd |
 | `claude-hook` | Claude Code PreToolUse hook 处理器（读 stdin、写 stdout） |
 
@@ -67,14 +66,15 @@ Usage: arshy run [OPTIONS] <COMMAND>
 | `--cwd <CWD>` | string | 无 | 工作目录（一次性覆盖；session 级用 `action:cd`） |
 | `--timeout-ms <TIMEOUT_MS>` | u64 | 无 | 超时毫秒数 |
 | `--mode <MODE>` | string | `auto`（代码内默认） | `auto`/`sync`/`async`；CLI 不做枚举校验，由 executor 解释 |
-| `--format <FORMAT>` | string | `auto` | `pretty`（终端 UI）/ `json`（原始 JSON）/ `auto`（默认） |
+| `--format <FORMAT>` | string | `auto` | `pretty`（终端 UI）/ `json`（原始 JSON）/ `auto`（默认：stdout 是终端 → pretty，否则 JSON） |
 | `--errors-only` | bool | `false` | 只返回 error 级事件 |
 | `--purpose <PURPOSE>` | string | 无 | 用途标签（如 `dogfood`），让 stats 区分测试负载与真实开发；未标记任务计为真实 |
 
-行为（`src/cli/mod.rs` run_command）：
+行为（`src/cli/tasks.rs` run_command）：
 
-- `--format pretty`：`render_stats` 输出到 **stderr**；
-- 其他值（包括 `auto`）：将 daemon 返回的 JSON 以 pretty 形式打印到 **stdout**；
+- `--format pretty`：`render_run_text`（短命令原文 / 长命令摘要 + 根因 + 变更文件 + 事件）输出到 **stderr**；
+- `--format json`：将 daemon 返回的 JSON 以 pretty 形式打印到 **stdout**（agent 默认路径）；
+- `--format auto`（默认）：stdout 是终端 → 人类可读文本（stderr），否则 → JSON（stdout）；
 - 进程以命令的 `exit_code` 退出（`std::process::exit`）。
 
 示例：
@@ -161,7 +161,7 @@ Usage: arshy install
 
 ## uninstall
 
-移除 arshy 注册（全部 agent，或 `--agent` 指定单个；单个 agent 走 `integrate::uninstall_agent`，零残留恢复其配置）。
+移除 arshy 注册（全部 agent，或 `--agent` 指定单个；单个 agent 走集成模块 `integrate::uninstall_agent`，零残留恢复其配置）。
 
 ```
 Usage: arshy uninstall [OPTIONS]
@@ -328,20 +328,6 @@ Usage: arshy setup [OPTIONS] [AGENT]
 | `[AGENT]` | string | 无（全部已检测 agent） | agent id：`codex`、`claude-code`、`cursor`、`vscode`、`antigravity`、`opencode`、`aider`、`workbuddy` |
 | `--dry-run` | bool | `false` | 只显示将要执行的操作，不做改动 |
 | `--status` | bool | `false` | 只打印各 agent 集成状态（不做改动） |
-
-## integrate
-
-`setup` 的别名（兼容保留）。注意：参数形态不同，agent 通过 `--agent <AGENT>` 指定（非位置参数）。
-
-```
-Usage: arshy integrate [OPTIONS]
-```
-
-| 参数 | 类型 | 默认值 | 说明 |
-|---|---|---|---|
-| `--agent <AGENT>` | string | 无 | 只操作指定 agent（`claude-code`、`cursor`、`vscode`、`antigravity`、`codex`、`opencode`、`aider`、`workbuddy`） |
-| `--dry-run` | bool | `false` | 只显示将要执行的操作 |
-| `--status` | bool | `false` | 只打印集成状态 |
 
 ## self-update
 

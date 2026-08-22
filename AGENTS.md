@@ -50,6 +50,8 @@ arshy doctor --agent codex         # verify one agent's integration
 arshy uninstall --agent codex      # remove arshy from one agent (zero residue)
 ```
 
+**Bash interception (decision 3):** `ARSHY_NO_INTERCEPT=1` disables ALL bash interception globally (stronger than the per-command `ARSHY_BYPASS`); every agent-relevant interception decision is audited to `~/.arshy/intercept.jsonl` (who, what, why).
+
 ## Architecture
 
 Two-binary Rust crate (~24,000 lines) implementing an MCP server that replaces raw Bash for AI agents.
@@ -101,6 +103,8 @@ The executor distinguishes short vs long commands:
 ### Error extraction (HintDb removed)
 
 arshy extracts **structure** — severity, `file:line` location, error code, and ±3 lines of source context. It deliberately does **not** synthesise `cause`/`fix` hints (the `HintDb` and `parsers/errors/*.toml` were removed): suggesting the fix is the LLM's job, not the parser's. The `TaskEvent.hint` field is retained as a null-compatible placeholder.
+
+A separate **restricted reference layer** lives in `reference/builtin/*.toml`: it maps non-obvious exit/error codes (docker 125/126/127/137, kubectl, aws) to their *meaning*, served only on demand through `task/query` — reference data, never cause/fix advice, never inlined into stored events. User overrides: `~/.arshy/reference/*.toml` (same `meta.name` replaces the builtin). See `docs/reference/reference-codes.md`.
 
 ### Adding a Parser
 

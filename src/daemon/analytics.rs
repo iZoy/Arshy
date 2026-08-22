@@ -46,7 +46,6 @@ pub struct InformationDensity {
     pub events_with_location: u64,
     pub events_with_code: u64,
     pub events_with_context: u64,
-    pub events_with_hint: u64,
     pub structured_event_pct: f64,
 }
 
@@ -58,6 +57,19 @@ pub struct CommandPatterns {
     pub top_retried: Vec<(String, u64)>,
     pub short_cmd_pct: f64,
     pub long_cmd_pct: f64,
+    pub carrier_distribution: CarrierDistribution,
+}
+
+/// Q1 telemetry (ADR-0006): what actually executed — direct CLI invocation
+/// vs bash composition vs a Python interpreter vs another script interpreter.
+/// Typed-tool calls never reach arshy and are not observable here.
+#[derive(Debug, Default, Serialize)]
+pub struct CarrierDistribution {
+    pub shell: u64,
+    pub shell_composite: u64,
+    pub python: u64,
+    pub script_other: u64,
+    pub unknown: u64,
 }
 
 /// Fix-loop metrics: how quickly a failed task is followed by a success in
@@ -205,7 +217,6 @@ impl<'a> Analytics<'a> {
                 events_with_location: 0,
                 events_with_code: 0,
                 events_with_context: 0,
-                events_with_hint: 0,
                 structured_event_pct: 0.0,
             };
         }
@@ -213,7 +224,6 @@ impl<'a> Analytics<'a> {
         let mut with_location: u64 = 0;
         let mut with_code: u64 = 0;
         let mut with_context: u64 = 0;
-        let mut with_hint: u64 = 0;
         let mut field_count: u64 = 0;
 
         for ev in events {
@@ -234,19 +244,13 @@ impl<'a> Analytics<'a> {
                 fields += 1;
                 with_context += 1;
             }
-            if ev.hint.is_some() {
-                fields += 1;
-                with_hint += 1;
-            }
             field_count += fields;
         }
 
         // "structured" events are those with at least one enrichment field
         let structured = events
             .iter()
-            .filter(|e| {
-                e.location.is_some() || e.code.is_some() || e.context.is_some() || e.hint.is_some()
-            })
+            .filter(|e| e.location.is_some() || e.code.is_some() || e.context.is_some())
             .count() as u64;
 
         InformationDensity {
@@ -254,7 +258,6 @@ impl<'a> Analytics<'a> {
             events_with_location: with_location,
             events_with_code: with_code,
             events_with_context: with_context,
-            events_with_hint: with_hint,
             structured_event_pct: structured as f64 / total as f64 * 100.0,
         }
     }
@@ -264,10 +267,18 @@ impl<'a> Analytics<'a> {
         let mut cmd_groups: HashMap<String, u64> = HashMap::new();
         let mut short_count: u64 = 0;
         let mut long_count: u64 = 0;
+        let mut carriers = CarrierDistribution::default();
 
         for task in tasks {
             let key = command_prefix(&task.command);
             *cmd_groups.entry(key).or_insert(0) += 1;
+            match task.carrier.as_deref().unwrap_or("unknown") {
+                "shell" => carriers.shell += 1,
+                "shell_composite" => carriers.shell_composite += 1,
+                "python" => carriers.python += 1,
+                "script_other" => carriers.script_other += 1,
+                _ => carriers.unknown += 1,
+            }
 
             // Duration-based short/long classification
             match task.duration_ms {
@@ -305,6 +316,7 @@ impl<'a> Analytics<'a> {
             top_retried,
             short_cmd_pct,
             long_cmd_pct,
+            carrier_distribution: carriers,
         }
     }
 
@@ -521,7 +533,7 @@ fn parse_date_part(ts: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ipc::{EventHint, EventLocation, Task, TaskEvent, TaskStatus};
+    use crate::ipc::{EventLocation, Task, TaskEvent, TaskStatus};
 
     fn make_task(id: &str, command: &str, started: &str, duration: Option<u64>) -> Task {
         Task {
@@ -538,6 +550,7 @@ mod tests {
             events_count: 0,
             error_count: 0,
             purpose: None,
+            carrier: None,
         }
     }
 
@@ -739,11 +752,7 @@ mod tests {
                 message: "something failed".into(),
                 location: Some(EventLocation { file: "main.rs".into(), line: 42, column: None }),
                 context: None,
-                hint: Some(EventHint {
-                    cause: "bad input".into(),
-                    fix: Some("check args".into()),
-                    retry: None,
-                }),
+                hint: None,
             },
             TaskEvent {
                 seq: 1,
@@ -760,7 +769,6 @@ mod tests {
         let density = analytics.compute_information_density(&events);
         assert_eq!(density.events_with_location, 1);
         assert_eq!(density.events_with_code, 1);
-        assert_eq!(density.events_with_hint, 1);
         assert_eq!(density.events_with_context, 0);
         // 50% of events have at least one enrichment field
         assert!((density.structured_event_pct - 50.0).abs() < f64::EPSILON);

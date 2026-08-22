@@ -4,7 +4,7 @@
 
 ## 前置条件
 
-- 操作系统：macOS（Apple Silicon 或 Intel）、Linux（x86_64 或 ARM64）、或 WSL2 发行版。
+- 操作系统：macOS（Apple Silicon 或 Intel）或 Linux（x86_64 或 ARM64）。Windows 原生不支持；WSL2 内运行属于 Linux 环境，按 Linux 支持。
 - shell：`bash`；下载预编译包时还需要 `curl` 或 `wget` 之一。
 - 可选：Rust 工具链（`cargo`）。安装脚本检测到 `cargo` 时会优先从源码编译，否则下载预编译包。
 

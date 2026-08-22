@@ -86,8 +86,7 @@ pub async fn dispatch(cli: Cli) -> Result<()> {
                 shell_wrapper::init_workspace()
             }
         }
-        Some(CliCommand::Setup { agent, dry_run, status })
-        | Some(CliCommand::Integrate { agent, dry_run, status }) => {
+        Some(CliCommand::Setup { agent, dry_run, status }) => {
             if status {
                 integrate::print_agent_status()
             } else {

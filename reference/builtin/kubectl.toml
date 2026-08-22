@@ -1,0 +1,21 @@
+[meta]
+name = "kubectl"
+description = "kubectl exit codes"
+
+# kubectl does not publish a formal exit-code table; these are the commonly
+# observed values. The actionable detail is always in stderr.
+
+[[entry]]
+code = "1"
+message = "Generic failure — check stderr for the reason (RBAC 'Forbidden', resource not found, connection refused)"
+source = "https://kubernetes.io/docs/reference/kubectl/"
+
+[[entry]]
+code = "2"
+message = "Usage error — invalid flags, arguments, or command syntax"
+source = "https://kubernetes.io/docs/reference/kubectl/"
+
+[[entry]]
+code = "130"
+message = "Interrupted by SIGINT (Ctrl+C)"
+source = "https://kubernetes.io/docs/reference/kubectl/"

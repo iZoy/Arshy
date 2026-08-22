@@ -13,6 +13,11 @@ static TASKS_COMPLETED: AtomicU64 = AtomicU64::new(0);
 static TASKS_FAILED: AtomicU64 = AtomicU64::new(0);
 static EVENTS_EMITTED: AtomicU64 = AtomicU64::new(0);
 static CONNECTIONS_ACCEPTED: AtomicU64 = AtomicU64::new(0);
+static CARRIER_SHELL: AtomicU64 = AtomicU64::new(0);
+static CARRIER_SHELL_COMPOSITE: AtomicU64 = AtomicU64::new(0);
+static CARRIER_PYTHON: AtomicU64 = AtomicU64::new(0);
+static CARRIER_SCRIPT_OTHER: AtomicU64 = AtomicU64::new(0);
+static CARRIER_UNKNOWN: AtomicU64 = AtomicU64::new(0);
 
 pub fn record_task_created() {
     TASKS_CREATED.fetch_add(1, Ordering::Relaxed);
@@ -30,6 +35,18 @@ pub fn record_connection_accepted() {
     CONNECTIONS_ACCEPTED.fetch_add(1, Ordering::Relaxed);
 }
 
+/// Record the execution carrier of one command (Q1: shell / shell_composite
+/// / python / script_other / unknown). Counts every command, short or long.
+pub fn record_carrier(carrier: &str) {
+    match carrier {
+        "shell" => CARRIER_SHELL.fetch_add(1, Ordering::Relaxed),
+        "shell_composite" => CARRIER_SHELL_COMPOSITE.fetch_add(1, Ordering::Relaxed),
+        "python" => CARRIER_PYTHON.fetch_add(1, Ordering::Relaxed),
+        "script_other" => CARRIER_SCRIPT_OTHER.fetch_add(1, Ordering::Relaxed),
+        _ => CARRIER_UNKNOWN.fetch_add(1, Ordering::Relaxed),
+    };
+}
+
 /// Snapshot of all counters for inclusion in stats/health responses.
 pub fn snapshot() -> serde_json::Value {
     serde_json::json!({
@@ -38,6 +55,13 @@ pub fn snapshot() -> serde_json::Value {
         "tasks_failed": TASKS_FAILED.load(Ordering::Relaxed),
         "events_emitted": EVENTS_EMITTED.load(Ordering::Relaxed),
         "connections_accepted": CONNECTIONS_ACCEPTED.load(Ordering::Relaxed),
+        "carrier_distribution": {
+            "shell": CARRIER_SHELL.load(Ordering::Relaxed),
+            "shell_composite": CARRIER_SHELL_COMPOSITE.load(Ordering::Relaxed),
+            "python": CARRIER_PYTHON.load(Ordering::Relaxed),
+            "script_other": CARRIER_SCRIPT_OTHER.load(Ordering::Relaxed),
+            "unknown": CARRIER_UNKNOWN.load(Ordering::Relaxed),
+        },
     })
 }
 
@@ -54,6 +78,7 @@ mod tests {
             "tasks_failed",
             "events_emitted",
             "connections_accepted",
+            "carrier_distribution",
         ] {
             assert!(s.get(key).is_some(), "snapshot missing key {key}");
         }
@@ -99,6 +124,14 @@ mod tests {
         let before = snapshot().get("connections_accepted").and_then(|v| v.as_u64()).unwrap();
         record_connection_accepted();
         let after = snapshot().get("connections_accepted").and_then(|v| v.as_u64()).unwrap();
+        assert!(after > before);
+    }
+
+    #[test]
+    fn record_carrier_increments_distribution() {
+        let before = snapshot()["carrier_distribution"]["python"].as_u64().unwrap();
+        record_carrier("python");
+        let after = snapshot()["carrier_distribution"]["python"].as_u64().unwrap();
         assert!(after > before);
     }
 }

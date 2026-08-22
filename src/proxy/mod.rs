@@ -358,37 +358,39 @@ mod tests {
     }
 
     #[test]
-    fn test_mcp_tool_to_ipc_method_legacy() {
+    fn test_mcp_tool_to_ipc_method_unknown_tool_rejected() {
         let empty = serde_json::json!({});
-        assert_eq!(mcp_tool_to_ipc_method("arshy_run", &empty), ipc::METHOD_RUN);
-        assert_eq!(mcp_tool_to_ipc_method("arshy_query", &empty), ipc::METHOD_QUERY);
-        assert_eq!(mcp_tool_to_ipc_method("arshy_list", &empty), ipc::METHOD_LIST);
-        assert_eq!(mcp_tool_to_ipc_method("arshy_kill", &empty), ipc::METHOD_KILL);
-        assert_eq!(mcp_tool_to_ipc_method("arshy_tail", &empty), ipc::METHOD_TAIL);
-        // Unknown tools default to run
-        assert_eq!(mcp_tool_to_ipc_method("unknown", &empty), ipc::METHOD_RUN);
-        assert_eq!(mcp_tool_to_ipc_method("", &empty), ipc::METHOD_RUN);
+        // Legacy pre-2-tool names are gone — no compatibility shims.
+        assert!(mcp_tool_to_ipc_method("arshy_run", &empty).is_err());
+        assert!(mcp_tool_to_ipc_method("arshy_list", &empty).is_err());
+        assert!(mcp_tool_to_ipc_method("arshy_kill", &empty).is_err());
+        assert!(mcp_tool_to_ipc_method("arshy_tail", &empty).is_err());
+        // Unknown tools must error — a typo'd tool name must never silently
+        // fall back to running a command.
+        assert!(mcp_tool_to_ipc_method("unknown", &empty).is_err());
+        assert!(mcp_tool_to_ipc_method("", &empty).is_err());
+        assert_eq!(mcp_tool_to_ipc_method("arshy_query", &empty).unwrap(), ipc::METHOD_QUERY);
     }
 
     #[test]
     fn test_mcp_tool_to_ipc_method_arshy_exec_by_action() {
         let run_args = serde_json::json!({"action":"run","command":"ls"});
-        assert_eq!(mcp_tool_to_ipc_method("arshy_exec", &run_args), ipc::METHOD_RUN);
+        assert_eq!(mcp_tool_to_ipc_method("arshy_exec", &run_args).unwrap(), ipc::METHOD_RUN);
 
         let kill_args = serde_json::json!({"action":"kill","task_id":"abc"});
-        assert_eq!(mcp_tool_to_ipc_method("arshy_exec", &kill_args), ipc::METHOD_KILL);
+        assert_eq!(mcp_tool_to_ipc_method("arshy_exec", &kill_args).unwrap(), ipc::METHOD_KILL);
 
         let list_args = serde_json::json!({"action":"list"});
-        assert_eq!(mcp_tool_to_ipc_method("arshy_exec", &list_args), ipc::METHOD_LIST);
+        assert_eq!(mcp_tool_to_ipc_method("arshy_exec", &list_args).unwrap(), ipc::METHOD_LIST);
 
         let tail_args = serde_json::json!({"action":"tail","task_id":"abc"});
-        assert_eq!(mcp_tool_to_ipc_method("arshy_exec", &tail_args), ipc::METHOD_TAIL);
+        assert_eq!(mcp_tool_to_ipc_method("arshy_exec", &tail_args).unwrap(), ipc::METHOD_TAIL);
         let raw_args = serde_json::json!({"action":"raw","task_id":"abc"});
-        assert_eq!(mcp_tool_to_ipc_method("arshy_exec", &raw_args), ipc::METHOD_TAIL);
+        assert_eq!(mcp_tool_to_ipc_method("arshy_exec", &raw_args).unwrap(), ipc::METHOD_TAIL);
 
         // Default (no action) → run
         let default_args = serde_json::json!({"command":"ls"});
-        assert_eq!(mcp_tool_to_ipc_method("arshy_exec", &default_args), ipc::METHOD_RUN);
+        assert_eq!(mcp_tool_to_ipc_method("arshy_exec", &default_args).unwrap(), ipc::METHOD_RUN);
     }
 
     #[test]

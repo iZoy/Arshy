@@ -1,7 +1,8 @@
 //! Observation renderers for arshy stats, benchmarks, and impact reports.
 //!
-//! Command execution output is always raw/JSON for agent consumption. These
-//! renderers are only used for human-observation tools: stats, benchmark, analyze.
+//! Command execution output is raw/JSON for agent consumption. These
+//! renderers are used for human-observation: stats, benchmark, analyze,
+//! and `arshy run --format pretty` (terminal UI).
 
 use std::fmt::Write;
 
@@ -526,6 +527,10 @@ pub fn render_analyze(result: &serde_json::Value) -> String {
     let total_retries =
         patterns.and_then(|p| p.get("total_retry_runs")).and_then(|v| v.as_u64()).unwrap_or(0);
     let top_retried = patterns.and_then(|p| p.get("top_retried")).and_then(|v| v.as_array());
+    let carriers = patterns.and_then(|p| p.get("carrier_distribution"));
+    let carrier_of = |key: &str| -> u64 {
+        carriers.and_then(|c| c.get(key)).and_then(|v| v.as_u64()).unwrap_or(0)
+    };
 
     let total_data_events = agent_visible + agent_skipped;
     let visible_pct = if total_data_events > 0 {
@@ -630,6 +635,19 @@ pub fn render_analyze(result: &serde_json::Value) -> String {
     box_line(&mut out, &format!("  Short commands:        {:.1}%", short_pct));
     box_line(&mut out, &format!("  Long commands:         {:.1}%", long_pct));
     box_line(&mut out, &format!("  Total retries:         {}", fmt_commas(total_retries)));
+    box_line(&mut out, "");
+    box_line(&mut out, "  Carrier distribution (Q1):");
+    box_line(&mut out, &format!("    shell:              {}", fmt_commas(carrier_of("shell"))));
+    box_line(
+        &mut out,
+        &format!("    shell_composite:    {}", fmt_commas(carrier_of("shell_composite"))),
+    );
+    box_line(&mut out, &format!("    python:             {}", fmt_commas(carrier_of("python"))));
+    box_line(
+        &mut out,
+        &format!("    script_other:       {}", fmt_commas(carrier_of("script_other"))),
+    );
+    box_line(&mut out, &format!("    unknown:            {}", fmt_commas(carrier_of("unknown"))));
     box_line(&mut out, "");
     let has_retried = top_retried.is_some_and(|arr| !arr.is_empty());
     if has_retried {

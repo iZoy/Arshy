@@ -1,0 +1,36 @@
+[meta]
+name = "docker"
+description = "Docker CLI / docker compose exit codes"
+
+# Exit codes are documented in the `docker run` reference:
+# https://docs.docker.com/reference/cli/docker/container/run/#exit-status
+
+[[entry]]
+code = "125"
+message = "Docker daemon error — the daemon itself failed (e.g. not running or crashed)"
+source = "https://docs.docker.com/reference/cli/docker/container/run/#exit-status"
+
+[[entry]]
+code = "126"
+message = "The specified command cannot be invoked — typically a permission problem or the file is not executable"
+source = "https://docs.docker.com/reference/cli/docker/container/run/#exit-status"
+
+[[entry]]
+code = "127"
+message = "The specified command cannot be found — wrong command name or missing binary inside the image"
+source = "https://docs.docker.com/reference/cli/docker/container/run/#exit-status"
+
+[[entry]]
+code = "130"
+message = "Container terminated by SIGINT (e.g. Ctrl+C)"
+source = "https://docs.docker.com/reference/cli/docker/container/run/#exit-status"
+
+[[entry]]
+code = "137"
+message = "Container killed by SIGKILL — commonly the kernel OOM killer or an explicit `docker kill`"
+source = "https://docs.docker.com/reference/cli/docker/container/run/#exit-status"
+
+[[entry]]
+code = "143"
+message = "Container terminated by SIGTERM"
+source = "https://docs.docker.com/reference/cli/docker/container/run/#exit-status"
