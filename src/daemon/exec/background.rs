@@ -25,12 +25,16 @@ use super::ExecutorConfig;
 use crate::daemon::bus::{BusEvent, BusEventKind, EventBus};
 
 /// Completion info sent through the oneshot channel for sync mode.
+///
+/// Note: error_count / warning_count are intentionally NOT here. The response
+/// builds those counts from the same `events` array we ship to the agent
+/// (see exec/mod.rs), so counting in the background task would create a
+/// second, inconsistent source of truth (counting log events that the
+/// response filters out).
 pub(crate) struct CompletionInfo {
     pub(crate) status: TaskStatus,
     pub(crate) exit_code: i32,
     pub(crate) duration_ms: u64,
-    pub(crate) error_count: u64,
-    pub(crate) warning_count: u64,
 }
 
 /// Grouped parameters for a background task execution.
@@ -85,8 +89,6 @@ pub(crate) async fn run_background(mut t: BackgroundTask) -> Result<()> {
         timed_out,
         killed,
         mut seq,
-        error_count,
-        warning_count,
         raw_output,
         dedup_collapsed,
         pairs_merged,
@@ -94,8 +96,6 @@ pub(crate) async fn run_background(mut t: BackgroundTask) -> Result<()> {
         result = async {
             let mut seq: u64 = 0;
             let mut total_bytes: u64 = 0;
-            let mut error_count: u64 = 0;
-            let mut warning_count: u64 = 0;
             let mut full_output = String::new();
             let mut dedup = Deduplicator::new();
             let mut ctx_merger = RustcContextMerger::new();
@@ -183,13 +183,6 @@ pub(crate) async fn run_background(mut t: BackgroundTask) -> Result<()> {
                                         }
                                         _ => {}
                                     }
-                                }
-
-                                if event.severity.as_deref() == Some("error") {
-                                    error_count += 1;
-                                }
-                                if event.severity.as_deref() == Some("warning") {
-                                    warning_count += 1;
                                 }
 
                                 // Extract error context (source file +/- 3 lines) for events with location
@@ -309,15 +302,15 @@ pub(crate) async fn run_background(mut t: BackgroundTask) -> Result<()> {
                 }
             }
             // Output channel closed — process exited, readers finished
-            (seq, error_count, warning_count, full_output, dedup.collapsed_count(), pair_merger.merged_count())
+            (seq, full_output, dedup.collapsed_count(), pair_merger.merged_count())
         } => {
-            (false, false, result.0, result.1, result.2, result.3, result.4, result.5)
+            (false, false, result.0, result.1, result.2, result.3)
         }
         _ = tokio::time::sleep(timeout_dur) => {
             tracing::warn!("task {} timed out after {}ms", t.task_id, timeout_dur.as_millis());
             let _ = handle.force_kill();
             let _ = t.store.update_task(&t.task_id, &TaskStatus::Timeout, Some(-2), None);
-            (true, false, 0u64, 0u64, 0u64, String::new(), 0u64, 0u64)
+            (true, false, 0u64, String::new(), 0u64, 0u64)
         }
         _ = t.kill_rx.recv() => {
             tracing::info!("task {} received kill signal, initiating graceful kill", t.task_id);
@@ -329,7 +322,7 @@ pub(crate) async fn run_background(mut t: BackgroundTask) -> Result<()> {
                 Ok(false) => tracing::warn!("task {} was force-killed", t.task_id),
                 Err(e) => tracing::error!("task {} kill error: {}", t.task_id, e),
             }
-            (false, true, 0u64, 0u64, 0u64, String::new(), 0u64, 0u64)
+            (false, true, 0u64, String::new(), 0u64, 0u64)
         }
     };
 
@@ -451,14 +444,15 @@ pub(crate) async fn run_background(mut t: BackgroundTask) -> Result<()> {
 
     record_task_completed(exit_code_val == 0);
 
+    // Note: no error_count here — the response layer counts errors from the
+    // actual events array it ships to the agent (see exec/mod.rs).
     tracing::info!(
-        "task {} completed: status={:?}, exit_code={}, duration={}ms, events={}, errors={}",
+        "task {} completed: status={:?}, exit_code={}, duration={}ms, events={}",
         t.task_id,
         final_status,
         exit_code_val,
         duration_ms,
         seq,
-        error_count
     );
 
     // Audit log: task completed
@@ -480,8 +474,6 @@ pub(crate) async fn run_background(mut t: BackgroundTask) -> Result<()> {
             status: final_status,
             exit_code: exit_code_val,
             duration_ms,
-            error_count,
-            warning_count,
         });
     }
 

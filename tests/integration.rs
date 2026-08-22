@@ -749,6 +749,18 @@ fn assert_structured_failure(result: &serde_json::Value, ecosystem: &str) {
             "note: {ecosystem} produced error events without a location field — agent reads full text"
         );
     }
+    // Phase B (Q-3 fix): error_count in the response must agree with the
+    // events array we ship to the agent. Previously the response used a
+    // background-task counter that included log events the response filters
+    // out, causing inconsistent numbers (e.g. go build: error_count=0
+    // but events had 2 error events).
+    let events_err =
+        events.iter().filter(|e| e["severity"].as_str() == Some("error")).count() as u64;
+    let response_err = result["error_count"].as_u64().unwrap_or(0);
+    assert_eq!(
+        events_err, response_err,
+        "{ecosystem}: response error_count ({response_err}) must equal events_with_error ({events_err}) — agent sees {events_err} but response summary says {response_err}"
+    );
 }
 
 #[test]

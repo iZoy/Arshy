@@ -503,6 +503,35 @@ impl Executor {
                             events_json
                         };
 
+                        // Count errors / warnings from the SAME events array we send
+                        // to the agent. Previously we used `info.error_count` from the
+                        // background task, which counts *all* events including logs —
+                        // but the response's `events` array filters logs out, so the
+                        // count was inconsistent with what the agent actually sees
+                        // (e.g. Go build: events=2 error vs response.error_count=0).
+                        let response_error_count: u64 = events_json
+                            .as_ref()
+                            .map(|evts| {
+                                evts.iter()
+                                    .filter(|e| {
+                                        e.get("severity").and_then(|v| v.as_str())
+                                            == Some("error")
+                                    })
+                                    .count() as u64
+                            })
+                            .unwrap_or(0);
+                        let response_warning_count: u64 = events_json
+                            .as_ref()
+                            .map(|evts| {
+                                evts.iter()
+                                    .filter(|e| {
+                                        e.get("severity").and_then(|v| v.as_str())
+                                            == Some("warning")
+                                    })
+                                    .count() as u64
+                            })
+                            .unwrap_or(0);
+
                         // Enrich error/warning events with surrounding source context + hints
                         let enriched_events = {
                             let cwd_path = std::path::PathBuf::from(cwd.unwrap_or("."));
@@ -579,8 +608,11 @@ impl Executor {
                             status: info.status.clone(),
                             exit_code: Some(info.exit_code),
                             duration_ms: Some(info.duration_ms),
-                            error_count: Some(info.error_count),
-                            warning_count: Some(info.warning_count),
+                            // Use counts derived from the same `events_json` we ship
+                            // to the agent — see comment above for why this can't be
+                            // `info.error_count` directly.
+                            error_count: Some(response_error_count),
+                            warning_count: Some(response_warning_count),
                             raw_output: None,
                             short_command: false,
                             root_cause: extract_root_cause(&enriched_events),
