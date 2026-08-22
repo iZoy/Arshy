@@ -440,6 +440,8 @@ impl Executor {
                 short_command: false,
                 root_cause: None,
                 project_context: None,
+                raw_output_bytes: None,
+                agent_delivered_bytes: None,
             });
         }
 
@@ -468,6 +470,8 @@ impl Executor {
                                 short_command: false,
                                 root_cause: None,
                                 project_context: None,
+                                raw_output_bytes: None,
+                                agent_delivered_bytes: None,
                             });
                         }
                     }
@@ -592,9 +596,17 @@ impl Executor {
                             pc.get("git_diff_stat").and_then(|v| v.as_str()).map(|s| s.to_string())
                         });
 
+                        // Compute agent_delivered_bytes against the actual raw
+                        // size from the task record. We pass response_error_count /
+                        // response_warning_count (computed from the same events we
+                        // ship to the agent) so the formula's base cost reflects
+                        // what's actually rendered.
+                        let raw_len = store_for_enrichment.get_task_raw_output_bytes(&task_id);
                         let delivered_bytes = calculate_agent_delivered_bytes(
                             false,
-                            0,
+                            raw_len,
+                            response_error_count,
+                            response_warning_count,
                             rc_msg.as_deref(),
                             rc_file.as_deref(),
                             git_diff.as_deref(),
@@ -602,6 +614,11 @@ impl Executor {
                         let _ = store_for_enrichment
                             .update_task_agent_delivered_bytes(&task_id, delivered_bytes);
 
+                        // Surface per-task metrics in the run response so consumers
+                        // (measure-savings, dashboards, agents) can compute
+                        // per-task savings without re-querying the store.
+                        let raw_output_bytes =
+                            store_for_enrichment.get_task_raw_output_bytes(&task_id);
                         Ok(RunResult {
                             task_id: task_id.clone(),
                             status: info.status.clone(),
@@ -616,6 +633,8 @@ impl Executor {
                             short_command: false,
                             root_cause: extract_root_cause(&enriched_events),
                             project_context,
+                            raw_output_bytes: Some(raw_output_bytes),
+                            agent_delivered_bytes: Some(delivered_bytes),
                         })
                     }
                     Err(_) => Ok(RunResult {
@@ -629,6 +648,8 @@ impl Executor {
                         short_command: false,
                         root_cause: None,
                         project_context: None,
+                        raw_output_bytes: None,
+                        agent_delivered_bytes: None,
                     }),
                 }
             }
@@ -715,6 +736,8 @@ impl Executor {
             short_command: true,
             root_cause: None,
             project_context: None,
+            raw_output_bytes: None,
+            agent_delivered_bytes: None,
         })
     }
 

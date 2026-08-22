@@ -1,89 +1,102 @@
 {
   "snapshot": {
     "date": "2026-08-23",
-    "stamp": "20260823-021125",
+    "stamp": "20260823-023957",
     "arshy_version": "arshy 0.1.0",
-    "git_commit": "0bd4c30",
-    "git_dirty_files": "10"
+    "git_commit": "98aa3e8",
+    "git_dirty_files": "7"
   },
   "stats": {
-    "avg_duration_ms": 71.83333333333333,
+    "avg_duration_ms": 147.25,
     "by_status": {
       "completed": 0,
-      "failed": 6,
+      "failed": 12,
       "killed": 0,
       "running": 0,
       "timeout": 0
     },
-    "context_enriched": 7,
+    "context_enriched": 14,
     "correlated_errors": 0,
-    "db_size_bytes": 9950,
-    "dedup_collapsed": 4,
+    "db_size_bytes": 19618,
+    "dedup_collapsed": 8,
     "failure_rate": 1.0,
-    "p50_duration_ms": 57,
-    "p99_duration_ms": 78,
+    "p50_duration_ms": 65,
+    "p99_duration_ms": 403,
     "parser_coverage_pct": 58.064516129032256,
     "per_parser_usage": [
       {
-        "count": 1,
-        "parser": "python"
-      },
-      {
-        "count": 1,
+        "count": 2,
         "parser": "go"
       },
       {
-        "count": 1,
+        "count": 2,
+        "parser": "python"
+      },
+      {
+        "count": 2,
         "parser": "npm"
       },
       {
-        "count": 1,
+        "count": 2,
         "parser": "cargo"
       }
     ],
     "purpose_breakdown": [
       {
-        "avg_duration_ms": 71.83333333333333,
-        "failed": 6,
+        "avg_duration_ms": 147.25,
+        "failed": 12,
         "failure_rate": 100.0,
         "purpose": "real",
-        "total": 6
+        "total": 12
       }
     ],
     "savings_basis": "measured",
-    "total_agent_delivered_bytes": 694,
-    "total_agent_skipped_events": 13,
-    "total_agent_visible_events": 18,
-    "total_codes_extracted": 11,
-    "total_contexts_enriched": 7,
-    "total_errors": 22,
-    "total_events": 31,
-    "total_locations_extracted": 13,
-    "total_raw_output_bytes": 1868,
-    "total_tasks": 6
+    "total_agent_delivered_bytes": 1120,
+    "total_agent_skipped_events": 26,
+    "total_agent_visible_events": 36,
+    "total_codes_extracted": 22,
+    "total_contexts_enriched": 14,
+    "total_errors": 44,
+    "total_events": 62,
+    "total_locations_extracted": 26,
+    "total_raw_output_bytes": 3736,
+    "total_tasks": 12
   },
   "analyze": {
     "command_patterns": {
       "carrier_distribution": {
-        "python": 1,
-        "script_other": 1,
-        "shell": 3,
-        "shell_composite": 1,
+        "python": 2,
+        "script_other": 2,
+        "shell": 6,
+        "shell_composite": 2,
         "unknown": 0
       },
-      "commands_run_multiple_times": 0,
+      "commands_run_multiple_times": 3,
       "long_cmd_pct": 0.0,
       "short_cmd_pct": 100.0,
-      "top_retried": [],
-      "total_retry_runs": 0,
-      "unique_commands": 6
+      "top_retried": [
+        [
+          "go build",
+          2
+        ],
+        [
+          "sh -c",
+          2
+        ],
+        [
+          "npm install",
+          2
+        ]
+      ],
+      "total_retry_runs": 3,
+      "unique_commands": 9
     },
-    "generated_at": "2026-08-22T18:11:25.750075+00:00",
+    "generated_at": "2026-08-22T18:39:57.058657+00:00",
     "information_density": {
       "avg_fields_per_event": 5.0,
-      "events_with_code": 11,
-      "events_with_context": 7,
-      "events_with_location": 13,
+      "events_with_code": 22,
+      "events_with_context": 14,
+      "events_with_location": 26,
       "structured_event_pct": 48.38709677419355
     },
     "repair_loop": {
@@ -93,15 +106,15 @@
       "fix_loops": 0
     },
     "summary": {
-      "avg_tasks_per_day": 6.0,
+      "avg_tasks_per_day": 12.0,
       "date_range_days": 1,
-      "total_errors": 22,
-      "total_events": 31,
-      "total_tasks": 6
+      "total_errors": 44,
+      "total_events": 62,
+      "total_tasks": 12
     },
     "temporal": {
-      "avg_events_per_day": 31.0,
-      "avg_tasks_per_day": 6.0,
+      "avg_events_per_day": 62.0,
+      "avg_tasks_per_day": 12.0,
       "date_range": [
         "2026-08-22",
         "2026-08-22"
@@ -109,12 +122,12 @@
       "span_days": 1
     },
     "token_efficiency": {
-      "agent_skipped_events": 13,
-      "agent_visible_events": 18,
-      "estimated_token_savings_pct": 62.84796573875803,
+      "agent_skipped_events": 26,
+      "agent_visible_events": 36,
+      "estimated_token_savings_pct": 70.02141327623126,
       "noise_pct": 41.935483870967744,
-      "total_agent_delivered_bytes": 694,
-      "total_raw_output_bytes": 1868
+      "total_agent_delivered_bytes": 1120,
+      "total_raw_output_bytes": 3736
     }
   }
 }

@@ -6,16 +6,16 @@
 #      10% fallback heuristic (see docs/reference/metrics.md for the contract).
 #   2. Dogfooding data is biased toward Rust tooling (cargo = ~90% of calls).
 #
-# This script runs a battery of representative commands across Python /
-# Node / Go / Rust / npm and prints a table you can inspect (and copy into
-# marketing material) with **honest** savings_basis labels.
+# So this script runs a battery of representative commands across Python /
+# Node / Go / Rust / npm and prints the headline as PER-ECOSYSTEM savings
+# (one row per ecosystem with its own savings %). Aggregate is secondary.
 #
 # Usage:
 #   scripts/measure-savings.sh                     # uses ./target/release/arshy
 #   ARSHY=./target/debug/arshy scripts/measure-savings.sh
 #   JSON=1 scripts/measure-savings.sh             # machine-readable output
 #
-# Tools that aren't installed are skipped (NOT counted as failures).
+# Tools that aren't installed are skipped with a note (NOT counted as failures).
 
 set -u
 
@@ -33,9 +33,11 @@ fi
 
 # Ensure the daemon is up so we get stats from a stable store.
 "$ARSHY" daemon start >/dev/null 2>&1 || true
-# Wait for the daemon socket to become connectable. `daemon start` returns
-# immediately after fork, but the release binary needs ~1s to bind UDS;
-# a fast follow-up `run` otherwise produces empty JSON.
+
+WORK="$(mktemp -d /tmp/arshy_measure.XXXXXX)"
+trap 'rm -rf "$WORK"' EXIT
+
+# Wait for daemon socket to be ready (see scripts/restart.sh).
 SOCK="${HOME}/.local/share/arshy/arshyd.sock"
 for i in 1 2 3 4 5 6 7 8 9 10; do
     if [[ -S "$SOCK" ]] && python3 -c "import socket,sys; s=socket.socket(socket.AF_UNIX); s.settimeout(0.5); s.connect(sys.argv[1]); s.close()" "$SOCK" 2>/dev/null; then
@@ -44,11 +46,7 @@ for i in 1 2 3 4 5 6 7 8 9 10; do
     sleep 0.3
 done
 
-WORK="$(mktemp -d /tmp/arshy_measure.XXXXXX)"
-trap 'rm -rf "$WORK"' EXIT
-
 # Helper script: read JSON from a file and emit key=value lines.
-# Using a file avoids shell-quoting pitfalls with embedded newlines.
 HELPER="$WORK/extract.py"
 cat > "$HELPER" <<'PYEOF'
 import json, sys
@@ -62,6 +60,8 @@ if mode == "run":
         ("short", "yes" if d.get("short_command") else "no"),
         ("errors", d.get("error_count", 0)),
         ("parser", d.get("parser_name") or "n/a"),
+        ("raw_bytes", d.get("raw_output_bytes") or 0),
+        ("delivered_bytes", d.get("agent_delivered_bytes") or 0),
     ]
 elif mode == "stats":
     raw = d.get("total_raw_output_bytes") or 0
@@ -98,7 +98,6 @@ def main():
     raise ValueError("measure-savings-probe: invalid value")
 main()
 PY
-    # 6+ words forces the structured (long) path.
     add_workload "python" "python" \
         "python3 $WORK/probe.py arg1 arg2 arg3 arg4 arg5"
 fi
@@ -150,61 +149,75 @@ if command -v cargo >/dev/null 2>&1; then
         "sh -c 'echo error: measure-savings-probe; echo undefined_symbol >&2; exit 1'"
 fi
 
-# ── Print header ───────────────────────────────────────────────────────────
+# ── Run each workload ──────────────────────────────────────────────────────
+# Collect per-ecosystem metrics into a CSV-like structure.
+PER_ECO_CSV="$WORK/per_eco.csv"
+echo "ecosystem,parser,status,events,errors,raw,delivered,savings_pct" > "$PER_ECO_CSV"
+
+# Pretty header (printed before any rows so consumers know the format)
 if [[ "$JSON" != "1" ]]; then
-    printf "%-10s | %-10s | %-10s | %-8s | %-6s | %s\n" \
-        "ECOSYSTEM" "STATUS" "PARSER" "EVENTS" "SHORT" "ERRORS"
-    printf -- "-----------+------------+------------+----------+--------+--------\n"
+    printf "%-10s | %-10s | %-7s | %-6s | %-7s | %-9s | %-9s | %s\n" \
+        "ECOSYSTEM" "PARSER" "STATUS" "EVENTS" "ERRORS" "RAW(B)" "DELIV(B)" "SAVINGS"
+    printf -- "-----------+------------+---------+--------+---------+-----------+-----------+----------\n"
 fi
 
-RESULTS_JSON="["
-first=1
+JSON_ROWS="["
+first_row=1
 
-# ── Run each workload ──────────────────────────────────────────────────────
 while IFS= read -r line; do
     [[ -z "$line" ]] && continue
-    # awk -F splits on multi-char delimiter (bash IFS only supports single char).
     eco=$(awk -F'::' '{print $1}' <<<"$line")
     parser=$(awk -F'::' '{print $2}' <<<"$line")
     cmd=$(awk -F'::' '{print $3}' <<<"$line")
 
     OUT="$WORK/run_${eco}.json"
-    # Pin each workload's cwd to a clean directory ($WORK is a fresh mktemp
-    # dir, never a git repo). Without --cwd, the CLI defaults cwd to the
-    # user's cwd when invoking the script — and if that's a git repo (e.g.
-    # the arshy source dir), compute_enhanced_project_context adds the
-    # repo's git diff stat to agent_delivered_bytes, inflating the metric.
-    # We use --cwd explicitly so all workloads have a consistent, non-git
-    # cwd. (Phase B Q-3 fix.)
+    # --cwd $WORK pins cwd to a clean non-git dir so the metric stays
+    # comparable across invocations (Phase B Q-3 fix).
     "$ARSHY" run "$cmd" --cwd "$WORK" --format json >"$OUT" 2>/dev/null
     [[ -s "$OUT" ]] || echo '{}' > "$OUT"
 
-    task_status="n/a"; task_events=0; task_short="n/a"; task_err=0; task_parser="n/a"
+    task_status="n/a"; task_events=0; task_short="n/a"; task_err=0
+    task_parser="n/a"; task_raw=0; task_deliv=0
     while IFS='=' read -r key val; do
         [[ -z "$key" ]] && continue
         case "$key" in
-            status)  task_status="$val" ;;
-            events)  task_events="$val" ;;
-            short)   task_short="$val" ;;
-            errors)  task_err="$val" ;;
-            parser)  task_parser="$val" ;;
+            status)         task_status="$val" ;;
+            events)         task_events="$val" ;;
+            short)          task_short="$val" ;;
+            errors)         task_err="$val" ;;
+            parser)         task_parser="$val" ;;
+            raw_bytes)      task_raw="$val" ;;
+            delivered_bytes) task_deliv="$val" ;;
         esac
     done < <(python3 "$HELPER" run "$OUT" 2>/dev/null)
 
+    # Per-ecosystem savings from this task's own raw/delivered bytes.
+    # This is the honest number — not contaminated by aggregate fallback.
+    savings="n/a"
+    if [[ "$task_raw" -gt 0 ]]; then
+        savings=$(python3 -c "print(f'{($task_raw - $task_deliv) / $task_raw * 100:.1f}')")
+    fi
+
+    echo "$eco,$parser,$task_status,$task_events,$task_err,$task_raw,$task_deliv,$savings" \
+        >> "$PER_ECO_CSV"
+
     if [[ "$JSON" == "1" ]]; then
-        if [[ $first -eq 0 ]]; then RESULTS_JSON+=","; fi
-        first=0
-        RESULTS_JSON+="$(printf '{"ecosystem":"%s","status":"%s","expected_parser":"%s","parser":"%s","event_count":%s,"short_command":"%s","error_count":%s}' \
-            "$eco" "$task_status" "$parser" "$task_parser" "$task_events" "$task_short" "$task_err")"
+        if [[ $first_row -eq 0 ]]; then JSON_ROWS+=","; fi
+        first_row=0
+        JSON_ROWS+="$(printf '{"ecosystem":"%s","parser":"%s","status":"%s","event_count":%s,"error_count":%s,"raw_bytes":%s,"delivered_bytes":%s,"savings_pct":%s}' \
+            "$eco" "$task_parser" "$task_status" "$task_events" "$task_err" "$task_raw" "$task_deliv" "$savings")"
     else
-        printf "%-10s | %-10s | %-10s | %-8s | %-6s | %s\n" \
-            "$eco" "$task_status" "$task_parser" "$task_events" "$task_short" "$task_err"
+        printf "%-10s | %-10s | %-7s | %-6s | %-7s | %-9s | %-9s | %s%%\n" \
+            "$eco" "$task_parser" "$task_status" "$task_events" "$task_err" "$task_raw" "$task_deliv" "$savings"
     fi
 done < "$WORKLOADS_FILE"
 
-RESULTS_JSON+="]"
+JSON_ROWS+="]"
 
-# ── Aggregate stats ────────────────────────────────────────────────────────
+# ── Per-ecosystem aggregate (sum across all tasks of same ecosystem, since
+#    measure-savings runs each workload exactly once we have 1 row per eco).
+#    For multi-run scripts, change this to GROUP BY ecosystem.
+# ── Aggregate stats from daemon (the fallback-tainted aggregate, for context) ─
 STATS="$WORK/stats.json"
 "$ARSHY" stats --format json >"$STATS" 2>/dev/null || echo '{}' > "$STATS"
 
@@ -226,7 +239,7 @@ done < <(python3 "$HELPER" stats "$STATS" 2>/dev/null)
 
 if [[ "$JSON" == "1" ]]; then
     echo "{"
-    echo "  \"workloads\": $RESULTS_JSON,"
+    echo "  \"per_ecosystem\": $JSON_ROWS,"
     echo "  \"aggregate\": {"
     printf '    "total_raw_output_bytes": %s,\n' "$agg_raw"
     printf '    "total_agent_delivered_bytes": %s,\n' "$agg_deliv"
@@ -242,27 +255,34 @@ if [[ "$JSON" == "1" ]]; then
 fi
 
 echo
-echo "═══ Aggregate stats ═══"
-printf "Total raw output bytes:           %s\n" "$agg_raw"
-printf "Total agent-delivered bytes:      %s\n" "$agg_deliv"
-printf "Estimated token savings:          %s%%\n" "$agg_savings_pct"
-printf "Noise (skipped events):           %s%%\n" "$agg_noise_pct"
-printf "Savings basis:                    %s\n" "$agg_basis"
-printf "Fallback task count:              %s\n" "$agg_fallback"
+echo "═══ Aggregate (secondary, from daemon stats) ═══"
+printf "Total raw:                  %s bytes\n" "$agg_raw"
+printf "Total agent-delivered:     %s bytes\n" "$agg_deliv"
+printf "Aggregate savings:         %s%%\n" "$agg_savings_pct"
+printf "Savings basis:             %s   (fallback tasks: %s)\n" "$agg_basis" "$agg_fallback"
 
+# Honest reading — what's safe to cite
 echo
 echo "─── Honest reading ───"
-if [[ "$agg_basis" == "measured" ]]; then
-    echo "✓ Every task had an exact agent_delivered_bytes recorded."
-    echo "  The ${agg_savings_pct}% figure is safe to cite in marketing."
-elif [[ "$agg_basis" == "estimated" ]]; then
-    echo "⚠ $agg_fallback task(s) used the 10% fallback heuristic."
-    echo "  The ${agg_savings_pct}% figure is an upper-bound estimate, not a measurement."
-    echo "  To get a measured basis: run only long commands that produce"
-    echo "  structured events, then check savings_basis == measured."
-else
-    echo "— No raw output yet (daemon just started?)."
-fi
+case "$agg_basis" in
+    measured)
+        if [[ "$agg_fallback" == "0" ]]; then
+            echo "✓ Every task had an exact agent_delivered_bytes recorded."
+            echo "  Per-ecosystem table above is the authoritative headline."
+            echo "  Aggregate ${agg_savings_pct}% is the cross-ecosystem mean."
+        else
+            echo "⚠ $agg_fallback task(s) used the 10% fallback heuristic."
+            echo "  Aggregate ${agg_savings_pct}% is approximate; prefer per-ecosystem rows."
+        fi
+        ;;
+    estimated)
+        echo "⚠ Aggregate used the 10% fallback for some tasks."
+        echo "  Prefer per-ecosystem rows (each is measured from the task itself)."
+        ;;
+    *)
+        echo "— No raw output yet (daemon just started?)."
+        ;;
+esac
 
 echo
 echo "─── Re-running ───"

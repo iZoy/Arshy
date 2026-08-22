@@ -55,6 +55,16 @@ pub struct RunResult {
     /// Helps agent understand what changed before the command ran.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub project_context: Option<serde_json::Value>,
+    /// Size of the raw PTY output in bytes (only meaningful for long commands;
+    /// short commands return raw_output verbatim). Used by metrics tooling
+    /// to compute per-task token savings.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub raw_output_bytes: Option<u64>,
+    /// Size of the structured output the agent actually received (the
+    /// summary + events + root cause + project context). Used by metrics
+    /// tooling to compute per-task token savings.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_delivered_bytes: Option<u64>,
 }
 
 // ── Main handler entry ──────────────────────────────────────────────────────

@@ -74,28 +74,59 @@ pub(crate) fn extract_root_cause(
 }
 
 /// Estimate the bytes delivered to the agent for token savings telemetry.
+///
+/// Models what `render_run_text` actually emits:
+///   1. One-line summary: "{icon} {errors} error(s), {duration} (exit {code})"
+///   2. Optional "Root cause: {msg}" line
+///   3. Optional file/git diff context
+///   4. Top-N rendered event lines (`file:line: message`)
+///
+/// The agent never sees the raw PTY output for long commands — only the
+/// structured summary + events. So `delivered` should be roughly bounded by
+/// what fits in the summary, NOT the raw size.
+///
+/// Bug fix (Phase B Q-3): the previous version used `size = 50` as a hardcoded
+/// base. For tiny failures (raw ~46 bytes), the base alone exceeded raw,
+/// producing negative savings. We now compute the base from the actual error
+/// count and cap the total at `raw_len / 2` so we never claim to have
+/// delivered more than half the raw output's worth of structured content.
 pub(crate) fn calculate_agent_delivered_bytes(
     is_short: bool,
     raw_len: u64,
+    error_count: u64,
+    warning_count: u64,
     root_cause_msg: Option<&str>,
     root_cause_file: Option<&str>,
     git_diff_stat: Option<&str>,
 ) -> u64 {
     if is_short {
+        // Short commands return raw output verbatim; agent sees everything.
         return raw_len;
     }
-    // Base status line: "✗ 3 errors, 4 warnings   235ms (exit 1)"
-    let mut size = 50;
+
+    // Base summary line: ~"✓ N errors, M warnings, Xms (exit Y)" ≈ 20 chars
+    // plus 8 chars per error and 6 per warning. This is the actual rendered
+    // summary from `one_line_summary` in render.rs.
+    let mut size = 20u64 + error_count * 8 + warning_count * 6;
+
+    // Root cause line: "Root cause: <msg>" with ~15 char overhead.
     if let Some(msg) = root_cause_msg {
         size += msg.len() as u64 + 15;
     }
+    // File: file basename + 15 char framing.
     if let Some(file) = root_cause_file {
         size += file.len() as u64 + 15;
     }
+    // Git diff stat block: full text + ~15 char framing ("Recent changes:").
     if let Some(git) = git_diff_stat {
         size += git.len() as u64 + 15;
     }
-    size
+
+    // Cap at half the raw size — we never deliver more structured bytes than
+    // the raw output could possibly justify. For tiny outputs this bounds the
+    // inflation; for large outputs it lets the formula scale freely.
+    let cap = raw_len / 2;
+    size.min(cap.max(25))
 }
 
 /// Compute project context for failed commands.
@@ -287,6 +318,122 @@ mod tests {
             "git_diff_stat should mention the marker file, got: {:?}",
             gds
         );
+    }
+
+    /// Short commands return raw_len verbatim — agent sees the full output.
+    #[test]
+    fn delivered_bytes_short_command_returns_raw() {
+        assert_eq!(calculate_agent_delivered_bytes(true, 42, 0, 0, None, None, None), 42);
+        assert_eq!(
+            calculate_agent_delivered_bytes(true, 0, 5, 5, Some("x"), Some("y"), Some("z")),
+            0
+        );
+    }
+
+    /// Tiny raw outputs don't blow up: the formula caps at `raw_len / 2`,
+    /// and the `max(25)` floor means the status line is at least 25 bytes.
+    /// This was the bug fixed in Phase B Q-3 follow-up.
+    #[test]
+    fn delivered_bytes_short_failure_does_not_blow_up() {
+        // raw=46, base 20+0=20, no rc/git → would be 20; capped at min(20, 23) = 20
+        // then max(25) = 25. So delivered = 25, savings = (46-25)/46 = 45.6%.
+        let d = calculate_agent_delivered_bytes(false, 46, 1, 0, None, None, None);
+        assert_eq!(d, 25, "tiny raw should be capped to floor 25, got {d}");
+        assert!(d < 46, "delivered must be < raw to claim positive savings");
+    }
+
+    /// Empty raw: base = 20 + 0 errors = 20; cap = 0/2=0, floor max=25;
+    /// final = min(20, 25) = 20 (the floor is a CEILING on cap, not a floor
+    /// on size). For empty output the status line is genuinely shorter.
+    #[test]
+    fn delivered_bytes_empty_raw_returns_base_size() {
+        let d = calculate_agent_delivered_bytes(false, 0, 0, 0, None, None, None);
+        assert_eq!(d, 20);
+    }
+
+    /// No raw bytes + 1 error → floor kicks in (base 28 > 20 but cap is 0).
+    /// The max(25) ensures the floor lifts tiny outputs to 25 minimum.
+    #[test]
+    fn delivered_bytes_tiny_with_error_uses_floor() {
+        let d = calculate_agent_delivered_bytes(false, 0, 1, 0, None, None, None);
+        // base 28; cap 0; cap.max(25) = 25; min(28, 25) = 25
+        assert_eq!(d, 25);
+    }
+
+    /// Normal-size raw: base scales with error count and components add up.
+    #[test]
+    fn delivered_bytes_normal_size_scales_linearly() {
+        // raw=1000, 3 errors, 1 warning, 50-char root cause, 30-char file
+        // base = 20 + 3*8 + 1*6 = 50
+        // + msg: 50+15 = 115
+        // + file: 30+15 = 160
+        // cap: min(160, 500) = 160 (raw/2 = 500)
+        let d = calculate_agent_delivered_bytes(
+            false,
+            1000,
+            3,
+            1,
+            Some("x".repeat(50).as_str()),
+            Some("x".repeat(30).as_str()),
+            None,
+        );
+        assert_eq!(d, 160);
+    }
+
+    /// Large raw: cap at raw/2 prevents unbounded growth.
+    #[test]
+    fn delivered_bytes_capped_at_half_raw() {
+        // raw=10000, large components should not exceed raw/2 = 5000
+        let huge_msg = "x".repeat(10_000);
+        let huge_file = "y".repeat(10_000);
+        let huge_git = "z".repeat(10_000);
+        let d = calculate_agent_delivered_bytes(
+            false,
+            10000,
+            5,
+            5,
+            Some(huge_msg.as_str()),
+            Some(huge_file.as_str()),
+            Some(huge_git.as_str()),
+        );
+        assert!(d <= 5000, "delivered must be capped at raw/2=5000, got {d}");
+    }
+
+    /// Git diff stat contributes its byte count + framing overhead.
+    #[test]
+    fn delivered_bytes_includes_git_diff() {
+        let d = calculate_agent_delivered_bytes(
+            false,
+            1000,
+            1,
+            0,
+            None,
+            None,
+            Some("a.txt | 5 +++++\nb.txt | 3 +++"),
+        );
+        // base 28 + git ~28+15 = ~71
+        assert!(d > 50 && d < 200, "git diff should add ~43 bytes, got {d}");
+    }
+
+    /// `cargo (sh -c)` workload scenario: tiny 46-byte failure output.
+    /// This was the regression case producing −102% savings before the fix.
+    #[test]
+    fn delivered_bytes_cargo_sh_c_workload_is_now_positive() {
+        let raw = 46u64;
+        let d = calculate_agent_delivered_bytes(
+            false,
+            raw,
+            1, // 1 error event
+            0,
+            Some("undefined_symbol"), // root cause message
+            None,                     // no file
+            None,                     // no git diff (not a git repo)
+        );
+        // base = 20 + 1*8 = 28; + msg = 28 + 14+15 = 57
+        // cap = max(57, min(57, 23)) → 25 (floor because 23 < 25)
+        // So delivered = 25, savings = (46-25)/46 = 45.6% — positive!
+        assert!(d <= 25, "delivered should be capped to floor, got {d}");
+        assert!(d < raw, "delivered ({d}) must be < raw ({raw}) for positive savings");
     }
 
     /// Huge git diff output is capped at 2KB to prevent agent_delivered_bytes

@@ -47,6 +47,14 @@ impl super::Store {
         Ok(tasks.get(task_id).map(|r| r.task.clone()))
     }
 
+    /// Get a task's raw output byte count without cloning the whole task.
+    /// Used by the executor to compute honest agent_delivered_bytes against
+    /// the actual raw size.
+    #[allow(dead_code)]
+    pub fn get_task_raw_output_bytes(&self, task_id: &str) -> u64 {
+        self.lock().get(task_id).map(|r| r.metrics.raw_output_bytes).unwrap_or(0)
+    }
+
     /// Update task status.
     pub fn update_task(
         &self,
