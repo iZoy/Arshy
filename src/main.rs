@@ -9,7 +9,7 @@ mod proxy;
     name = "arshy",
     version,
     about = "Structured command execution and diagnostics for AI agents over MCP",
-    long_about = "Arshy is a local structured command-execution and diagnostics layer for AI agents. It exposes two MCP tools for running commands, querying events, and retrieving actionable build/test diagnostics."
+    long_about = "Arshy is a local structured command-execution and diagnostics layer for AI agents. It exposes three MCP tools — arshy_exec, arshy_query, and arshy_task — for running commands, querying events, and retrieving actionable build/test diagnostics."
 )]
 pub struct Cli {
     /// Path to config file. If not set, defaults are used with env var overrides.
@@ -22,6 +22,22 @@ pub struct Cli {
 
     #[command(subcommand)]
     pub command: Option<CliCommand>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Cli;
+    use clap::CommandFactory;
+
+    #[test]
+    fn help_describes_the_three_tool_mcp_surface() {
+        let help = Cli::command().render_long_help().to_string();
+        assert!(help.contains("three MCP tools"));
+        assert!(help.contains("arshy_exec"));
+        assert!(help.contains("arshy_query"));
+        assert!(help.contains("arshy_task"));
+        assert!(!help.contains("two MCP tools"));
+    }
 }
 
 #[derive(clap::Subcommand, Debug)]

@@ -4,6 +4,10 @@ set -euo pipefail
 LCOV="${1:-lcov.info}"
 [[ -f "$LCOV" ]] || { echo "coverage file not found: $LCOV" >&2; exit 1; }
 
+# Keep local and CI worktrees free of raw LLVM profiles left by subprocesses.
+find . -maxdepth 1 -type f -name '*.profraw' -delete
+trap 'find . -maxdepth 1 -type f -name "*.profraw" -delete' EXIT
+
 python3 - "$LCOV" <<'PY'
 import sys
 path = sys.argv[1]

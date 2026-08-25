@@ -114,6 +114,18 @@ fn which_arshyd() -> Option<PathBuf> {
     None
 }
 
+fn is_development_build(path: &std::path::Path) -> bool {
+    let value = path.to_string_lossy();
+    value.contains("/target/debug/") || value.contains("/target/release/")
+}
+
+fn sibling_binary(executable: Option<&std::path::Path>, name: &str) -> Option<PathBuf> {
+    executable
+        .and_then(|path| path.parent())
+        .map(|parent| parent.join(name))
+        .filter(|path| path.is_file())
+}
+
 /// Check the generic installation without inspecting or modifying Agent files.
 pub(crate) fn doctor(
     config_path: Option<PathBuf>,
@@ -121,6 +133,7 @@ pub(crate) fn doctor(
     _legacy_agent: Option<&str>,
 ) -> Result<()> {
     let mut passed = 0u32;
+    let mut warnings = 0u32;
     let mut failed = 0u32;
     let check = |label: &str, ok: bool, hint: &str, passed: &mut u32, failed: &mut u32| {
         if ok {
@@ -132,19 +145,48 @@ pub(crate) fn doctor(
         }
     };
 
+    let current_exe = std::env::current_exe().ok();
+    let development_build = current_exe.as_deref().is_some_and(is_development_build);
+    let arshy_in_path = which_arshy_path();
+    let arshyd_in_path = which_arshyd();
+    let arshyd_sibling = sibling_binary(current_exe.as_deref(), "arshyd");
+
+    let check_binary = |label: &str,
+                        in_path: bool,
+                        sibling: bool,
+                        hint: &str,
+                        passed: &mut u32,
+                        warnings: &mut u32,
+                        failed: &mut u32| {
+        if in_path {
+            println!("  ✓ {label}");
+            *passed += 1;
+        } else if development_build && sibling {
+            println!("  ! {label} — development build is not installed in PATH");
+            *warnings += 1;
+        } else {
+            println!("  ✗ {label} — {hint}");
+            *failed += 1;
+        }
+    };
+
     println!("arshy doctor — generic MCP diagnostics\n");
-    check(
+    check_binary(
         "arshy in PATH",
-        which_arshy_path().is_some(),
+        arshy_in_path.is_some(),
+        current_exe.is_some(),
         "install the release binary",
         &mut passed,
+        &mut warnings,
         &mut failed,
     );
-    check(
+    check_binary(
         "arshyd in PATH",
-        which_arshyd().is_some(),
+        arshyd_in_path.is_some(),
+        arshyd_sibling.is_some(),
         "install the matching release",
         &mut passed,
+        &mut warnings,
         &mut failed,
     );
 
@@ -169,11 +211,29 @@ pub(crate) fn doctor(
         &mut failed,
     );
 
-    println!("\n{} passed, {} failed", passed, failed);
+    println!("\n{} passed, {} warnings, {} failed", passed, warnings, failed);
     if failed == 0 {
         println!("MCP entrypoint: arshy mcp serve");
         Ok(())
     } else {
         Err(arshy_lib::ArshyError::Other(format!("doctor found {failed} problem(s)")))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_development_build, sibling_binary};
+    use std::path::Path;
+
+    #[test]
+    fn detects_debug_and_release_build_paths() {
+        assert!(is_development_build(Path::new("/repo/target/debug/arshy")));
+        assert!(is_development_build(Path::new("/repo/target/release/arshy")));
+        assert!(!is_development_build(Path::new("/Users/me/.local/bin/arshy")));
+    }
+
+    #[test]
+    fn missing_sibling_is_not_considered_resolved() {
+        assert!(sibling_binary(Some(Path::new("/definitely/missing/arshy")), "arshyd").is_none());
     }
 }

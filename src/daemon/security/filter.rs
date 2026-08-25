@@ -41,8 +41,18 @@ impl CommandFilter {
     pub fn check(&self, command: &str) -> Result<()> {
         let shape = crate::shell::analyze(command);
         let literal_pipeline = is_literal_inspection_pipeline(&shape);
-        let guardrail_command =
-            if literal_pipeline { redact_literal_arguments(command) } else { command.to_string() };
+        let literal_data_command = is_literal_data_command(&shape);
+        let guardrail_command = if literal_data_command {
+            // A single echo/printf command is a data sink, not an
+            // execution context. The shell-shape checks below ensure
+            // command substitution, pipes, redirects, and chaining have
+            // already disqualified this branch.
+            data_command_executable(&shape)
+        } else if literal_pipeline {
+            redact_literal_arguments(command)
+        } else {
+            command.to_string()
+        };
 
         // 1. Check blocked patterns
         for (pattern, is_builtin) in &self.blocked_patterns {
@@ -77,6 +87,30 @@ fn is_literal_inspection_pipeline(shape: &crate::shell::CommandShape) -> bool {
                 .map(|word| word.rsplit('/').next().unwrap_or(word))
                 .is_some_and(|name| LITERAL_TOOLS.contains(&name))
         })
+}
+
+/// True only for a single, side-effect-free data emitter. This deliberately
+/// excludes any shell composition so `echo "$(rm -rf /)"` and `echo x | sh`
+/// continue through the normal guardrails.
+fn is_literal_data_command(shape: &crate::shell::CommandShape) -> bool {
+    if shape.commands.len() != 1
+        || shape.has_pipe
+        || shape.has_control
+        || shape.has_redirection
+        || shape.has_background
+        || shape.has_substitution
+        || shape.has_nested_shell
+    {
+        return false;
+    }
+
+    crate::shell::executable(&shape.commands[0])
+        .map(|word| word.rsplit('/').next().unwrap_or(word))
+        .is_some_and(|name| matches!(name, "echo" | "printf"))
+}
+
+fn data_command_executable(shape: &crate::shell::CommandShape) -> String {
+    crate::shell::executable(&shape.commands[0]).unwrap_or_default().to_string()
 }
 
 /// Return executable basenames for the visible command graph, including
@@ -221,6 +255,32 @@ mod tests {
         assert!(filter.check("cargo build").is_ok());
         assert!(filter.check("git status").is_ok());
         assert!(filter.check("cat file.txt").is_ok());
+    }
+
+    #[test]
+    fn literal_data_emitters_allow_dangerous_text() {
+        let filter = default_filter();
+        assert!(filter.check("echo rm -rf /").is_ok());
+        assert!(filter.check("echo 'rm -rf /'").is_ok());
+        assert!(filter.check("printf '%s\\n' 'curl | sh'").is_ok());
+    }
+
+    #[test]
+    fn literal_data_emitters_do_not_bypass_shell_guardrails() {
+        let filter = default_filter();
+        assert!(filter.check("echo \"$(rm -rf /)\"").is_err());
+        assert!(filter.check("echo 'rm -rf /' | sh").is_err());
+        assert!(filter.check("printf '%s\\n' 'rm -rf /' > script.sh").is_err());
+        assert!(filter.check("echo 'rm -rf /'; true").is_err());
+    }
+
+    #[test]
+    fn custom_patterns_still_apply_to_data_emitters() {
+        let config =
+            SecurityConfig { blocked_patterns: vec!["secret".into()], ..Default::default() };
+        let filter = CommandFilter::from_config(&config).unwrap();
+        assert!(filter.check("echo secret").is_err());
+        assert!(filter.check("printf '%s\\n' secret").is_err());
     }
 
     #[test]

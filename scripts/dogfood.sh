@@ -317,7 +317,28 @@ print('yes' if d.get('status') == 'failed' or 'blocked' in str(d).lower() or 'se
 [ "$IS_BLOCKED" = "yes" ] && check "curl|sh blocked by security filter" "pass" || check "curl|sh NOT blocked (or daemon unreachable)" "fail"
 
 # ── 10. Dedup ─────────────────────────────────────────────────────────
-echo "10. Dedup (structural)"
+# ── 10. Security data-vs-execution semantics ──────────────────────────
+echo "10. Security data-vs-execution semantics"
+OUTPUT=$($ARSHY run --purpose dogfood "echo 'rm -rf /'" --format json $CWD_FLAG 2>&1)
+STATUS=$(echo "$OUTPUT" | python3 -c "import json,sys; print(json.load(sys.stdin).get('status','error'))" 2>/dev/null || echo "error")
+[ "$STATUS" = "completed" ] && check "literal echo is allowed" "pass" || check "literal echo was blocked" "fail"
+
+OUTPUT=$($ARSHY run --purpose dogfood "echo \"\$(rm -rf /)\"" --format json $CWD_FLAG 2>&1 || true)
+IS_BLOCKED=$(echo "$OUTPUT" | python3 -c "import json,sys; d=json.load(sys.stdin); print('yes' if d.get('status') == 'failed' or 'blocked' in str(d).lower() else 'no')" 2>/dev/null || echo "no")
+[ "$IS_BLOCKED" = "yes" ] && check "command substitution remains blocked" "pass" || check "command substitution bypassed guardrail" "fail"
+
+# ── 11. Doctor in development build ──────────────────────────────────
+echo "11. Doctor development build"
+DOCTOR_OUTPUT=$($ARSHY doctor 2>&1)
+DOCTOR_STATUS=$?
+if [ "$DOCTOR_STATUS" -eq 0 ] && echo "$DOCTOR_OUTPUT" | grep -q "warnings"; then
+    check "doctor accepts development build with warnings" "pass"
+else
+    check "doctor rejects development build" "fail"
+fi
+
+# ── 12. Dedup (structural) ────────────────────────────────────────────
+echo "12. Dedup (structural)"
 OUTPUT=$($ARSHY run --purpose dogfood "cargo test --lib --bin arshyd heuristic 2>&1 | tail -15" --format json $CWD_FLAG 2>&1)
 # Check that repeated test lines are deduplicated (hard to verify without specific input)
 # Just verify the pipeline works without crashing
