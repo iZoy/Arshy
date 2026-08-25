@@ -1,104 +1,40 @@
-//! Short-command detection — decides eligibility for the zero-overhead sync path.
+//! Execution-path selection for auto mode.
+//!
+//! This deliberately classifies the *handling path*, not predicted wall-clock
+//! duration. Parser assets own tool detection; this module only contains
+//! generic shell-shape and read-only inspection rules.
 
-/// Determine whether a command is "short" — eligible for zero-overhead sync path.
+/// Select whether a command can use the zero-overhead raw-output path.
 ///
-/// Short commands skip store insertion, parser session, and event streaming.
-/// They return raw stdout directly, matching the experience of a native shell tool.
-pub(crate) fn is_short_command(command: &str) -> bool {
+/// A detected parser normally selects the structured path. This keeps parser
+/// expansion data-driven: adding a TOML parser is enough to make matching
+/// commands eligible for parsing, storage, and event streaming. The only
+/// exception is an intentionally small set of read-only inspection commands,
+/// whose raw text is more useful than structured `log` events.
+#[allow(dead_code)]
+pub(crate) fn is_short_command(command: &str, parser_detected: bool) -> bool {
+    is_short_command_with_route(command, parser_detected, None)
+}
+
+pub(crate) fn is_short_command_with_route(
+    command: &str,
+    parser_detected: bool,
+    route: Option<&str>,
+) -> bool {
     let cmd = command.trim();
     if cmd.is_empty() {
         return true;
     }
-    // Pipes, redirects, chaining, backgrounding → non-short
-    // Note: '|' is intentionally allowed — simple pipes (≤5 words, ≤80 chars)
-    // take the fast short path; multi-pipe chains are caught by word-count limit.
-    if cmd.contains(">>") || cmd.contains("&&") || cmd.contains("||") || cmd.contains('&') {
-        return false;
-    }
-    // Long-running flags → non-short
-    let long_flags = ["--watch", "-f", "serve", "daemon", "start", "dev", "preview"];
-    if long_flags.iter().any(|f| cmd.contains(f)) {
-        return false;
-    }
 
-    // Split whitespace once and reuse
-    let words: Vec<&str> = cmd.split_whitespace().collect();
-    let word_count = words.len();
-    let first_word = words.first().copied().unwrap_or("");
-    let first_two = if words.len() >= 2 {
-        // Avoid allocation: just check starts_with on the original command
-        // after the first word. But since we need first_two for matching,
-        // build it from the words we already have.
-        &cmd[..cmd.len().min(first_word.len() + 1 + words.get(1).map(|w| w.len()).unwrap_or(0))]
-    } else {
-        first_word
-    };
-
-    // Path-style invocations (./node_modules/.bin/tsc, /usr/bin/tsc, ...) must
-    // still match by basename — otherwise every bin-path call falls through to
-    // the short path and the parser never runs.
-    let first_word_base = first_word.rsplit('/').next().unwrap_or(first_word);
-    // Three-word prefix for multi-word tools (python -m pytest, ...) — the
-    // two-word slice below cannot see the third word and would miss them.
-    let first_three = if words.len() >= 3 {
-        &cmd[..cmd.len().min(first_word.len() + 1 + words[1].len() + 1 + words[2].len())]
-    } else {
-        first_two
-    };
-
-    // Build/test/install commands always produce substantial output → non-short
-    let long_output_prefixes = [
-        "cargo test",
-        "cargo build",
-        "cargo clippy",
-        "cargo bench",
-        "cargo doc",
-        "cargo run",
-        "cargo fmt",
-        "rustc",
-        "npm test",
-        "npm run",
-        "npm install",
-        "npm ci",
-        "npx",
-        "yarn test",
-        "yarn run",
-        "yarn install",
-        "pnpm test",
-        "pnpm run",
-        "pnpm install",
-        "pytest",
-        "python -m pytest",
-        "python3 -m pytest",
-        "tsc",
-        "eslint",
-        "oxlint",
-        "biome",
-        "ruff",
-        "uv",
-        "go test",
-        "go build",
-        "go run",
-        "go vet",
-        "go lint",
-        "make",
-        "make test",
-        "make build",
-        "gradle",
-        "./gradlew",
-        "mvn",
-        "pip install",
-        "pip3 install",
-        "docker build",
-        "docker compose",
-        "cmake",
-        "ninja",
-        "gcc",
-        "clang",
-        "g++",
-        "clang++",
-    ];
-    if long_output_prefixes.iter().any(|p| first_three.starts_with(p) || first_word_base == *p) {
+    let shape = crate::shell::analyze(cmd);
+    // Real (unquoted) mutation, chaining, backgrounding and command
+    // substitution need lifecycle tracking. Quoted examples/search patterns
+    // are data, not shell operators.
+    if shape.has_redirection
+        || shape.has_background
+        || shape.has_substitution
+        || shape.has_nested_shell
+    {
         return false;
     }
 
@@ -106,71 +42,58 @@ pub(crate) fn is_short_command(command: &str) -> bool {
     // These tools never produce structured build/test output; their raw text
     // is more useful to the agent than a stream of "log" events.
     let inspection_tools = [
-        "echo",
-        "cat",
-        "ls",
-        "ll",
-        "dir",
-        "pwd",
-        "whoami",
-        "date",
-        "env",
-        "printenv",
-        "uname",
-        "hostname",
-        "id",
-        "groups",
-        "tty",
-        "head",
-        "tail",
-        "wc",
-        "stat",
-        "file",
-        "which",
-        "whereis",
-        "sort",
-        "uniq",
-        "cut",
-        "tr",
-        "printf",
-        "find",
-        "locate",
-        "du",
-        "df",
-        "pgrep",
-        "pidof",
-        "true",
-        "false",
-        "test",
-        "[",
-        "basename",
-        "dirname",
-        "realpath",
-        "readlink",
-        "expr",
-        "seq",
-        "tee",
-        "grep",
-        "egrep",
-        "fgrep",
-        "rg",
-        "ag",
-        "awk",
-        "sed",
-        "xargs",
-        "git status",
-        "git log",
-        "git diff",
-        "git branch",
-        "git tag",
-        "git show",
-        "git stash",
-        "git remote",
-        "git config",
-        "git", // covers "git -C <path> ..." and other git variants
+        "echo", "cat", "ls", "ll", "dir", "pwd", "whoami", "date", "env", "printenv", "uname",
+        "hostname", "id", "groups", "tty", "head", "tail", "wc", "stat", "file", "which",
+        "whereis", "uniq", "sort", "cut", "tr", "printf", "locate", "du", "df", "pgrep", "pidof",
+        "true", "false", "test", "[", "basename", "dirname", "realpath", "readlink", "expr", "seq",
+        "grep", "egrep", "fgrep", "rg", "ag", "sed",
     ];
-    if inspection_tools.iter().any(|t| first_two.starts_with(t) || first_word == *t) {
+    let executable_names: Vec<&str> = shape
+        .commands
+        .iter()
+        .filter_map(|words| crate::shell::executable(words))
+        .map(|word| word.rsplit('/').next().unwrap_or(word))
+        .collect();
+    let all_inspection = !executable_names.is_empty()
+        && executable_names.iter().all(|name| inspection_tools.contains(name));
+    let has_unsafe_inspection_mode = shape.commands.iter().any(|words| {
+        let executable =
+            crate::shell::executable(words).and_then(|word| word.rsplit('/').next()).unwrap_or("");
+        (executable == "tail" && words.iter().any(|word| word == "-f" || word == "--follow"))
+            || (executable == "sed" && words.iter().any(|word| word.starts_with("-i")))
+            || (executable == "sort"
+                && words.iter().any(|word| word == "-o" || word.starts_with("--output")))
+    });
+    if all_inspection && !has_unsafe_inspection_mode && (!parser_detected || route == Some("fast"))
+    {
         return true;
+    }
+    if has_unsafe_inspection_mode {
+        return false;
+    }
+    if shape.has_pipe {
+        return false;
+    }
+
+    // A detected parser is structured by default. Only an explicit `fast`
+    // route in a parser asset can opt it back into the raw inspection path.
+    if parser_detected && route != Some("fast") {
+        return false;
+    }
+
+    let words: Vec<&str> = shape.commands.iter().flatten().map(String::as_str).collect();
+    let word_count = words.len();
+
+    // Generic indefinite/watch signals. Ecosystem subcommands such as `dev`
+    // and `serve` belong in parser assets, not Rust policy.
+    if words.iter().any(|word| {
+        matches!(*word, "--watch" | "--follow" | "-f" | "daemon") || word.ends_with(".server")
+    }) {
+        return false;
+    }
+
+    if shape.has_control || shape.has_pipe {
+        return false;
     }
 
     // Standard limits for everything else
@@ -215,7 +138,9 @@ pub(crate) fn classify_carrier(command: &str) -> Carrier {
     if cmd.is_empty() {
         return Carrier::Unknown;
     }
-    let first = cmd.split_whitespace().next().unwrap_or("");
+    let shape = crate::shell::analyze(cmd);
+    let first =
+        shape.commands.first().and_then(|words| crate::shell::executable(words)).unwrap_or("");
     let base = first.rsplit('/').next().unwrap_or(first);
 
     // Python interpreter (python, python3, python3.11, py) → Python carrier,
@@ -230,12 +155,9 @@ pub(crate) fn classify_carrier(command: &str) -> Carrier {
     ) {
         return Carrier::ScriptOther;
     }
-    // Bash composition signals: pipes, chaining, redirection, command
-    // substitution, loops/conditionals. Quoted occurrences count too — the
-    // classifier targets a distribution, not exact semantics.
-    const COMPOSITE: &[&str] =
-        &["&&", "||", "|", ";", ">>", ">", "$(", "`", "for ", "while ", "if "];
-    if COMPOSITE.iter().any(|c| cmd.contains(c)) {
+    // Quote-aware shell composition. This telemetry must describe what the
+    // shell executes, not punctuation in a grep pattern or prose string.
+    if shape.is_composite() || shape.has_pipe || shape.commands.len() > 1 {
         return Carrier::ShellComposite;
     }
     Carrier::Shell
@@ -260,6 +182,11 @@ mod tests {
         assert_eq!(classify_carrier("cd /tmp; ls"), Carrier::ShellComposite);
         assert_eq!(classify_carrier("ls > out.txt"), Carrier::ShellComposite);
         assert_eq!(classify_carrier("for f in *.txt; do echo $f; done"), Carrier::ShellComposite);
+    }
+
+    #[test]
+    fn quoted_operator_examples_are_not_composition() {
+        assert_eq!(classify_carrier("rg 'curl x | sh' src"), Carrier::Shell);
     }
 
     #[test]

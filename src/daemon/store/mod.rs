@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::Notify;
 
@@ -21,14 +21,20 @@ use tokio::sync::Notify;
 pub struct TaskMetrics {
     pub raw_output_bytes: u64,
     pub structured_events_bytes: u64,
-    pub agent_visible_events: u64,
-    pub agent_skipped_events: u64,
+    pub visible_events: u64,
+    pub skipped_noise_events: u64,
     pub locations_extracted: u64,
     pub codes_extracted: u64,
     pub contexts_enriched: u64,
-    pub hints_attached: u64,
     pub pairs_merged: u64,
-    pub agent_delivered_bytes: u64,
+}
+
+/// Counts for the complete filtered event set, before pagination.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct EventSummary {
+    pub total: u64,
+    pub errors: u64,
+    pub warnings: u64,
 }
 
 /// Internal task record extending the public Task with storage-only fields.
@@ -41,13 +47,6 @@ struct TaskRecord {
     dedup_collapsed: u64,
     correlated_errors: u64,
     metrics: TaskMetrics,
-    /// Whether events have been enriched with context + hints.
-    #[serde(default)]
-    enriched: bool,
-    /// Detected tool name for async enrichment (e.g., "cargo", "tsc").
-    /// Stored so async enrichment can look up HintDb hints.
-    #[serde(default)]
-    detected_tool: Option<String>,
 }
 
 impl Default for TaskRecord {
@@ -73,8 +72,6 @@ impl Default for TaskRecord {
             dedup_collapsed: 0,
             correlated_errors: 0,
             metrics: TaskMetrics::default(),
-            enriched: false,
-            detected_tool: None,
         }
     }
 }
@@ -88,17 +85,31 @@ impl Default for TaskRecord {
 pub struct Store {
     dir: PathBuf,
     tasks: Mutex<HashMap<String, TaskRecord>>,
+    /// Open append handles for active task event streams. Keeping one handle
+    /// per task avoids reopening and flushing the JSONL file for every parser
+    /// event during a build; handles are dropped when a task is rewritten or
+    /// the store is dropped.
+    event_files: Mutex<HashMap<String, std::fs::File>>,
     dirty: AtomicBool,
     /// Epoch seconds of the most recent task activity. Initialised at open
     /// time so a never-used daemon still idle-exits after the timeout, and
-    /// refreshed on every execution (short and long paths) so a daemon that
-    /// only served short commands is not treated as idle forever.
+    /// refreshed on every execution path so a daemon that only served raw
+    /// inspection commands is not treated as idle forever.
     last_activity: AtomicI64,
+    /// Number of in-flight fast-path commands. Structured commands are
+    /// represented by a persisted `Running` task; fast commands intentionally
+    /// skip that allocation, so they need this small in-memory guard to keep
+    /// the idle watchdog from exiting during a long read.
+    active_fast_commands: AtomicUsize,
     /// Notified whenever `mark_dirty` is called, so the background flush
     /// task can sleep indefinitely while idle instead of polling on a fixed
     /// interval (a 1 Hz poll would needlessly wake the CPU and hurt laptop
-    /// battery life). A 30 s safety fallback guards against missed signals.
-    notify: Arc<Notify>,
+    /// battery life).
+    flush_notify: Arc<Notify>,
+    /// Wakes the daemon's idle deadline whenever execution activity changes.
+    /// Kept separate from persistence notifications so neither consumer can
+    /// steal the other's permit.
+    activity_notify: Arc<Notify>,
 }
 
 impl Store {
@@ -111,15 +122,36 @@ impl Store {
         // Ensure raw output directory exists
         std::fs::create_dir_all(store_dir.join("raw"))?;
 
-        let tasks_map = load_tasks_from_disk(&store_dir)?;
+        let mut tasks_map = load_tasks_from_disk(&store_dir)?;
+        let recovered_at = chrono::Utc::now().to_rfc3339();
+        let mut recovered = 0usize;
+        for record in tasks_map.values_mut() {
+            if record.task.status == TaskStatus::Running {
+                // A persisted running task belongs to a previous daemon
+                // process. Its PTY cannot survive/reconnect, so keeping it
+                // Running would block idle exit forever after a crash.
+                record.task.status = TaskStatus::Failed;
+                record.task.pid = None;
+                record.task.finished_at = Some(recovered_at.clone());
+                recovered += 1;
+            }
+        }
 
-        Ok(Self {
+        let store = Self {
             dir: store_dir,
             tasks: Mutex::new(tasks_map),
-            dirty: AtomicBool::new(false),
+            event_files: Mutex::new(HashMap::new()),
+            dirty: AtomicBool::new(recovered > 0),
             last_activity: AtomicI64::new(chrono::Utc::now().timestamp()),
-            notify: Arc::new(Notify::new()),
-        })
+            active_fast_commands: AtomicUsize::new(0),
+            flush_notify: Arc::new(Notify::new()),
+            activity_notify: Arc::new(Notify::new()),
+        };
+        if recovered > 0 {
+            tracing::warn!("recovered {} interrupted task(s) from previous daemon", recovered);
+            store.persist_tasks()?;
+        }
+        Ok(store)
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, TaskRecord>> {
@@ -145,7 +177,7 @@ impl Store {
     /// Mark the store as having unsaved changes and wake the flush task.
     pub fn mark_dirty(&self) {
         self.dirty.store(true, Ordering::Release);
-        self.notify.notify_one();
+        self.flush_notify.notify_one();
     }
 
     /// Seconds since the most recent task activity, or `None` while a task is
@@ -153,11 +185,13 @@ impl Store {
     ///
     /// Used by the idle-exit watchdog in the daemon accept loop: once this
     /// exceeds `daemon.idle_timeout_secs`, the daemon self-exits. A live
-    /// task short-circuits to `None`. Activity covers both execution paths:
-    /// long tasks mark on start and completion, short commands mark on start
-    /// — so a daemon serving only short commands (which never touch the
-    /// store) still idle-exits instead of lingering forever.
+    /// task short-circuits to `None`. Structured tasks mark on start and
+    /// completion; raw fast-path commands mark on start, so either path keeps
+    /// the deadline correct.
     pub fn idle_since_secs(&self) -> Result<Option<u64>> {
+        if self.active_fast_commands.load(Ordering::Acquire) > 0 {
+            return Ok(None);
+        }
         let tasks = self.lock();
         for record in tasks.values() {
             if matches!(record.task.status, crate::ipc::TaskStatus::Running) {
@@ -173,6 +207,50 @@ impl Store {
     /// "time since last activity" fresh for commands that skip the store.
     pub fn mark_activity(&self) {
         self.last_activity.store(chrono::Utc::now().timestamp(), Ordering::Relaxed);
+        self.activity_notify.notify_one();
+    }
+
+    /// Mark a zero-persistence fast-path command as running.
+    pub fn begin_fast_activity(&self) {
+        self.active_fast_commands.fetch_add(1, Ordering::AcqRel);
+        self.mark_activity();
+    }
+
+    /// Mark a zero-persistence fast-path command as finished.
+    pub fn end_fast_activity(&self) {
+        self.active_fast_commands.fetch_sub(1, Ordering::AcqRel);
+        self.mark_activity();
+    }
+
+    /// Sleep until the store has been inactive for `timeout_secs`.
+    ///
+    /// This is event-driven: activity resets one exact deadline, and running
+    /// tasks suspend the deadline until their completion notification. An idle
+    /// daemon therefore performs no periodic polling or per-second wake-up.
+    pub async fn wait_until_idle(&self, timeout_secs: u64) {
+        if timeout_secs == 0 {
+            std::future::pending::<()>().await;
+            return;
+        }
+
+        loop {
+            // Register before checking state so activity between the check and
+            // await cannot be lost (`Notify` retains a permit).
+            let activity = self.activity_notify.notified();
+            tokio::pin!(activity);
+
+            match self.idle_since_secs() {
+                Ok(Some(elapsed)) if elapsed >= timeout_secs => return,
+                Ok(Some(elapsed)) => {
+                    let remaining = timeout_secs.saturating_sub(elapsed).max(1);
+                    tokio::select! {
+                        _ = tokio::time::sleep(std::time::Duration::from_secs(remaining)) => {}
+                        _ = &mut activity => {}
+                    }
+                }
+                Ok(None) | Err(_) => activity.await,
+            }
+        }
     }
 
     /// Flush pending changes to disk if dirty. Returns Ok(()) even if not dirty.
@@ -185,20 +263,20 @@ impl Store {
 
     /// Spawn a background task that flushes dirty state to disk.
     ///
-    /// Battery-friendly: the task sleeps until `mark_dirty` signals it (or a
-    /// 30 s safety fallback elapses), so an idle daemon performs **zero**
-    /// periodic wake-ups. Previously this polled every 1 s, which needlessly
-    /// woke the CPU even when nothing was dirty. Call this once after the
-    /// Store is wrapped in `Arc`.
+    /// Battery-friendly: the task sleeps until `mark_dirty` signals it, so an
+    /// idle daemon performs zero periodic wake-ups. `Notify` retains a permit
+    /// when no waiter is active, so no safety polling interval is needed.
+    /// Call this once after the Store is wrapped in `Arc`.
     pub fn start_flush_task(self: &Arc<Self>) -> tokio::task::JoinHandle<()> {
         let store = Arc::clone(self);
         tokio::spawn(async move {
             loop {
-                // Wake only when signalled (dirty) or every 30 s as a guard.
-                tokio::select! {
-                    _ = store.notify.notified() => {}
-                    _ = tokio::time::sleep(std::time::Duration::from_secs(30)) => {}
-                }
+                store.flush_notify.notified().await;
+                // Coalesce event bursts. Persisting the full tasks snapshot on
+                // every parsed line is far more expensive than a periodic
+                // poll and can cause thousands of fsyncs during one build.
+                // This one-shot debounce only wakes after real activity.
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                 if store.dirty.load(Ordering::Acquire) {
                     // persist_tasks acquires the mutex internally, safe to call
                     if let Err(e) = store.persist_tasks() {
@@ -214,10 +292,16 @@ impl Store {
         let events_dir = self.dir.join("events");
         std::fs::create_dir_all(&events_dir)?;
         let path = events_dir.join(format!("{}.jsonl", task_id));
-        let mut file = std::fs::OpenOptions::new().create(true).append(true).open(&path)?;
+        let mut files = self.event_files.lock().expect("event file mutex poisoned");
+        let file = match files.entry(task_id.to_string()) {
+            std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                let file = std::fs::OpenOptions::new().create(true).append(true).open(&path)?;
+                entry.insert(file)
+            }
+        };
         file.write_all(line.as_bytes())?;
         file.write_all(b"\n")?;
-        file.flush()?;
         Ok(())
     }
 
@@ -388,6 +472,41 @@ mod tests {
         store.mark_activity();
         let secs = store.idle_since_secs().unwrap().unwrap();
         assert!(secs <= 1, "idle time should be ~0 right after activity, got {}", secs);
+    }
+
+    #[test]
+    fn active_fast_command_blocks_idle_exit() {
+        let (store, _tmp) = test_store();
+        store.begin_fast_activity();
+        assert!(store.idle_since_secs().unwrap().is_none());
+        store.end_fast_activity();
+        assert!(store.idle_since_secs().unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn idle_deadline_returns_without_polling_when_already_elapsed() {
+        let (store, _tmp) = test_store();
+        store.last_activity.store(chrono::Utc::now().timestamp() - 2, Ordering::Relaxed);
+        tokio::time::timeout(std::time::Duration::from_millis(100), store.wait_until_idle(1))
+            .await
+            .expect("elapsed idle deadline should return immediately");
+    }
+
+    #[test]
+    fn reopen_marks_interrupted_running_tasks_terminal() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("store");
+        {
+            let store = Store::open(&path).unwrap();
+            store.insert_task(&make_task("interrupted", "sleep 60", TaskStatus::Running)).unwrap();
+            store.flush().unwrap();
+        }
+
+        let reopened = Store::open(&path).unwrap();
+        let task = reopened.get_task("interrupted").unwrap().unwrap();
+        assert_eq!(task.status, TaskStatus::Failed);
+        assert!(task.finished_at.is_some());
+        assert!(reopened.idle_since_secs().unwrap().is_some());
     }
 
     // ── Schema tests ────────────────────────────────────────────────────────
@@ -930,54 +1049,6 @@ mod tests {
         let (dt, de) = store.prune_older_than(30).unwrap();
         assert_eq!(dt, 0);
         assert_eq!(de, 0);
-    }
-
-    // ── Enriched flag tests ───────────────────────────────────────────────────
-
-    #[test]
-    fn is_enriched_defaults_false() {
-        let (store, _tmp) = test_store();
-        store.insert_task(&make_task("enr-1", "cmd", TaskStatus::Running)).unwrap();
-        assert!(!store.is_enriched("enr-1"));
-    }
-
-    #[test]
-    fn mark_enriched_sets_flag() {
-        let (store, _tmp) = test_store();
-        store.insert_task(&make_task("enr-2", "cmd", TaskStatus::Running)).unwrap();
-        assert!(!store.is_enriched("enr-2"));
-        store.mark_enriched("enr-2").unwrap();
-        assert!(store.is_enriched("enr-2"));
-    }
-
-    #[test]
-    fn mark_enriched_nonexistent_is_noop() {
-        let (store, _tmp) = test_store();
-        // Should not error
-        store.mark_enriched("ghost").unwrap();
-    }
-
-    #[test]
-    fn mark_enriched_persists_across_reload() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let db_path = tmp.path().join("test.db");
-        let store = Store::open(&db_path).unwrap();
-        store.initialize_schema().unwrap();
-
-        store.insert_task(&make_task("enr-3", "cmd", TaskStatus::Running)).unwrap();
-        store.mark_enriched("enr-3").unwrap();
-        // Flush to disk — no background task in tests
-        store.flush().unwrap();
-
-        // Reload store from disk
-        let store2 = Store::open(&db_path).unwrap();
-        assert!(store2.is_enriched("enr-3"));
-    }
-
-    #[test]
-    fn is_enriched_unknown_task_returns_false() {
-        let (store, _tmp) = test_store();
-        assert!(!store.is_enriched("nonexistent"));
     }
 
     // ── Raw output tests ────────────────────────────────────────────────────

@@ -13,7 +13,7 @@ Cargo.toml 声明了两个二进制目标（`[[bin]]`）：
 | `arshy` | 代理 / CLI | `src/proxy/`（MCP stdio 代理：`mod.rs` + `handlers.rs`/`connection.rs`/`protocol.rs`）、`src/cli/mod.rs`（CLI 命令） |
 | `arshyd` | 守护进程 | `src/daemon/main.rs`（启动与接受循环）、`src/daemon/ipc_handler/`（请求分发）、`src/daemon/exec/`（执行引擎） |
 
-`arshy` 是"门面"：它要么作为 MCP server 通过 stdio 与 Claude Code、Cursor 这类客户端对话（`--from-mcp`），要么作为 CLI 接受 `arshy run "..."` 这类命令。它自己**不执行任何 shell 命令**，只把请求翻译成 IPC 协议转发给 `arshyd`。
+`arshy` 是"门面"：它作为通用 MCP server（`arshy mcp serve`）通过 stdio 与任意 MCP 客户端对话，也作为 CLI 接受 `arshy run "..."` 这类命令。它自己**不执行任何 shell 命令**，只把请求翻译成 IPC 协议转发给 `arshyd`。
 
 `arshyd` 是"引擎"：它拥有 PTY 子进程、解析管线、JSONL 存储、事件总线与安全策略。它是唯一真正 `spawn` 命令的进程。
 
@@ -44,7 +44,7 @@ flowchart LR
 - **通知批处理**：守护进程会推送高频事件（`task/update`、`diagnostic`）。代理把它们放进待发队列，默认每 100ms 或攒满 50 条（`notifications.batch_interval_ms` / `max_batch_events`）合并成**一条** `notifications/message`，payload 是 JSON 数组。高频事件按"窗口"合并而不是逐条转发，直接降低了客户端上下文中的噪音。工具调用完成后还会立即 `drain_pending()` 把剩余通知冲刷出去，保证结果与事件顺序一致。
 - **协议版本协商**：MCP 握手时回显客户端请求的版本（支持 2024-11-05 到 2025-11-25 的四个稳定版本），未知版本回退到最早稳定版。注释里记录了一个真实教训：用过期硬编码版本号曾导致真实客户端握手失败。
 - **取消传播**：客户端发 `notifications/cancelled` 时，代理用 `request_tasks` 表把 MCP request id 映射回 daemon 的 task_id，并发送 `task/kill`。MCP 的取消语义在代理层被翻译成守护进程的杀任务语义。
-- **工具面收窄**：MCP 只暴露两个工具 `arshy_exec`（run/cd/kill/list/tail/subscribe 六种 action）与 `arshy_query`（事件查询）。这是有意的 token 克制，见 design-principles。
+- **工具面单一职责**：MCP 暴露 `arshy_exec`（只执行）、`arshy_query`（只查结构化诊断）与 `arshy_task`（低频 cancel/list/raw）。三个简单 schema 比一个包含大量条件字段的 action 联合体更容易让模型正确选择。
 - **中间件链**：`Middleware` trait 预留了请求/响应/通知三层钩子（注释提到 AuditMiddleware、RateLimitMiddleware、AuthMiddleware 为将来用途），当前为空链。它是一处"可扩展 > 硬编码"的架构接缝，而不是已实现的机制。
 
 ## 守护进程生命周期：按需自启、空闲退出、请求驱动自愈
@@ -71,7 +71,7 @@ flowchart LR
 
 ### 4. 空闲退出（idle-exit）
 
-`src/daemon/main.rs` 的接受循环里有一个看门狗分支：默认空闲阈值 900 秒（15 分钟，`idle_timeout_secs`，0 表示禁用），轮询间隔取阈值的一半（上限 60s、下限 5s）。空闲定义为"没有运行中的任务，且最近完成的任务也早于阈值"（`store.idle_since_secs()`）。这样 IDE 关闭、代理退出后，守护进程不会永远躺在内存里——它是有状态的服务，但只在被需要的时间窗口内存在。
+`src/daemon/main.rs` 使用事件驱动的空闲截止时间：默认空闲阈值 300 秒（5 分钟，`idle_timeout_secs`，0 表示禁用）。每次命令开始或结构化任务完成都会刷新 deadline；任务运行期间 deadline 暂停。这里没有每秒或每分钟轮询，Store 的后台 flush 也只由脏数据通知唤醒。这样 IDE 关闭、代理退出后，daemon 会自动退出，而空闲期间不会为了检查“是否空闲”反复唤醒 CPU。
 
 ### 5. 优雅关闭
 
@@ -83,29 +83,29 @@ flowchart LR
 
 代理收到 SIGTERM 时也会尽力向守护进程发一次 `daemon/shutdown`（best-effort），让"客户端退出"这个最常见的场景把守护进程也带走。
 
-## 两种执行路径：短命令直通 vs 长命令结构化
+## 两种执行路径：原始快速路径 vs 结构化路径
 
 `src/daemon/exec/mod.rs` 把执行分成三种模式：`sync`（等到底）、`async`（立即返回 task_id）、`auto`（默认，智能选择）。**auto 模式是 arshy 对"什么时候值得结构化"的答案**：不值得结构化的命令一分钱都不花，值得结构化的命令一次调用给全。
 
-### 短命令判定（`is_short_command`）
+### 路径判定（`is_short_command`）
 
-| 规则 | 判定为"长" |
+| 规则 | 选择 |
 |---|---|
-| 语法 | 含 `>>`、`&&`、`||`、`&`（`|` 单独允许，≤5 词 ≤80 字符的简单管道仍走短路径） |
-| 长跑信号 | 含 `--watch`、`-f`、`serve`、`daemon`、`start`、`dev`、`preview` 等标志/子命令 |
-| 工具 | 命中 build/test 前缀表（cargo test/build/clippy、npm run、pytest、tsc、make、go test 等 40+ 前缀，含 `python -m pytest` 这类三词前缀和 `./node_modules/.bin/tsc` 这类路径调用） |
-| 兜底 | 超过 80 字符或超过 5 个词 |
-| 例外 | 只读检查工具表（echo、cat、ls、git status/log/diff 等）**永远**走短路径——它们的原始文本比事件流更有用 |
+| 生命周期语法 | `&&`、`||`、`;`、后台运行或重定向进入结构化路径；普通只读管道可走快速路径 |
+| 长跑信号 | `--watch`、`-f`、`serve/server`、`daemon`、`start`、`dev`、`preview` 进入结构化路径 |
+| parser 资产 | registry 命中任意内置或用户 TOML parser，进入结构化路径 |
+| 明确例外 | echo/cat/ls/rg 等检查工具，以及 git status/log/diff 等只读操作，返回原始文本 |
+| 无 parser 兜底 | 超过 80 字符或 5 个词进入结构化路径，否则快速返回 |
 
-注意判定顺序：长跑标志和长输出前缀的优先级高于长度兜底；检查工具表的优先级最高。路径式调用（`./node_modules/.bin/tsc`）按 basename 匹配，否则 bin-path 调用会全部漏进短路径、解析器永远不运行——这是一个被测试专门覆盖的回归点。
+关键点是不存在 build/test Rust 前缀表。路径式调用与多词命令由 parser registry 的 `detect`/`detect_full` 识别；新增 parser TOML 后，匹配命令会自动取得结构化执行资格。Rust 只保留跨生态稳定的 shell 生命周期规则与只读例外。
 
 ### 短路径：零开销直通
 
 `run_short()` 直接 spawn、等待、把合并后的 stdout+stderr（`_source` 标签被有意忽略，保证 `git push` 失败时的 stderr 诊断也出现在输出里）作为 `raw_output` 返回。它**跳过** store 插入、parser session 和 EventBus——这三个都是为结构化服务的。但两条例外很关键：**安全过滤和审计日志不跳过**（见 security-model 的"安全默认非可选"）。超时处理也存在：超时则 `force_kill` 并返回 timeout 状态。
 
-### 长路径：结构化全流程
+### 结构化路径：完整流程
 
-长命令走完整链路：
+parser-backed 或生命周期敏感命令走完整链路：
 
 1. 工具检测：`parser.detect(command)` 从 37 个内置 TOML 解析器 + 用户解析器中选出工具（`parse_hint` 可强制指定）；
 2. 创建 task（uuid task_id，写入 store，状态 running），spawn 后台执行任务；
@@ -146,7 +146,7 @@ flowchart TD
 |---|---|---|
 | 一个进程还是两个 | 两个 | 生命周期解耦：代理随客户端生死，守护进程按需独立存活 |
 | 代理做业务吗 | 不做 | 代理越薄，越不容易与客户端协议绑定；业务全在守护进程，单一职责 |
-| 短命令结构化吗 | 不 | 解析收益小于成本；原始文本对只读工具最有用 |
-| 长命令同步还是异步 | 先同步 60s，再降级异步 | 大多数构建在 60s 内结束，一次往返拿到结果最省事；超长任务不阻塞调用方 |
-| 守护进程何时退出 | 空闲 15 分钟 | 有状态服务 + 按需存在，避免常驻资源占用 |
+| 检查命令结构化吗 | 通常不 | 解析收益小于成本；原始文本对只读工具最有用 |
+| 结构化命令同步还是异步 | 先同步 60s，再降级异步 | 大多数构建在 60s 内结束，一次往返拿到结果最省事；超长任务不阻塞调用方 |
+| 守护进程何时退出 | 空闲 5 分钟 | 事件驱动 deadline，无周期 idle 轮询 |
 | 连接抖动怎么办 | 自动重连 + 请求重放 | 对 agent 表现为延迟而非失败 |

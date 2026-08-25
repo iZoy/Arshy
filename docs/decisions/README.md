@@ -12,6 +12,7 @@
 | [0004](0004-replay-idempotency-and-execution-safety.md) | 请求重放幂等 + 并发上限执行 + 空闲退出修复 | 已采纳 | 2026-08-22 |
 | [0005](0005-remove-unreleased-compat-layer.md) | 移除未发布兼容层（legacy 工具名 / integrate 别名 / 未知工具报错） | 已采纳 | 2026-08-22 |
 | [0006](0006-value-anchor.md) | 价值锚点：注意力编译器 + 本地世界中介 + 社区规则资产（决策 1） | 已采纳 | 2026-08-22 |
+| [0007](0007-data-driven-execution-and-on-demand-daemon.md) | 数据驱动执行路径、单一职责 MCP 与事件驱动 daemon | 已采纳 | 2026-08-24 |
 
 ## 约定
 

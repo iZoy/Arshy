@@ -31,8 +31,13 @@
   },
   {
     "message": "ERROR [internal] load metadata for docker.io/library/node:18-alpine",
-    "severity": "error",
+    "severity": "info",
     "type": "log"
+  },
+  {
+    "message": "ERROR[Builder] failed to fetch build context: Get \"https://registry-1.docker.io/v2/\": dial tcp: lookup registry-1.docker.io on 127.0.0.11:53: no such host",
+    "severity": "error",
+    "type": "diagnostic"
   },
   {
     "message": "Step 4/5 : RUN npm install",
@@ -53,10 +58,5 @@
     "message": "Get \"https://registry-1.docker.io/v2/\": dial tcp: lookup registry-1.docker.io: no such host",
     "severity": "info",
     "type": "log"
-  },
-  {
-    "message": "ERROR[Builder] failed to fetch build context: Get \"https://registry-1.docker.io/v2/\": dial tcp: lookup registry-1.docker.io on 127.0.0.11:53: no such host",
-    "severity": "error",
-    "type": "diagnostic"
   }
 ]

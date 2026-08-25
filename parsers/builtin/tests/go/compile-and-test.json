@@ -1,5 +1,12 @@
 [
   {
+    "file": "src/handler.go",
+    "line": 42,
+    "message": "undefined: fmt.Printf",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
     "message": "TestLogin",
     "severity": "error",
     "type": "test_result"
@@ -13,12 +20,5 @@
     "message": "mypackage/broken",
     "severity": "error",
     "type": "test_result"
-  },
-  {
-    "file": "src/handler.go",
-    "line": 42,
-    "message": "undefined: fmt.Printf",
-    "severity": "error",
-    "type": "diagnostic"
   }
 ]

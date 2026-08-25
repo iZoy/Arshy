@@ -14,8 +14,6 @@ impl super::Store {
             dedup_collapsed: 0,
             correlated_errors: 0,
             metrics: super::TaskMetrics::default(),
-            enriched: false,
-            detected_tool: None,
         };
         tasks.insert(task.task_id.clone(), record);
         drop(tasks);
@@ -48,8 +46,7 @@ impl super::Store {
     }
 
     /// Get a task's raw output byte count without cloning the whole task.
-    /// Used by the executor to compute honest agent_delivered_bytes against
-    /// the actual raw size.
+    /// Used by analytics to report the exact captured output size.
     #[allow(dead_code)]
     pub fn get_task_raw_output_bytes(&self, task_id: &str) -> u64 {
         self.lock().get(task_id).map(|r| r.metrics.raw_output_bytes).unwrap_or(0)
@@ -131,57 +128,11 @@ impl super::Store {
         Ok(())
     }
 
-    /// Set agent delivered bytes metric on a task record.
-    pub fn update_task_agent_delivered_bytes(&self, task_id: &str, bytes: u64) -> Result<()> {
-        let mut tasks = self.lock();
-        if let Some(record) = tasks.get_mut(task_id) {
-            record.metrics.agent_delivered_bytes = bytes;
-        }
-        drop(tasks);
-        self.mark_dirty();
-        Ok(())
-    }
-
     /// Increment the pairs_merged metric on a task record.
     pub fn update_task_pairs_merged(&self, task_id: &str, count: u64) -> Result<()> {
         let mut tasks = self.lock();
         if let Some(record) = tasks.get_mut(task_id) {
             record.metrics.pairs_merged += count;
-        }
-        drop(tasks);
-        self.mark_dirty();
-        Ok(())
-    }
-
-    /// Set the detected tool name for a task (used by async enrichment).
-    pub fn set_detected_tool(&self, task_id: &str, tool: &str) -> Result<()> {
-        let mut tasks = self.lock();
-        if let Some(record) = tasks.get_mut(task_id) {
-            record.detected_tool = Some(tool.to_string());
-        }
-        drop(tasks);
-        self.mark_dirty();
-        Ok(())
-    }
-
-    /// Get the detected tool name for a task.
-    pub fn get_detected_tool(&self, task_id: &str) -> Option<String> {
-        let tasks = self.lock();
-        tasks.get(task_id).and_then(|r| r.detected_tool.clone())
-    }
-
-    /// Check whether a task's events have already been enriched.
-    pub fn is_enriched(&self, task_id: &str) -> bool {
-        let tasks = self.lock();
-        tasks.get(task_id).is_some_and(|r| r.enriched)
-    }
-
-    /// Mark a task as enriched (context + hints have been applied).
-    /// Returns Ok(()) even if the task_id doesn't exist (no-op).
-    pub fn mark_enriched(&self, task_id: &str) -> Result<()> {
-        let mut tasks = self.lock();
-        if let Some(record) = tasks.get_mut(task_id) {
-            record.enriched = true;
         }
         drop(tasks);
         self.mark_dirty();
@@ -286,26 +237,6 @@ mod tests {
     }
 
     #[test]
-    fn detected_tool_set_and_get() {
-        let (store, _t) = test_store();
-        store.insert_task(&make_task("t1", TaskStatus::Completed)).unwrap();
-        assert!(store.get_detected_tool("t1").is_none());
-        store.set_detected_tool("t1", "cargo").unwrap();
-        assert_eq!(store.get_detected_tool("t1").as_deref(), Some("cargo"));
-    }
-
-    #[test]
-    fn enrichment_markers() {
-        let (store, _t) = test_store();
-        store.insert_task(&make_task("t1", TaskStatus::Completed)).unwrap();
-        assert!(!store.is_enriched("t1"));
-        store.mark_enriched("t1").unwrap();
-        assert!(store.is_enriched("t1"));
-        // marking a non-existent task is a no-op but must not error
-        assert!(store.mark_enriched("ghost").is_ok());
-    }
-
-    #[test]
     fn list_tasks_filter_by_status() {
         let (store, _t) = test_store();
         store.insert_task(&make_task("a", TaskStatus::Completed)).unwrap();
@@ -333,7 +264,6 @@ mod tests {
         store.insert_task(&make_task("t1", TaskStatus::Completed)).unwrap();
         assert!(store.update_task_counters("t1", 2, 1).is_ok());
         assert!(store.update_task_raw_output_bytes("t1", 1024).is_ok());
-        assert!(store.update_task_agent_delivered_bytes("t1", 512).is_ok());
         assert!(store.update_task_pairs_merged("t1", 3).is_ok());
     }
 }

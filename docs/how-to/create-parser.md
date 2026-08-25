@@ -33,7 +33,7 @@ parser_type = "toml"       # "toml"（默认）| "stateful"
 priority = 50              # 匹配优先级，默认 50
 # min_version / max_version: 工具版本上下限（可选；TOML 不支持 null，省略即不限制）
 schema_version = "1.0"     # 本文件针对的 schema 版本，默认 "1.0"
-since_version = "0.0.1"    # 本 parser 首次引入的版本（新增时填写）
+since_version = "0.1.0"    # 本 parser 首次引入的版本（新增时填写）
 deprecated = false         # 整个 parser 弃用
 replaced_by = "other-tool" # 弃用时的替代 parser 名
 ```
@@ -49,7 +49,7 @@ severity = "error"                 # error|warning|info 等
 fields = { file = 1, line = 2, code = 3, message = 4 }  # 捕获组索引 → 事件字段
 deprecated = false                 # 本 pattern 弃用
 replaced_by = "my-error-v2"        # 替代 pattern（须在同一 parser 内）
-since_version = "0.0.1"            # 本 pattern 引入版本
+since_version = "0.1.0"            # 本 pattern 引入版本
 ```
 
 `fields` 支持的键与含义（`LinePattern`，`src/daemon/parser/toml.rs`）：
@@ -186,7 +186,7 @@ detect = ["mytool"]
 detect_full = ["mytool check"]
 priority = 60
 schema_version = "1.0"
-since_version = "0.0.1"
+since_version = "0.1.0"
 
 [[pattern]]
 name = "my-error"
@@ -194,7 +194,7 @@ regex = '^(.+?):(\d+): error (E\d+): (.+)$'
 event_type = "diagnostic"
 severity = "error"
 fields = { file = 1, line = 2, code = 3, message = 4 }
-since_version = "0.0.1"
+since_version = "0.1.0"
 
 [[pattern]]
 name = "my-warning"
@@ -238,7 +238,7 @@ regex = '^(.+?):(\d+): error (E\d+): (.+)$'
 event_type = "diagnostic"
 severity = "error"
 fields = { file = 1, line = 2, code = 3, message = 4 }
-since_version = "0.0.1"
+since_version = "0.1.0"
 ```
 
 规则（项目约定，见仓库根 `AGENTS.md`）：
@@ -329,7 +329,7 @@ cargo test fixture_ -- --nocapture     # 匹配所有 fixture_* 测试
 
 ## 8. 热重载与 reload 验证
 
-- **热重载**：`parser.hot_reload = true`（默认）时，daemon 监视 `parser.dirs` 下所有 `.toml` 文件（非递归、2 秒轮询、500ms 去抖），增删改自动重建 registry（`src/daemon/parser/loader.rs`）；
+- **热重载**：`parser.hot_reload = true`（默认）时，daemon 通过平台原生文件事件监视 `parser.dirs` 下所有 `.toml` 文件（非递归、500ms 去抖），增删改自动重建 registry（`src/daemon/parser/loader.rs`）；
 - **手动重载**：`arshy parser reload` 重新从磁盘加载并打印 diff（新增 `+`、删除 `-`、pattern 数量/弃用数变化）。
 
 ```bash

@@ -12,15 +12,15 @@
     "type": "diagnostic"
   },
   {
-    "message": "Aborting",
-    "severity": "info",
-    "type": "log"
-  },
-  {
     "file": "Please commit your changes or stash them before you merge.",
     "line": 0,
     "message": "\tPlease commit your changes or stash them before you merge.",
     "severity": "error",
     "type": "location"
+  },
+  {
+    "message": "Aborting",
+    "severity": "info",
+    "type": "log"
   }
 ]

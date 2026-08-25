@@ -22,6 +22,7 @@ pub enum BusEventKind {
     },
     TaskComplete {
         task_id: String,
+        status: String,
         exit_code: i32,
         duration_ms: u64,
     },
@@ -69,9 +70,10 @@ impl EventBus {
     /// Publish an event to all subscribers. Best-effort (no error if no receivers).
     pub fn publish(&self, event: BusEvent) {
         crate::daemon::telemetry::record_event_emitted();
-        if self.tx.send(event).is_err() {
-            tracing::warn!("eventbus: all receivers lagged, event dropped");
-        }
+        // No receivers is normal for detached CLI/async tasks. Broadcast lag
+        // is reported by receivers, not by `send`; logging this as a warning
+        // produced one misleading line per event while no proxy was attached.
+        let _ = self.tx.send(event);
     }
 }
 
@@ -95,6 +97,7 @@ mod tests {
             connection_id: 0,
             kind: BusEventKind::TaskComplete {
                 task_id: task_id.to_string(),
+                status: if exit_code == 0 { "completed" } else { "failed" }.into(),
                 exit_code,
                 duration_ms: 500,
             },

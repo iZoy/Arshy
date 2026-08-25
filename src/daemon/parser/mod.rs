@@ -109,6 +109,7 @@ impl Engine {
             tool_name: entry.tool_name.clone(),
             parser_name: entry.name.clone(),
             parser_type: entry.parser_type.clone(),
+            route: entry.route.clone(),
             version: None,
         })
     }
@@ -317,6 +318,7 @@ pub struct ParsedTool {
     pub parser_name: String,
     #[allow(dead_code)]
     pub parser_type: ParserType,
+    pub route: String,
     pub version: Option<String>,
 }
 
@@ -347,6 +349,7 @@ pub struct RustcContextMerger {
     context_lines: Vec<String>,
     /// Counter of merged context events (for observability).
     merged_count: u64,
+    ready: std::collections::VecDeque<TaskEvent>,
 }
 
 impl Default for RustcContextMerger {
@@ -357,7 +360,12 @@ impl Default for RustcContextMerger {
 
 impl RustcContextMerger {
     pub fn new() -> Self {
-        Self { pending: None, context_lines: Vec::new(), merged_count: 0 }
+        Self {
+            pending: None,
+            context_lines: Vec::new(),
+            merged_count: 0,
+            ready: std::collections::VecDeque::new(),
+        }
     }
 
     /// Total context lines merged so far.
@@ -369,25 +377,31 @@ impl RustcContextMerger {
     /// Feed an event through the merger. Returns `Some(event)` when an event
     /// is ready to be emitted; returns `None` if the event was absorbed as context.
     pub fn feed(&mut self, event: TaskEvent) -> Option<TaskEvent> {
-        if is_rustc_context_line(&event.message) {
+        let mut emitted = self.feed_all(event);
+        let first = emitted.first().cloned();
+        if !emitted.is_empty() {
+            emitted.remove(0);
+            self.ready.extend(emitted);
+        }
+        first
+    }
+
+    /// Feed an event and return every event made ready by the operation.
+    pub fn feed_all(&mut self, event: TaskEvent) -> Vec<TaskEvent> {
+        if is_rustc_context_line(&event.message)
+            && self.pending.as_ref().is_some_and(|pending| {
+                pending.event_type == "diagnostic" || pending.event_type == "crash"
+            })
+        {
             // This is a context line — buffer it and suppress the event.
             self.context_lines.push(event.message.clone());
             self.merged_count += 1;
-            return None;
+            return self.ready.drain(..).collect();
         }
 
         // Not a context line — flush whatever we have buffered.
-        let flushed = self.flush_pending();
-
-        // Location events are handled by GenericPairMerger downstream.
-        // If we just flushed a pending event, return it and re-buffer the
-        // location so it comes out on the next feed()/finish() call.
-        if event.event_type == "location" {
-            if flushed.is_some() {
-                self.pending = Some(event);
-                return flushed;
-            }
-            return Some(event);
+        if let Some(flushed) = self.flush_pending() {
+            self.ready.push_back(flushed);
         }
 
         // If the incoming event is a diagnostic or log that could receive context,
@@ -396,15 +410,29 @@ impl RustcContextMerger {
             self.pending = Some(event);
         } else {
             // Non-diagnostic events (test_result, summary, etc.) pass through immediately.
-            return flushed.or(Some(event));
+            self.ready.push_back(event);
         }
 
-        flushed
+        self.ready.drain(..).collect()
     }
 
     /// Flush any remaining buffered event (call at end of stream).
     pub fn finish(&mut self) -> Option<TaskEvent> {
-        self.flush_pending()
+        let mut emitted = self.finish_all();
+        let first = emitted.first().cloned();
+        if !emitted.is_empty() {
+            emitted.remove(0);
+            self.ready.extend(emitted);
+        }
+        first
+    }
+
+    /// Flush all buffered and ready events in source order.
+    pub fn finish_all(&mut self) -> Vec<TaskEvent> {
+        if let Some(flushed) = self.flush_pending() {
+            self.ready.push_back(flushed);
+        }
+        self.ready.drain(..).collect()
     }
 
     fn flush_pending(&mut self) -> Option<TaskEvent> {
@@ -504,6 +532,17 @@ fn is_rustc_context_line(msg: &str) -> bool {
         if !num_part.is_empty() && num_part.chars().all(|c| c.is_ascii_digit() || c == ' ') {
             return true;
         }
+    }
+
+    // Rustc sometimes continues a `= note:` block without repeating the
+    // directive prefix (for example `expected type ...` / `found type ...`).
+    // These lines are only considered here while a diagnostic is pending, so
+    // ordinary tool logs are not swallowed by the context merger.
+    if trimmed.starts_with("expected type ")
+        || trimmed.starts_with("found type ")
+        || trimmed.starts_with("the trait ")
+    {
+        return true;
     }
 
     // Pattern 4: Caret/dash markers — `  ^^^`, `  ---`

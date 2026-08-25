@@ -5,12 +5,17 @@
     "type": "log"
   },
   {
+    "message": "Because myapp depends on requests (>=2.30.0) and requests (==2.28.0), version solving failed.",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
     "message": "  Because myapp depends on requests (>=2.30.0)",
     "severity": "info",
     "type": "log"
   },
   {
-    "message": "Because myapp depends on requests (>=2.30.0) and requests (==2.28.0), version solving failed.",
+    "message": "   and requests (==2.28.0), version solving failed.",
     "severity": "error",
     "type": "diagnostic"
   },
@@ -28,10 +33,5 @@
     "message": "   Built myapp @ file:///tmp/myapp",
     "severity": "info",
     "type": "log"
-  },
-  {
-    "message": "   and requests (==2.28.0), version solving failed.",
-    "severity": "error",
-    "type": "diagnostic"
   }
 ]

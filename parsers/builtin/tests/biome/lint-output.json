@@ -24,16 +24,16 @@
     "type": "diagnostic"
   },
   {
-    "message": "✖ Found 3 errors",
-    "severity": "error",
-    "type": "summary"
-  },
-  {
     "code": "lint/style/noNonNullAssertion",
     "file": "src/hooks.ts",
     "line": 8,
     "message": "Forbidden non-null assertion.",
     "severity": "info",
     "type": "diagnostic"
+  },
+  {
+    "message": "✖ Found 3 errors",
+    "severity": "error",
+    "type": "summary"
   }
 ]

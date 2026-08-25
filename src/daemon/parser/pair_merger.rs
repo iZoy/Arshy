@@ -7,6 +7,7 @@
 //! Supports both streaming (`feed()`/`finish()`) and batch (`merge_diagnostic_location_pairs()`).
 
 use crate::ipc::TaskEvent;
+use std::collections::VecDeque;
 
 /// Merges consecutive diagnostic + location events into single diagnostics.
 ///
@@ -17,11 +18,12 @@ pub struct GenericPairMerger {
     pending: Option<TaskEvent>,
     /// Counter of merged pairs (for observability).
     merged_count: u64,
+    ready: VecDeque<TaskEvent>,
 }
 
 impl GenericPairMerger {
     pub fn new() -> Self {
-        Self { pending: None, merged_count: 0 }
+        Self { pending: None, merged_count: 0, ready: VecDeque::new() }
     }
 
     /// Total pairs merged so far.
@@ -36,6 +38,26 @@ impl GenericPairMerger {
     /// Handles diagnostic+location pairs in both orderings (forward and backward),
     /// even when non-pairable events (log, summary, etc.) appear between them.
     pub fn feed(&mut self, event: TaskEvent) -> Option<TaskEvent> {
+        let mut emitted = self.feed_all(event);
+        let first = emitted.first().cloned();
+        if !emitted.is_empty() {
+            emitted.remove(0);
+        }
+        // Preserve any additional events for the next call. Production code
+        // uses feed_all directly; this compatibility wrapper is retained for
+        // focused streaming callers and older tests.
+        if !emitted.is_empty() {
+            self.ready.extend(emitted);
+        }
+        first
+    }
+
+    /// Feed an event and return every event made ready by the operation.
+    ///
+    /// Keeping this vector-valued form is important when a non-pairable event
+    /// arrives after a buffered diagnostic: both the diagnostic and the new
+    /// event must be emitted without reordering or dropping either one.
+    pub fn feed_all(&mut self, event: TaskEvent) -> Vec<TaskEvent> {
         if is_diagnostic(&event.event_type) {
             if let Some(pending) = self.pending.take() {
                 if is_location(&pending.event_type) {
@@ -43,40 +65,55 @@ impl GenericPairMerger {
                     let mut diag = event;
                     diag = merge_location(diag, &pending);
                     self.merged_count += 1;
-                    return Some(diag);
+                    self.ready.push_back(diag);
+                } else {
+                    // Only adjacent diagnostic pairs are meaningful. Flush
+                    // the previous diagnostic and buffer this one; never
+                    // search across summaries/logs for a later location.
+                    self.ready.push_back(pending);
+                    self.pending = Some(event);
                 }
-                // Pending is diagnostic — flush it, buffer current
+            } else {
                 self.pending = Some(event);
-                return Some(pending);
             }
-            self.pending = Some(event);
-            return None;
-        }
-
-        if is_location(&event.event_type) {
+        } else if is_location(&event.event_type) {
             if let Some(pending) = self.pending.take() {
                 if is_diagnostic(&pending.event_type) {
                     // Forward merge: pending diagnostic + current location
                     let mut diag = pending;
                     diag = merge_location(diag, &event);
                     self.merged_count += 1;
-                    return Some(diag);
+                    self.ready.push_back(diag);
+                } else {
+                    self.ready.push_back(pending);
+                    self.pending = Some(event);
                 }
-                // Pending is location — flush it, buffer current
+            } else {
                 self.pending = Some(event);
-                return Some(pending);
             }
-            self.pending = Some(event);
-            return None;
+        } else if let Some(pending) = self.pending.take() {
+            // A non-pairable event terminates adjacency. Preserve both events
+            // in source order.
+            self.ready.push_back(pending);
+            self.ready.push_back(event);
+        } else {
+            self.ready.push_back(event);
         }
 
-        // Non-pairable event: pass through, keep pending intact
-        Some(event)
+        self.ready.drain(..).collect()
     }
 
     /// Flush any remaining buffered event (call at end of stream).
     pub fn finish(&mut self) -> Option<TaskEvent> {
-        self.pending.take()
+        self.finish_all().into_iter().next()
+    }
+
+    /// Flush all buffered and ready events in source order.
+    pub fn finish_all(&mut self) -> Vec<TaskEvent> {
+        if let Some(pending) = self.pending.take() {
+            self.ready.push_back(pending);
+        }
+        self.ready.drain(..).collect()
     }
 }
 
@@ -111,13 +148,9 @@ pub fn merge_diagnostic_location_pairs(events: Vec<TaskEvent>) -> (Vec<TaskEvent
     let mut result = Vec::new();
 
     for event in events {
-        if let Some(emitted) = merger.feed(event) {
-            result.push(emitted);
-        }
+        result.extend(merger.feed_all(event));
     }
-    if let Some(leftover) = merger.finish() {
-        result.push(leftover);
-    }
+    result.extend(merger.finish_all());
 
     (result, merger.merged_count())
 }
@@ -257,9 +290,9 @@ mod tests {
         let (result, count) = merge_diagnostic_location_pairs(events);
         assert_eq!(result.len(), 2);
         assert_eq!(count, 0);
-        // With new behavior: summary passes through, diagnostic buffered until finish()
-        assert_eq!(result[0].event_type, "summary");
-        assert_eq!(result[1].event_type, "diagnostic");
+        // A non-pairable event terminates adjacency and preserves source order.
+        assert_eq!(result[0].event_type, "diagnostic");
+        assert_eq!(result[1].event_type, "summary");
     }
 
     #[test]
@@ -347,44 +380,36 @@ mod tests {
     }
 
     #[test]
-    fn feed_streaming_non_pairable_passes_through() {
+    fn feed_streaming_non_pairable_terminates_pair() {
         let mut merger = GenericPairMerger::new();
         // Feed diagnostic — buffered
         let result = merger.feed(diag(1, "error"));
         assert!(result.is_none());
-        // Feed summary — passes through, diagnostic stays buffered
-        let result = merger.feed(summary(2, "done"));
-        assert!(result.is_some());
-        assert_eq!(result.unwrap().event_type, "summary");
-        // Feed location — merges with buffered diagnostic
-        let result = merger.feed(loc(3, "main.rs", 42));
-        assert!(result.is_some());
-        let merged = result.unwrap();
-        assert_eq!(merged.event_type, "diagnostic");
-        assert!(merged.location.is_some());
-        assert_eq!(merged.location.as_ref().unwrap().file, "main.rs");
-        assert_eq!(merger.merged_count(), 1);
-        // Finish — nothing left
-        let result = merger.finish();
-        assert!(result.is_none());
+        // Feed summary — both events become ready in source order.
+        let result = merger.feed_all(summary(2, "done"));
+        assert_eq!(
+            result.iter().map(|e| e.event_type.as_str()).collect::<Vec<_>>(),
+            vec!["diagnostic", "summary"]
+        );
+        // A later location must not reach back across the summary.
+        assert!(merger.feed(loc(3, "main.rs", 42)).is_none());
+        assert_eq!(merger.finish_all().len(), 1);
+        assert_eq!(merger.merged_count(), 0);
     }
 
     #[test]
-    fn feed_streaming_context_lines_between_diag_and_loc() {
-        // Simulates rustc output: diagnostic, | lines, location
+    fn feed_streaming_context_lines_do_not_pair_across_logs() {
         let mut merger = GenericPairMerger::new();
         // diagnostic — buffered
         assert!(merger.feed(diag(1, "mismatched types")).is_none());
-        // | context lines — pass through
-        let ctx1 = merger.feed(log(2, "  |")).unwrap();
-        assert_eq!(ctx1.event_type, "log");
-        let ctx2 = merger.feed(log(3, "2 | let x = \"hello\";")).unwrap();
-        assert_eq!(ctx2.event_type, "log");
-        // location — merges with buffered diagnostic
-        let merged = merger.feed(loc(4, "main.rs", 2)).unwrap();
-        assert_eq!(merged.event_type, "diagnostic");
-        assert!(merged.location.is_some());
-        assert_eq!(merged.location.as_ref().unwrap().file, "main.rs");
-        assert_eq!(merger.merged_count(), 1);
+        // Context lines terminate the generic pair; RustcContextMerger handles
+        // them in the production pipeline after the location pair is formed.
+        let events = merger.feed_all(log(2, "  |"));
+        assert_eq!(events[0].event_type, "diagnostic");
+        let events = merger.feed_all(log(3, "2 | let x = \"hello\";"));
+        assert_eq!(events[0].event_type, "log");
+        assert!(merger.feed(loc(4, "main.rs", 2)).is_none());
+        assert_eq!(merger.finish_all().len(), 1);
+        assert_eq!(merger.merged_count(), 0);
     }
 }

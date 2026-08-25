@@ -45,9 +45,8 @@ arshy benchmark                    # run parser benchmark across 37 parsers
 arshy run "cmd" --errors-only      # only return error-level events
 arshy parser reload                # hot-reload parsers + show diff
 arshy parser list                  # list loaded parsers
-arshy setup codex                  # wire arshy into one agent (one line per agent)
-arshy doctor --agent codex         # verify one agent's integration
-arshy uninstall --agent codex      # remove arshy from one agent (zero residue)
+arshy mcp config                   # print generic MCP client configuration
+arshy doctor                       # verify the local daemon and MCP endpoint
 ```
 
 **Bash interception (decision 3):** `ARSHY_NO_INTERCEPT=1` disables ALL bash interception globally (stronger than the per-command `ARSHY_BYPASS`); every agent-relevant interception decision is audited to `~/.arshy/intercept.jsonl` (who, what, why).

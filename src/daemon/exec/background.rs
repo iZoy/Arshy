@@ -6,7 +6,6 @@ use std::sync::Arc;
 
 use tokio::sync::oneshot;
 
-use crate::daemon::context::extract_context_async;
 use crate::daemon::context::git_correlator::GitCorrelation;
 use crate::daemon::parser::dedup::Deduplicator;
 use crate::daemon::parser::pair_merger::GenericPairMerger;
@@ -78,27 +77,46 @@ pub(crate) async fn run_background(mut t: BackgroundTask) -> Result<()> {
         },
     });
 
-    let timeout_dur =
-        tokio::time::Duration::from_millis(t.timeout_ms.unwrap_or(t.config.max_task_duration_ms));
+    let effective_timeout = t
+        .timeout_ms
+        .map(|value| value.min(t.config.max_task_duration_ms))
+        .unwrap_or(t.config.max_task_duration_ms);
+    let timeout_dur = tokio::time::Duration::from_millis(effective_timeout);
 
     let max_bytes = t.config.max_output_bytes;
 
     // 3-way select: output reading, timeout, or kill signal
     // After this select, handle.wait() is called to get the exit code.
-    let (timed_out, killed, mut seq, raw_output, dedup_collapsed, pairs_merged) = tokio::select! {
+    let mut captured_output = String::new();
+    let mut seq = 0u64;
+    // Keep parser state outside the select branch so timeout/kill cancellation
+    // can still flush events already buffered by deduplication or pair/context
+    // mergers. Dropping the branch used to silently lose the tail of noisy
+    // commands when they timed out.
+    let mut total_bytes: u64 = 0;
+    let mut output_truncated = false;
+    let mut saw_json_line = false;
+    let mut dedup = Deduplicator::new();
+    let mut ctx_merger = RustcContextMerger::new();
+    let mut pair_merger = GenericPairMerger::new();
+    let (timed_out, killed, dedup_collapsed, pairs_merged) = tokio::select! {
         result = async {
-            let mut seq: u64 = 0;
-            let mut total_bytes: u64 = 0;
-            let mut full_output = String::new();
-            let mut dedup = Deduplicator::new();
-            let mut ctx_merger = RustcContextMerger::new();
-            let mut pair_merger = GenericPairMerger::new();
             while let Some((source, line)) = handle.output_rx.recv().await {
-                full_output.push_str(&line);
-                full_output.push('\n');
-                total_bytes += line.len() as u64;
-                if total_bytes > max_bytes {
+                let line_bytes = line.len() as u64 + 1;
+                total_bytes = total_bytes.saturating_add(line_bytes);
+                if output_truncated || total_bytes > max_bytes {
+                    if output_truncated {
+                        // Keep draining stdout/stderr so the child cannot
+                        // block on a full pipe. Stopping the receiver at the
+                        // capture limit deadlocks noisy processes in wait().
+                        continue;
+                    }
+                    output_truncated = true;
                     tracing::warn!("task {} output exceeded {} bytes, truncating", t.task_id, max_bytes);
+                    captured_output.push_str(&format!(
+                        "[output truncated at {} bytes; remaining output drained]\n",
+                        max_bytes
+                    ));
                     // Emit a system warning event about truncation
                     let truncation_event = crate::ipc::TaskEvent {
                         seq: 0,
@@ -123,7 +141,18 @@ pub(crate) async fn run_background(mut t: BackgroundTask) -> Result<()> {
                             event: te,
                         },
                     });
-                    break;
+                    continue;
+                }
+                captured_output.push_str(&line);
+                captured_output.push('\n');
+
+                // A valid object line is already parsed by ParserSession's
+                // streaming JSON layer. Remember that fact so the completion
+                // pass does not emit the same object a second time.
+                if line.trim_start().starts_with('{')
+                    && serde_json::from_str::<serde_json::Value>(line.trim()).is_ok()
+                {
+                    saw_json_line = true;
                 }
 
                 // Catch parser panics to prevent one bad line from killing the task
@@ -150,44 +179,29 @@ pub(crate) async fn run_background(mut t: BackgroundTask) -> Result<()> {
                     }
                 };
 
-                for event in events {
+                for mut event in events {
+                    // Normalize the source-sensitive severity before any
+                    // buffering. Dedup/context/pair mergers may hold an event
+                    // until a later line; applying this after those mergers
+                    // loses the original stderr line and silently downgrades
+                    // single-line failures such as "Permission denied".
+                    if source == "stderr"
+                        && matches!(event.severity.as_deref(), Some("info" | "warning"))
+                        && stderr_looks_like_error(&event.message)
+                    {
+                        event.severity = Some("error".into());
+                    }
+
                     if let Some(deduped) = dedup.feed(event) {
-                        // Feed through context merger: absorbs rustc context lines
-                        // into the preceding diagnostic event
-                        if let Some(ctx_merged) = ctx_merger.feed(deduped) {
-                            // Feed through pair merger: absorbs diagnostic+location pairs
-                            if let Some(mut event) = pair_merger.feed(ctx_merged) {
+                        // Pair first so the location is attached to the
+                        // diagnostic before rustc source context is buffered.
+                        // The old order attached context to a location event,
+                        // then discarded it when the pair merger copied only
+                        // the location field.
+                        for paired in pair_merger.feed_all(deduped) {
+                            for mut event in ctx_merger.feed_all(paired) {
                                 seq += 1;
                                 event.seq = seq;
-
-                                if source == "stderr" {
-                                    match event.severity.as_deref() {
-                                        Some("info") => {
-                                            if stderr_looks_like_error(&line) {
-                                                event.severity = Some("error".into());
-                                            } else {
-                                                event.severity = Some("warning".into());
-                                            }
-                                        }
-                                        Some("warning")
-                                            if stderr_looks_like_error(&line) =>
-                                        {
-                                            event.severity = Some("error".into());
-                                        }
-                                        _ => {}
-                                    }
-                                }
-
-                                // Extract error context (source file +/- 3 lines) for events with location
-                                if let Some(ref loc) = event.location {
-                                    if loc.line > 0 && !loc.file.is_empty() {
-                                        if let Some(ctx) =
-                                            extract_context_async(&loc.file, loc.line).await
-                                        {
-                                            event.context = Some(ctx);
-                                        }
-                                    }
-                                }
 
                                 if let Err(e) = t.store.insert_event(&t.task_id, seq, &event) {
                                     tracing::error!(
@@ -209,101 +223,18 @@ pub(crate) async fn run_background(mut t: BackgroundTask) -> Result<()> {
                     }
                 }
             }
-            // Flush remaining deduplicated and context-merged events
-            // dedup → ctx_merger → pair_merger (full pipeline)
-            if let Some(final_event) = dedup.finish() {
-                if let Some(ctx_merged) = ctx_merger.feed(final_event) {
-                    if let Some(merged_event) = pair_merger.feed(ctx_merged) {
-                        seq += 1;
-                        let mut event = merged_event;
-                        event.seq = seq;
-                        if let Err(e) = t.store.insert_event(&t.task_id, seq, &event) {
-                            tracing::error!(
-                                "task {} failed to store dedup event: {}",
-                                t.task_id,
-                                e
-                            );
-                        }
-                        t.event_bus.publish(BusEvent {
-                            connection_id: 0,
-                            kind: BusEventKind::Diagnostic {
-                                task_id: t.task_id.clone(),
-                                event,
-                            },
-                        });
-                    }
-                }
-            }
-            // Flush any remaining buffered event in the context merger
-            // ctx_merger → pair_merger (partial pipeline)
-            if let Some(final_event) = ctx_merger.finish() {
-                if let Some(merged_event) = pair_merger.feed(final_event) {
-                    seq += 1;
-                    let mut event = merged_event;
-                    event.seq = seq;
-                    if let Err(e) = t.store.insert_event(&t.task_id, seq, &event) {
-                        tracing::error!(
-                            "task {} failed to store merger event: {}",
-                            t.task_id,
-                            e
-                        );
-                    }
-                    t.event_bus.publish(BusEvent {
-                        connection_id: 0,
-                        kind: BusEventKind::Diagnostic {
-                            task_id: t.task_id.clone(),
-                            event,
-                        },
-                    });
-                }
-            }
-            // Flush any remaining buffered event in the pair merger
-            if let Some(final_event) = pair_merger.finish() {
-                seq += 1;
-                let mut event = final_event;
-                event.seq = seq;
-                if let Err(e) = t.store.insert_event(&t.task_id, seq, &event) {
-                    tracing::error!(
-                        "task {} failed to store pair merger event: {}",
-                        t.task_id,
-                        e
-                    );
-                }
-                t.event_bus.publish(BusEvent {
-                    connection_id: 0,
-                    kind: BusEventKind::Diagnostic {
-                        task_id: t.task_id.clone(),
-                        event,
-                    },
-                });
-            }
-            // Try JSON parsing on the full accumulated output
-            if let Some(json_events) = try_parse_json(&full_output) {
-                for mut event in json_events {
-                    seq += 1;
-                    event.seq = seq;
-                    if let Err(e) = t.store.insert_event(&t.task_id, seq, &event) {
-                        tracing::error!("task {} failed to store JSON event: {}", t.task_id, e);
-                    }
-                    t.event_bus.publish(BusEvent {
-                        connection_id: 0,
-                        kind: BusEventKind::Diagnostic {
-                            task_id: t.task_id.clone(),
-                            event,
-                        },
-                    });
-                }
-            }
-            // Output channel closed — process exited, readers finished
-            (seq, full_output, dedup.collapsed_count(), pair_merger.merged_count())
+            // Output channel closed — process exited, readers finished. The
+            // shared pipeline is flushed below, outside the select, so the
+            // timeout and kill branches use the same finalization path.
+            (dedup.collapsed_count(), pair_merger.merged_count())
         } => {
-            (false, false, result.0, result.1, result.2, result.3)
+            (false, false, result.0, result.1)
         }
         _ = tokio::time::sleep(timeout_dur) => {
             tracing::warn!("task {} timed out after {}ms", t.task_id, timeout_dur.as_millis());
             let _ = handle.force_kill();
             let _ = t.store.update_task(&t.task_id, &TaskStatus::Timeout, Some(-2), None);
-            (true, false, 0u64, String::new(), 0u64, 0u64)
+            (true, false, 0u64, 0u64)
         }
         _ = t.kill_rx.recv() => {
             tracing::info!("task {} received kill signal, initiating graceful kill", t.task_id);
@@ -315,9 +246,58 @@ pub(crate) async fn run_background(mut t: BackgroundTask) -> Result<()> {
                 Ok(false) => tracing::warn!("task {} was force-killed", t.task_id),
                 Err(e) => tracing::error!("task {} kill error: {}", t.task_id, e),
             }
-            (false, true, 0u64, String::new(), 0u64, 0u64)
+            (false, true, 0u64, 0u64)
         }
     };
+
+    // Flush the shared parser pipeline for normal completion, timeout, and
+    // explicit kill alike. This is deliberately source-ordered and preserves
+    // every event emitted by a merger when a buffered pair is terminated.
+    let mut emit = |mut event: crate::ipc::TaskEvent| {
+        seq += 1;
+        event.seq = seq;
+        if let Err(e) = t.store.insert_event(&t.task_id, seq, &event) {
+            tracing::error!("task {} failed to store final event: {}", t.task_id, e);
+        }
+        t.event_bus.publish(BusEvent {
+            connection_id: 0,
+            kind: BusEventKind::Diagnostic { task_id: t.task_id.clone(), event },
+        });
+    };
+    if let Some(final_event) = dedup.finish() {
+        for paired in pair_merger.feed_all(final_event) {
+            for merged in ctx_merger.feed_all(paired) {
+                emit(merged);
+            }
+        }
+    }
+    for final_event in pair_merger.finish_all() {
+        for merged in ctx_merger.feed_all(final_event) {
+            emit(merged);
+        }
+    }
+    for final_event in ctx_merger.finish_all() {
+        emit(final_event);
+    }
+    // Try JSON parsing on the full accumulated output only when streaming did
+    // not already parse an object line (arrays and multi-line JSON still use
+    // this completion pass).
+    if !output_truncated && !saw_json_line {
+        if let Some(json_events) = try_parse_json(&captured_output) {
+            for mut event in json_events {
+                seq += 1;
+                event.seq = seq;
+                if let Err(e) = t.store.insert_event(&t.task_id, seq, &event) {
+                    tracing::error!("task {} failed to store JSON event: {}", t.task_id, e);
+                }
+                t.event_bus.publish(BusEvent {
+                    connection_id: 0,
+                    kind: BusEventKind::Diagnostic { task_id: t.task_id.clone(), event },
+                });
+            }
+        }
+    }
+    let raw_output = captured_output;
 
     // Wait for the process to exit (output readers are done, process should be done or dying)
     let exit_code = match handle.wait().await {
@@ -341,7 +321,13 @@ pub(crate) async fn run_background(mut t: BackgroundTask) -> Result<()> {
         }
     };
 
-    let exit_code_val = exit_code.unwrap_or(if killed { -3 } else { -1 });
+    let exit_code_val = exit_code.unwrap_or(if killed {
+        -3
+    } else if timed_out {
+        -2
+    } else {
+        -1
+    });
 
     // Store raw output for tee / failure recovery
     if !raw_output.is_empty() {
@@ -372,6 +358,42 @@ pub(crate) async fn run_background(mut t: BackgroundTask) -> Result<()> {
         t.store.update_task(&t.task_id, &final_status, Some(exit_code_val), Some(duration_ms))
     {
         tracing::error!("task {} failed to update final status: {}", t.task_id, e);
+    }
+
+    // Enrichment belongs to task completion, not to any client connection.
+    // The previous notification-side implementation meant detached async
+    // tasks were never enriched after their proxy disconnected, while several
+    // connected proxies could race to enrich the same task.
+    let enrichment_params = crate::ipc::QueryParams {
+        task_id: Some(t.task_id.clone()),
+        event_type: None,
+        severity: None,
+        code: None,
+        file: None,
+        limit: 200,
+        offset: 0,
+        include_logs: false,
+    };
+    if let Ok((events, _)) = t.store.query_events(&enrichment_params) {
+        if !events.is_empty() {
+            let events_json: Vec<serde_json::Value> = events
+                .into_iter()
+                .map(|event| serde_json::to_value(event).unwrap_or_default())
+                .collect();
+            let cwd = t.cwd.clone().unwrap_or_else(|| std::path::PathBuf::from("."));
+            let fallback = events_json.clone();
+            let enriched =
+                tokio::task::spawn_blocking(move || super::enrich_events(events_json, &cwd))
+                    .await
+                    .unwrap_or(fallback);
+            let task_events: Vec<crate::ipc::TaskEvent> = enriched
+                .into_iter()
+                .filter_map(|event| serde_json::from_value(event).ok())
+                .collect();
+            if let Err(error) = t.store.merge_enriched_events(&t.task_id, &task_events) {
+                tracing::warn!("failed to persist enriched events for {}: {}", t.task_id, error);
+            }
+        }
     }
 
     // Store feature usage counters
@@ -430,12 +452,13 @@ pub(crate) async fn run_background(mut t: BackgroundTask) -> Result<()> {
         connection_id: 0,
         kind: BusEventKind::TaskComplete {
             task_id: t.task_id.clone(),
+            status: final_status.as_str().into(),
             exit_code: exit_code_val,
             duration_ms,
         },
     });
 
-    record_task_completed(exit_code_val == 0);
+    record_task_completed(final_status == TaskStatus::Completed);
 
     // Note: no error_count here — the response layer counts errors from the
     // actual events array it ships to the agent (see exec/mod.rs).

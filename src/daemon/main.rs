@@ -66,14 +66,6 @@ async fn main() -> Result<()> {
     }
     lifecycle::cleanup_stale_socket(&socket_path);
 
-    // Clean up any stale spawn-lock left by a crashed proxy.
-    // Without this, the proxy's atomic create_new would fail forever.
-    let spawn_lock_path = std::path::PathBuf::from("/tmp/arshyd.spawn-lock");
-    if spawn_lock_path.exists() {
-        let _ = std::fs::remove_file(&spawn_lock_path);
-        tracing::info!("cleaned up stale spawn-lock");
-    }
-
     // ── Store (JSONL) ───────────────────────────────────────────────────────────
     let store_dir = cfg.store.expanded_store_dir();
     if let Some(parent) = store_dir.parent() {
@@ -110,22 +102,9 @@ async fn main() -> Result<()> {
     // Enriches the minimal launchd PATH with tools from ~/.cargo/bin, homebrew, etc.
     let _ = exec::pty::user_shell_path();
 
-    // ── Security validation ──────────────────────────────────────────────────
-    if cfg.daemon.sandbox_mode != "none" && cfg.daemon.sandbox_mode != "workspace" {
-        return Err(arshy_lib::ArshyError::Config(format!(
-            "sandbox_mode '{}' is not supported. Use 'none' or 'workspace'.",
-            cfg.daemon.sandbox_mode
-        )));
-    }
-
-    let mut security = cfg.security.clone();
-    if cfg.daemon.sandbox_mode == "workspace" {
-        if let Ok(current_dir) = std::env::current_dir() {
-            let workspace = current_dir.to_string_lossy().to_string();
-            tracing::info!("workspace sandbox active, locking to: {}", workspace);
-            security.sandbox_paths.push(workspace);
-        }
-    }
+    // `allowed_cwds` is intentionally a cwd boundary guard. It does not claim
+    // to isolate file access after a child process has started.
+    let security = cfg.security.clone();
 
     // Create custom parser directories if they don't exist
     for dir in &cfg.parser.dirs {
@@ -148,7 +127,7 @@ async fn main() -> Result<()> {
     };
     let mut executor = exec::Executor::new(store.clone(), parser_engine.clone(), event_bus.clone())
         .with_config(exec_config)
-        .with_security(&security)
+        .with_security(&security)?
         .with_reference(Arc::new(reference::ReferenceTable::load()?));
 
     if let Some(ref audit_path) = cfg.security.audit_log {
@@ -190,6 +169,14 @@ async fn main() -> Result<()> {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&socket_path, std::fs::Permissions::from_mode(0o600))?;
     }
+    // Signal a proxy waiting in `start_daemon` that the listener is ready.
+    // The lock is scoped to this socket and is intentionally removed only
+    // after a successful bind.
+    let spawn_lock = socket_path.with_file_name(format!(
+        "{}.spawn-lock",
+        socket_path.file_name().and_then(|name| name.to_str()).unwrap_or("arshyd")
+    ));
+    let _ = std::fs::remove_file(&spawn_lock);
     tracing::info!("listening on {}", socket_path.display());
 
     let mut conn_id: u64 = 0;
@@ -237,32 +224,14 @@ async fn main() -> Result<()> {
                 tracing::info!("received shutdown request");
                 break;
             }
-            // ── Idle-exit watchdog ─────────────────────────────────
-            // Re-arms each loop iteration. If idle_timeout_secs > 0 and the
-            // system has been idle — no running tasks and the most recent
-            // finished task older than the limit — break into graceful shutdown.
-            // A value of 0 disables idle-exit.
-            //
-            // The poll interval scales with the threshold (≈ half of it, capped
-            // at 60s, floored at 5s) so any configured value is honored
-            // within ~one interval rather than always waiting a full 60s.
-            _ = tokio::time::sleep(std::time::Duration::from_secs(
-                (cfg.daemon.idle_timeout_secs.min(120) / 2).max(5),
-            )) => {
-                if cfg.daemon.idle_timeout_secs == 0 {
-                    continue;
-                }
-                match store.idle_since_secs() {
-                    Ok(Some(secs)) if secs >= cfg.daemon.idle_timeout_secs => {
-                        tracing::info!(
-                            "idle for {}s (>= limit {}s), shutting down",
-                            secs, cfg.daemon.idle_timeout_secs
-                        );
-                        break;
-                    }
-                    Ok(_) => {}
-                    Err(e) => tracing::debug!("idle check failed: {}", e),
-                }
+            // Event-driven idle exit: one deadline is reset by task activity.
+            // No fixed-interval polling runs while the daemon is idle.
+            _ = store.wait_until_idle(cfg.daemon.idle_timeout_secs) => {
+                tracing::info!(
+                    "idle for {}s, shutting down",
+                    cfg.daemon.idle_timeout_secs
+                );
+                break;
             }
         }
     }

@@ -1,15 +1,15 @@
-//! Path sandbox — restricts working directory to allowed paths.
+//! Working-directory guard — restricts cwd to explicitly allowed roots.
 
 use crate::{ArshyError, Result};
 use std::path::PathBuf;
 
-/// Check that `cwd` is within one of the `sandbox_paths`.
+/// Check that `cwd` is within one of the allowed cwd roots.
 ///
-/// - If `sandbox_paths` is empty, the check is skipped (permissive default).
+/// - If the roots are empty, the check is skipped (permissive default).
 /// - Rejects `../` escapes by canonicalizing both sides.
 /// - Rejects symlink escapes by resolving to real paths.
-pub fn check_path(cwd: &str, sandbox_paths: &[String]) -> Result<()> {
-    if sandbox_paths.is_empty() {
+pub fn check_path(cwd: &str, allowed_cwds: &[String]) -> Result<()> {
+    if allowed_cwds.is_empty() {
         return Ok(());
     }
 
@@ -18,19 +18,19 @@ pub fn check_path(cwd: &str, sandbox_paths: &[String]) -> Result<()> {
         .canonicalize()
         .map_err(|_| ArshyError::Ipc(format!("invalid cwd: cannot resolve '{}'", cwd)))?;
 
-    for sandbox in sandbox_paths {
-        let sandbox_path = PathBuf::from(expand_tilde(sandbox));
-        let canonical_sandbox = match sandbox_path.canonicalize() {
+    for root in allowed_cwds {
+        let root_path = PathBuf::from(expand_tilde(root));
+        let canonical_root = match root_path.canonicalize() {
             Ok(p) => p,
             Err(_) => continue, // sandbox path doesn't exist, skip
         };
 
-        if canonical_cwd.starts_with(&canonical_sandbox) {
+        if canonical_cwd.starts_with(&canonical_root) {
             return Ok(());
         }
     }
 
-    Err(ArshyError::Ipc(format!("access denied: cwd '{}' is outside sandbox", cwd)))
+    Err(ArshyError::Ipc(format!("access denied: cwd '{}' is outside allowed roots", cwd)))
 }
 
 /// Expand `~` to the home directory.
@@ -102,7 +102,7 @@ mod tests {
     }
 
     #[test]
-    fn multiple_sandbox_paths() {
+    fn multiple_allowed_cwds() {
         let tmp1 = TempDir::new().unwrap();
         let tmp2 = TempDir::new().unwrap();
         let sandboxes = vec![

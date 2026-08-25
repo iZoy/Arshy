@@ -10,6 +10,11 @@
     "type": "diagnostic"
   },
   {
+    "message": "template: mychart/templates/deployment.yaml:15: executing \"mychart/templates/deployment.yaml\" at <.Values.invalid>: map has no entry for key \"invalid\"",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
     "message": "NAME: my-release",
     "severity": "info",
     "type": "summary"
@@ -33,10 +38,5 @@
     "message": "1. Get the application URL by running these commands:",
     "severity": "info",
     "type": "log"
-  },
-  {
-    "message": "template: mychart/templates/deployment.yaml:15: executing \"mychart/templates/deployment.yaml\" at <.Values.invalid>: map has no entry for key \"invalid\"",
-    "severity": "error",
-    "type": "diagnostic"
   }
 ]

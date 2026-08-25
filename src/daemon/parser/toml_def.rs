@@ -58,6 +58,10 @@ pub struct MetaDef {
     pub detect_full: Vec<String>,
     /// "toml" (default) or "stateful"
     pub parser_type: String,
+    /// Execution route: `structured` (default) or `fast` for explicitly
+    /// read-only inspection assets.
+    #[serde(default = "default_route")]
+    pub route: String,
     pub priority: u32,
     pub min_version: Option<String>,
     pub max_version: Option<String>,
@@ -77,6 +81,10 @@ pub struct MetaDef {
 
 fn default_schema_version() -> String {
     "1.0".into()
+}
+
+fn default_route() -> String {
+    "structured".into()
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -324,10 +332,14 @@ mod tests {
     #[test]
     fn parse_all_builtins() {
         let builtins = load_builtins();
-        assert_eq!(builtins.len(), 37, "expected 37 builtin parsers");
+        assert_eq!(builtins.len(), 38, "expected 38 builtin parser assets");
 
         for (name, def) in &builtins {
             assert!(!def.meta.name.is_empty(), "parser '{}' has empty name", name);
+            if def.meta.route == "fast" {
+                // Route-only assets intentionally carry no line patterns.
+                continue;
+            }
             assert!(!def.patterns.is_empty(), "parser '{}' has no patterns", name);
         }
     }

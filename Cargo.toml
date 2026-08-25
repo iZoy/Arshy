@@ -1,8 +1,8 @@
 [package]
 name = "arshy"
-version = "0.0.1"
+version = "0.1.0-dev.1"
 edition = "2021"
-description = "AI Agent's structured execution layer — structured output, security sandbox, MCP server"
+description = "A local structured command-execution and diagnostics layer for AI agents over MCP"
 license = "MIT"
 repository = "https://github.com/iZoy/Arshy"
 homepage = "https://github.com/iZoy/Arshy"

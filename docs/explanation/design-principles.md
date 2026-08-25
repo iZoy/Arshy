@@ -23,7 +23,7 @@ Changed files:
 
 全量事件**不随响应发送**：内联事件按结果裁剪（失败 ≤20 条 error，成功 ≤5 条 warning/info），超出部分返回 `events_truncated` 与 `events_hint`（"Call arshy_query(task_id:...) for the rest"）。`arshy_query` 就是 lazy pull 的通道：想看单任务详情、跨任务搜索执行记忆、按 severity/code/file 过滤，都是按需查询。MCP 指令文本甚至直接告诉 agent："Don't manage task IDs or poll."——默认路径不需要任何额外动作。
 
-工具定义本身也遵守这条准则：MCP 只暴露两个工具（`arshy_exec` + `arshy_query`），注释写明"2-tool model ... Reduces ~60% tool definition tokens and improves agent selection accuracy"。工具定义是每次握手都要传输的固定开销，工具越少，上下文越省。
+工具定义本身也遵守这条准则，但“工具少”不是唯一目标。MCP 暴露三个单一职责工具：`arshy_exec`、`arshy_query` 与 `arshy_task`。这比把执行、切目录、取消、列表、tail、raw、subscribe 全塞进一个条件 schema 更薄：高频执行工具不携带低频运维字段，模型也不必先选工具、再猜 action 与字段组合。工具定义仍有固定字符预算测试，防止握手表面无界增长。
 
 ### 准则 2：不重复 LLM 常识
 
@@ -80,7 +80,7 @@ arshy **不合成 cause/fix/retry 提示**。曾经存在的 HintDb（错误码 
 
 安全不是开关，而是执行路径的固有部分（详见 security-model）。最有力的证据在短路径上：`run_short` 跳过了 store、解析器与事件总线——这三个都被视为"可选增强"——但**限速、命令过滤、路径沙箱与审计一条都不跳过**。也就是说，性能优化可以牺牲结构化，不能牺牲安全。
 
-另一条证据是配置校验：`sandbox_mode` 只接受 `none` 或 `workspace`，守护进程启动时校验，非法值直接拒绝启动（fail-closed，而不是 warn 后放行）。
+另一条证据是配置校验：`security.allowed_cwds` 的路径无法解析或越界时直接拒绝执行（fail-closed，而不是 warn 后放行）。
 
 ## 数据驱动：用 fixture 与 benchmark 说话
 

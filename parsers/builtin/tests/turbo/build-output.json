@@ -24,6 +24,11 @@
     "type": "log"
   },
   {
+    "message": "in src/app.tsx",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
     "message": "Tasks:  2 successful",
     "severity": "info",
     "type": "summary"
@@ -32,10 +37,5 @@
     "message": " Cache:  65.0%",
     "severity": "info",
     "type": "summary"
-  },
-  {
-    "message": "in src/app.tsx",
-    "severity": "error",
-    "type": "diagnostic"
   }
 ]

@@ -1,10 +1,10 @@
 # Parser 参考
 
-> 本文档依据 `parsers/builtin/*.toml`（37 个）、`src/daemon/parser/toml_def.rs`、`src/daemon/parser/registry.rs`、`src/daemon/parser/mod.rs` 核对（arshy 0.2.0）。内置 parser 经 `rust-embed` 编译进二进制，`./target/debug/arshy parser list` 的现状见文末说明。
+> 本文档依据 `parsers/builtin/*.toml`（38 个）、`src/daemon/parser/toml_def.rs`、`src/daemon/parser/registry.rs`、`src/daemon/parser/mod.rs` 核对（arshy v0.1.0-dev.1）。内置 parser 经 `rust-embed` 编译进二进制，另有 `raw` fallback，因此运行时默认显示 39 个条目。
 
 ## 内置 Parser 清单
 
-37 个内置 parser（`parsers/builtin/<name>.toml`）。检测匹配的是命令**前缀**（大小写不敏感，`starts_with`），路径式调用按 basename 匹配。
+38 个内置 parser（`parsers/builtin/<name>.toml`）。检测匹配的是命令**前缀**（大小写不敏感，`starts_with`），路径式调用按 basename 匹配；`route = "fast"` 的资产只负责明确的只读检查快路径。
 
 | 名称 | 类型 | priority | detect（首词前缀） | detect_full | 用途（description） | 模式数 |
 |---|---|---|---|---|---|---|
@@ -24,6 +24,7 @@
 | `go` | toml | 50 | `go` | — | Go compiler and test runner | 4 |
 | `gradle` | toml | 50 | `gradle`, `gradlew` | — | Gradle build tool | 4 |
 | `helm` | toml | 50 | `helm` | — | Helm Kubernetes package manager | 5 |
+| `inspection` | toml | 1000 | `git`, `ls`, `pwd`, `echo` 等 | `git status/log/diff/show` | 只读检查命令快路径路由（无结构化事件） | 0 |
 | `jest` | toml | 50 | `jest`, `vitest` | — | Jest / Vitest test runner | 7 |
 | `kubectl` | toml | 50 | `kubectl` | — | kubectl Kubernetes CLI | 6 |
 | `make` | toml | 50 | `make` | — | GNU Make build tool | 4 |
@@ -166,13 +167,13 @@ stateful 模式（`to_stateful_pattern`）只使用 `message`/`file`/`line` 捕�
 
 - 加载 deprecated parser 时打印 `builtin parser 'curl' is deprecated`（元数据不再指向不存在的替代 parser）；
 - registry 记录每 parser 的 `deprecated_count`（当前 3 个模式），reload diff 会报告计数变化；
-- 全部 37 个文件的 `since_version` 均为空；`schema_version` 统一为 `"1.0"`（`aws`/`docker`/`kubectl` 显式写出，其余缺省，代码默认 `"1.0"`）。
+- 全部 38 个文件的 `since_version` 均为空；`schema_version` 统一为 `"1.0"`（`aws`/`docker`/`kubectl` 显式写出，其余缺省，代码默认 `"1.0"`）。
 
 ## 检测算法（`registry.rs` detect）
 
 1. 命令小写化；取首词 basename（`./node_modules/.bin/tsc` → `tsc`）；
-2. Pass 1：按 priority 遍历注册表（raw 跳过），先 `detect_full`（对全命令 `starts_with`），再 `detect`（对首词 `starts_with`）；首个命中返回；
-3. Pass 2：命令含 `&&`/`||`/`;` 时按段拆分，对每段重复 Pass 1（跳过与首段相同的名字）；
+2. 按 priority 遍历注册表（raw 跳过），先尝试 `detect_full`（对全命令 `starts_with`），再尝试 `detect`（对首词 `starts_with`）；结构化 parser 优先于 `route = "fast"` 资产；
+3. 命令含 `&&`/`||`/`;` 时按段拆分并重复检测，优先返回任一结构化命中，只有没有结构化命中时才返回 fast 路由；
 4. 未命中返回 `None` → 会话退化为纯 raw/log 管线（crash + heuristic 仍生效）。
 
 版本约束：`min_version`/`max_version` 存在时，对探测到的工具版本做 semver 含端点判断（`detect.rs` version_satisfies），不满足则不选用该 parser。
@@ -194,7 +195,7 @@ stateful 模式（`to_stateful_pattern`）只使用 `message`/`file`/`line` 捕�
 
 - 目录：`parsers/builtin/tests/<tool>/`（目录名对应 TOML 文件名：`docker.toml` → `tests/docker/`）；
 - 每 fixture 一对文件：`<name>.txt`（输入）与 `<name>.json`（期望输出，TaskEvent 数组）；
-- 当前共 **49 对 fixture**，37 个 parser 每者至少 1 对（如 `cargo` 4 对、`python` 3 对、`curl`/`eslint`/`kubectl`/`aws`/`git`/`cargo-test` 各 2 对，其余如 `docker`/`tsc`/`npm` 等各 1 对）；
+- 当前共 **49 对 fixture**，38 个 parser 中有结构化输出的 parser 每者至少 1 对（如 `cargo` 4 对、`python` 3 对、`curl`/`eslint`/`kubectl`/`aws`/`git`/`cargo-test` 各 2 对，其余如 `docker`/`tsc`/`npm` 等各 1 对）；`inspection` 是纯路由资产，不产生 parser 事件，因此不设 fixture；
 - 生成/校验：`ARSHY_BLESS=1 cargo test --bin arshyd` 自动生成期望 JSON；fixture 测试验证 ≥95% 字段准确率（type、severity、code、file、line）；
 - 添加 parser 流程：新建 `parsers/builtin/<tool>.toml` → 建 fixture 目录与 `.txt` 输入 → bless 生成 `.json` → 验证测试通过。
 

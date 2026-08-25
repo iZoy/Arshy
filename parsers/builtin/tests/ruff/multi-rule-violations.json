@@ -32,16 +32,16 @@
     "type": "diagnostic"
   },
   {
-    "message": "Found 5 errors.",
-    "severity": "error",
-    "type": "summary"
-  },
-  {
     "code": "F841",
     "file": "src/api/client.py",
     "line": 55,
     "message": "Local variable `result` is assigned to but never used",
     "severity": "error",
     "type": "diagnostic"
+  },
+  {
+    "message": "Found 5 errors.",
+    "severity": "error",
+    "type": "summary"
   }
 ]

@@ -1,5 +1,11 @@
 [
   {
+    "code": "200",
+    "message": "OK",
+    "severity": "info",
+    "type": "diagnostic"
+  },
+  {
     "code": "Content-Type",
     "message": "application/json; charset=utf-8",
     "severity": "info",
@@ -38,8 +44,8 @@
     "type": "log"
   },
   {
-    "code": "200",
-    "message": "OK",
+    "code": "404",
+    "message": "",
     "severity": "info",
     "type": "diagnostic"
   },
@@ -48,12 +54,6 @@
     "message": "text/plain",
     "severity": "info",
     "type": "data"
-  },
-  {
-    "code": "404",
-    "message": "",
-    "severity": "info",
-    "type": "diagnostic"
   },
   {
     "message": "Failed to connect to example.com port 443: Connection refused",

@@ -13,6 +13,14 @@
     "type": "diagnostic"
   },
   {
+    "code": "2339",
+    "file": "src/utils.ts",
+    "line": 42,
+    "message": "Property 'fnd' does not exist on type 'Array<any>'.",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
     "message": "should add two numbers",
     "severity": "info",
     "type": "test_result"
@@ -41,13 +49,5 @@
     "message": "installed 35 packages",
     "severity": "info",
     "type": "summary"
-  },
-  {
-    "code": "2339",
-    "file": "src/utils.ts",
-    "line": 42,
-    "message": "Property 'fnd' does not exist on type 'Array<any>'.",
-    "severity": "error",
-    "type": "diagnostic"
   }
 ]

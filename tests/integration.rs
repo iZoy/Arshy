@@ -269,7 +269,7 @@ fn kill_stops_async_task() {
     let task_id = run["result"]["task_id"].as_str().expect("task_id").to_string();
 
     let killed = daemon.rpc(2, "task/kill", serde_json::json!({ "task_id": task_id }));
-    assert_eq!(killed["result"]["status"], "killed");
+    assert_eq!(killed["result"]["status"], "cancelling");
 
     // The store update lands asynchronously — poll until it is visible.
     let deadline = Instant::now() + Duration::from_secs(5);
@@ -317,9 +317,9 @@ fn daemon_status_reports_parser_count() {
 
 #[test]
 #[serial]
-fn daemon_starts_in_workspace_sandbox() {
-    // sandbox_mode=workspace is a supported value (daemon validates none/workspace).
-    let daemon = TestDaemon::spawn_with_env(&[("ARSHY_DAEMON_SANDBOX_MODE", "workspace")]);
+fn daemon_starts_with_directory_guard_configured() {
+    // The directory guard is optional and does not claim OS-level isolation.
+    let daemon = TestDaemon::spawn_with_env(&[("ARSHY_SECURITY_ALLOWED_CWDS", "/tmp")]);
     let resp = daemon.rpc(1, "daemon/health", serde_json::json!({}));
     assert!(resp["result"].is_object(), "workspace daemon must answer health");
 }
@@ -352,7 +352,7 @@ fn tail_raw_returns_stored_output() {
 
 #[test]
 #[serial]
-fn mcp_proxy_raw_action_returns_original_output_and_zero_event_hint() {
+fn mcp_proxy_task_raw_returns_original_output_and_zero_event_hint() {
     let daemon = TestDaemon::spawn();
     let (mut child, mut reader) = spawn_proxy(&daemon);
     let mut writer = ProxyWriter(child.stdin.take().expect("proxy stdin"));
@@ -378,7 +378,6 @@ fn mcp_proxy_raw_action_returns_original_output_and_zero_event_hint() {
             "params": {
                 "name": "arshy_exec",
                 "arguments": {
-                    "action": "run",
                     "command": "sh -c 'echo raw-output-marker-line; exit 1'",
                     "mode": "sync"
                 }
@@ -392,7 +391,7 @@ fn mcp_proxy_raw_action_returns_original_output_and_zero_event_hint() {
         "zero-event runs must hint at the raw channel: {content}"
     );
 
-    // action=raw returns the original output as content text.
+    // arshy_task raw returns the original output as content text.
     let raw = send_mcp(
         &mut reader,
         &mut writer,
@@ -402,7 +401,7 @@ fn mcp_proxy_raw_action_returns_original_output_and_zero_event_hint() {
             "id": 3,
             "method": "tools/call",
             "params": {
-                "name": "arshy_exec",
+                "name": "arshy_task",
                 "arguments": { "action": "raw", "task_id": task_id, "lines": 10 }
             }
         }),
@@ -410,7 +409,7 @@ fn mcp_proxy_raw_action_returns_original_output_and_zero_event_hint() {
     let raw_text = raw["result"]["content"][0]["text"].as_str().unwrap_or("");
     assert!(
         raw_text.contains("raw-output-marker-line"),
-        "action=raw must return the original output, got: {raw_text}"
+        "arshy_task raw must return the original output, got: {raw_text}"
     );
     assert_eq!(raw["result"]["task_id"], task_id);
 
@@ -425,7 +424,7 @@ fn e2e_cli_default_cwd_injected_when_missing() {
     // request to the daemon must carry cwd=$PWD. Otherwise
     // compute_enhanced_project_context falls back to the daemon's own cwd
     // (typically arshy source repo) and leaks unrelated git diff stat into
-    // agent_delivered_bytes.
+    // analytics counters.
     //
     // We spawn the actual CLI binary as a child process so the env::current_dir()
     // path is exercised end-to-end. The CLI talks to the daemon via IPC,
@@ -492,28 +491,21 @@ fn shutdown_exits_daemon_cleanly() {
     }
 }
 
-// ── Phase A (Q-2): token-savings honesty contract ───────────────────────────
+// ── Analytics contract ─────────────────────────────────────────────────────
 
 #[test]
 #[serial]
-fn e2e_savings_basis_none_on_empty_daemon() {
-    // Honest contract: an empty daemon must report savings_basis = "none",
-    // not 0%, and no raw bytes leaked. Guards against accidental fallback
-    // inflation at startup.
+fn e2e_efficiency_report_is_explicit_on_empty_daemon() {
     let daemon = TestDaemon::spawn();
     let resp = daemon.rpc(1, "daemon/stats", serde_json::json!({}));
-    assert_eq!(resp["result"]["savings_basis"].as_str(), Some("none"));
+    assert_eq!(resp["result"]["efficiency"]["schema_version"].as_str(), Some("quality-v1"));
+    assert!(resp["result"]["efficiency"].get("score").is_none());
     assert!(resp["result"]["total_raw_output_bytes"].is_null());
-    assert!(resp["result"]["total_agent_delivered_bytes"].is_null());
-    assert!(resp["result"]["savings_fallback_task_count"].is_null());
 }
 
 #[test]
 #[serial]
-fn e2e_savings_basis_measured_for_short_command() {
-    // A short command goes through the zero-overhead path: raw_output is
-    // returned directly, no events are stored, so no fallback can fire.
-    // savings_basis must be "measured".
+fn e2e_efficiency_excludes_short_command_without_structured_events() {
     let daemon = TestDaemon::spawn();
     daemon.rpc(
         1,
@@ -521,31 +513,12 @@ fn e2e_savings_basis_measured_for_short_command() {
         serde_json::json!({ "command": "echo short-honesty-probe", "mode": "auto" }),
     );
     let resp = daemon.rpc(2, "daemon/stats", serde_json::json!({}));
-    let basis = resp["result"]["savings_basis"].as_str();
-    assert!(
-        basis == Some("measured") || basis == Some("none"),
-        "short-command basis must be measured or none, got {:?}",
-        basis
-    );
-    // Either no raw bytes (and basis=none) or measured.
-    if resp["result"]["total_raw_output_bytes"].is_number() {
-        assert_eq!(basis, Some("measured"));
-        assert_eq!(
-            resp["result"]["savings_fallback_task_count"],
-            serde_json::Value::Null,
-            "short-command task must not trigger 10% fallback"
-        );
-    }
+    assert_eq!(resp["result"]["efficiency"]["schema_version"].as_str(), Some("quality-v1"));
 }
 
 #[test]
 #[serial]
-fn e2e_savings_basis_explicit_for_long_command() {
-    // A long command that emits structured events must surface the
-    // savings_basis field explicitly. We accept either "measured" (the
-    // enrichment path wrote agent_delivered_bytes) or "estimated" (the
-    // fallback fired) — but the field must be present and the fallback
-    // counter must be self-consistent.
+fn e2e_efficiency_report_has_components_for_long_command() {
     let daemon = TestDaemon::spawn();
     daemon.rpc(
         1,
@@ -556,38 +529,21 @@ fn e2e_savings_basis_explicit_for_long_command() {
         }),
     );
     let resp = daemon.rpc(2, "daemon/stats", serde_json::json!({}));
-    let basis = resp["result"]["savings_basis"].as_str();
-    assert!(
-        basis == Some("measured") || basis == Some("estimated"),
-        "long-command basis must be measured or estimated, got {:?}",
-        basis
-    );
-    let fallback_count = resp["result"]["savings_fallback_task_count"].as_u64().unwrap_or(0);
-    if basis == Some("estimated") {
-        assert!(
-            fallback_count >= 1,
-            "estimated basis must report fallback_task_count >= 1, got {fallback_count}"
-        );
-    } else {
-        assert_eq!(
-            fallback_count, 0,
-            "measured basis must report fallback_task_count == 0, got {fallback_count}"
-        );
-    }
+    assert_eq!(resp["result"]["efficiency"]["schema_version"].as_str(), Some("quality-v1"));
+    assert!(resp["result"]["efficiency"]["components"].is_object());
+    assert!(resp["result"]["efficiency"]["counters"].is_object());
 }
 
 #[test]
 #[serial]
-fn e2e_analyze_pretty_omits_token_efficiency() {
-    // Phase A (Q-2): the user-facing analyze pretty output must NOT surface
-    // token savings. Internally we still compute and return it via JSON.
+fn e2e_analyze_returns_versioned_efficiency_only() {
     let daemon = TestDaemon::spawn();
     // Run a binary that exercises analyze rendering directly via the CLI.
     // We assert by reading the JSON output instead of pretty output, then
     // verify the pretty printer omits the section by shelling out.
     let resp = daemon.rpc(1, "daemon/stats", serde_json::json!({}));
-    // Even if basis is "none" here, the field must be present in JSON.
-    assert!(resp["result"].get("savings_basis").is_some(), "savings_basis must be in JSON");
+    assert_eq!(resp["result"]["efficiency"]["schema_version"].as_str(), Some("quality-v1"));
+    assert!(resp["result"].get("token_efficiency").is_none());
 }
 
 // ── MCP proxy end-to-end ────────────────────────────────────────────────────
@@ -605,7 +561,8 @@ impl Write for ProxyWriter {
 
 fn spawn_proxy(daemon: &TestDaemon) -> (Child, BufReader<std::process::ChildStdout>) {
     let mut child = Command::new(arshy_binary())
-        .arg("--from-mcp")
+        .arg("mcp")
+        .arg("serve")
         .env("ARSHY_DAEMON_SOCKET_PATH", &daemon.socket)
         .env("ARSHY_STORE_STORE_DIR", daemon._tmp.path().join("store"))
         .env("ARSHY_DAEMON_LOG_LEVEL", "error")
@@ -613,7 +570,7 @@ fn spawn_proxy(daemon: &TestDaemon) -> (Child, BufReader<std::process::ChildStdo
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
-        .expect("failed to spawn arshy --from-mcp");
+        .expect("failed to spawn arshy mcp serve");
     let stdout = child.stdout.take().expect("proxy stdout");
     (child, BufReader::new(stdout))
 }
@@ -622,6 +579,15 @@ fn send_mcp(
     reader: &mut BufReader<std::process::ChildStdout>,
     writer: &mut ProxyWriter,
     id: u64,
+    value: serde_json::Value,
+) -> serde_json::Value {
+    send_mcp_id(reader, writer, &serde_json::json!(id), value)
+}
+
+fn send_mcp_id(
+    reader: &mut BufReader<std::process::ChildStdout>,
+    writer: &mut ProxyWriter,
+    id: &serde_json::Value,
     value: serde_json::Value,
 ) -> serde_json::Value {
     writeln!(writer, "{value}").expect("write mcp line");
@@ -634,7 +600,7 @@ fn send_mcp(
         }
         let value: serde_json::Value = serde_json::from_str(line.trim())
             .unwrap_or_else(|e| panic!("invalid JSON from proxy: {e}\n{line}"));
-        if value.get("id").and_then(|v| v.as_u64()) == Some(id) {
+        if value.get("id") == Some(id) {
             return value;
         }
     }
@@ -680,6 +646,55 @@ fn mcp_proxy_initialize_negotiates_protocol_version() {
 
 #[test]
 #[serial]
+fn mcp_proxy_preserves_string_request_ids() {
+    let daemon = TestDaemon::spawn();
+    let (mut child, mut reader) = spawn_proxy(&daemon);
+    let mut writer = ProxyWriter(child.stdin.take().expect("proxy stdin"));
+    let id = serde_json::json!("client-request-7");
+
+    let response = send_mcp_id(
+        &mut reader,
+        &mut writer,
+        &id,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "ping",
+            "params": {}
+        }),
+    );
+    assert_eq!(response["id"], "client-request-7");
+    assert!(response["result"].is_object());
+    let _ = child.kill();
+}
+
+#[test]
+#[serial]
+fn mcp_proxy_survives_a_malformed_json_line() {
+    let daemon = TestDaemon::spawn();
+    let (mut child, mut reader) = spawn_proxy(&daemon);
+    let mut writer = ProxyWriter(child.stdin.take().expect("proxy stdin"));
+
+    writeln!(writer, "{{not-json").unwrap();
+    writer.flush().unwrap();
+    let mut error_line = String::new();
+    reader.read_line(&mut error_line).unwrap();
+    let error: serde_json::Value = serde_json::from_str(error_line.trim()).unwrap();
+    assert_eq!(error["error"]["code"], -32700);
+    assert!(error["id"].is_null());
+
+    let response = send_mcp(
+        &mut reader,
+        &mut writer,
+        9,
+        serde_json::json!({"jsonrpc":"2.0","id":9,"method":"ping","params":{}}),
+    );
+    assert_eq!(response["id"], 9);
+    let _ = child.kill();
+}
+
+#[test]
+#[serial]
 fn mcp_proxy_tool_calls_run_and_query() {
     let daemon = TestDaemon::spawn();
     let (mut child, mut reader) = spawn_proxy(&daemon);
@@ -706,7 +721,6 @@ fn mcp_proxy_tool_calls_run_and_query() {
             "params": {
                 "name": "arshy_exec",
                 "arguments": {
-                    "action": "run",
                     "command": "sh -c 'echo \"error: proxy-e2e\" >&2; exit 1'",
                     "mode": "sync"
                 }
@@ -735,8 +749,63 @@ fn mcp_proxy_tool_calls_run_and_query() {
     );
     assert!(query["result"]["total"].as_u64().unwrap_or(0) >= 1);
 
+    // Low-frequency lifecycle operations use the separate arshy_task tool.
+    let list = send_mcp(
+        &mut reader,
+        &mut writer,
+        4,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 4,
+            "method": "tools/call",
+            "params": {
+                "name": "arshy_task",
+                "arguments": { "action": "list", "limit": 10 }
+            }
+        }),
+    );
+    let tasks = list["result"]["tasks"].as_array().cloned().unwrap_or_default();
+    assert!(tasks.iter().any(|task| task["task_id"] == run["result"]["task_id"]));
+
     let _ = child.kill();
     let _ = child.wait();
+}
+
+#[test]
+#[serial]
+fn mcp_replay_keys_are_scoped_to_proxy_session() {
+    // MCP request ids are only session-scoped. Two fresh proxies commonly
+    // both start at id=2; their commands must not collide in the daemon's
+    // replay cache.
+    for command in ["echo session-one", "echo session-two"] {
+        let daemon = TestDaemon::spawn();
+        let (mut child, mut reader) = spawn_proxy(&daemon);
+        let mut writer = ProxyWriter(child.stdin.take().expect("proxy stdin"));
+
+        send_mcp(
+            &mut reader,
+            &mut writer,
+            1,
+            serde_json::json!({
+                "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": { "capabilities": {} }
+            }),
+        );
+        let run = send_mcp(
+            &mut reader,
+            &mut writer,
+            2,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": { "name": "arshy_exec", "arguments": { "command": command } }
+            }),
+        );
+        assert_eq!(run["result"]["content"][0]["text"], command.strip_prefix("echo ").unwrap());
+
+        let _ = child.kill();
+        let _ = child.wait();
+    }
 }
 
 // ── Phase B: cross-ecosystem real-command e2e ───────────────────────────────
@@ -908,9 +977,7 @@ fn e2e_ecosystem_rustc_compile_failure_produces_structured_events() {
 #[serial]
 fn e2e_ecosystem_metrics_snapshot_after_cross_ecosystem_workload() {
     // Runs a battery of mainstream ecosystem failures and asserts that the
-    // final stats snapshot has savings_basis explicitly set. This is the
-    // strongest cross-ecosystem honesty contract: the metric must always be
-    // self-describing, never silently 0 or 100%.
+    // final stats snapshot has a self-describing component-only quality report.
     let daemon = TestDaemon::spawn();
     let mut id = 1u64;
 
@@ -951,20 +1018,10 @@ fn e2e_ecosystem_metrics_snapshot_after_cross_ecosystem_workload() {
         );
     }
 
-    // Now ask the daemon for stats — savings_basis must be self-describing.
+    // Now ask the daemon for stats — quality-v1 must be self-describing.
     let resp = daemon.rpc(id, "daemon/stats", serde_json::json!({}));
-    let basis = resp["result"]["savings_basis"].as_str();
-    assert!(
-        basis == Some("measured") || basis == Some("estimated"),
-        "after cross-ecosystem workload savings_basis must be measured or estimated, got {:?}",
-        basis
-    );
-    let fallback = resp["result"]["savings_fallback_task_count"].clone();
-    assert!(
-        fallback.is_number() || fallback.is_null(),
-        "savings_fallback_task_count must be number or null, got {:?}",
-        fallback
-    );
+    assert_eq!(resp["result"]["efficiency"]["schema_version"].as_str(), Some("quality-v1"));
+    assert!(resp["result"]["efficiency"]["components"].is_object());
 }
 
 // ── In-process config loading ───────────────────────────────────────────────

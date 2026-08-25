@@ -7,6 +7,13 @@
     "type": "diagnostic"
   },
   {
+    "file": "Main.java",
+    "line": 10,
+    "message": "unused import",
+    "severity": "warning",
+    "type": "diagnostic"
+  },
+  {
     "message": "FAILURE: Build failed with an exception.",
     "severity": "error",
     "type": "summary"
@@ -15,12 +22,5 @@
     "message": "BUILD SUCCESSFUL in 5s",
     "severity": "info",
     "type": "summary"
-  },
-  {
-    "file": "Main.java",
-    "line": 10,
-    "message": "unused import",
-    "severity": "warning",
-    "type": "diagnostic"
   }
 ]

@@ -6,9 +6,9 @@ use crate::Result;
 fn update_event_metrics(metrics: &mut super::TaskMetrics, event: &TaskEvent, json_bytes: u64) {
     metrics.structured_events_bytes += json_bytes;
     if event.event_type == "log" {
-        metrics.agent_skipped_events += 1;
+        metrics.skipped_noise_events += 1;
     } else {
-        metrics.agent_visible_events += 1;
+        metrics.visible_events += 1;
     }
     if event.location.is_some() {
         metrics.locations_extracted += 1;
@@ -46,7 +46,7 @@ impl super::Store {
         Ok(())
     }
 
-    /// Merge enriched events into the task's event file.
+    /// Merge source-context-enriched events into the task's event file.
     ///
     /// Uses seq-based replacement: reads existing events, replaces matching seqs
     /// with enriched versions, and atomically rewrites the file.
@@ -56,6 +56,13 @@ impl super::Store {
         // Build a lookup of enriched events by seq
         let enriched_map: std::collections::HashMap<u64, &TaskEvent> =
             enriched.iter().map(|e| (e.seq, e)).collect();
+
+        // Close the append handle before replacing the file atomically. The
+        // next event append will reopen the renamed path.
+        self.event_files
+            .lock()
+            .map_err(|_| crate::ArshyError::Other("event file mutex poisoned".into()))?
+            .remove(task_id);
 
         // All file I/O under mutex to prevent TOCTOU race with insert_event
         let mut tasks = self.lock();
@@ -109,8 +116,8 @@ impl super::Store {
 
         let super::TaskMetrics {
             structured_events_bytes,
-            agent_visible_events,
-            agent_skipped_events,
+            visible_events,
+            skipped_noise_events,
             locations_extracted,
             codes_extracted,
             contexts_enriched,
@@ -133,8 +140,8 @@ impl super::Store {
             record.task.error_count =
                 all_events.iter().filter(|e| e.severity.as_deref() == Some("error")).count() as u64;
             record.metrics.structured_events_bytes = structured_events_bytes;
-            record.metrics.agent_visible_events = agent_visible_events;
-            record.metrics.agent_skipped_events = agent_skipped_events;
+            record.metrics.visible_events = visible_events;
+            record.metrics.skipped_noise_events = skipped_noise_events;
             record.metrics.locations_extracted = locations_extracted;
             record.metrics.codes_extracted = codes_extracted;
             record.metrics.contexts_enriched = contexts_enriched;
@@ -178,6 +185,16 @@ impl super::Store {
     /// Query a single task's events with optional filters.
     /// Returns (events, total_count).
     pub fn query_events(&self, params: &QueryParams) -> Result<(Vec<TaskEvent>, usize)> {
+        let (events, summary) = self.query_events_with_summary(params)?;
+        Ok((events, summary.total as usize))
+    }
+
+    /// Query events and return counts for the complete filtered set. This
+    /// prevents response metadata from being capped by the pagination limit.
+    pub fn query_events_with_summary(
+        &self,
+        params: &QueryParams,
+    ) -> Result<(Vec<TaskEvent>, super::EventSummary)> {
         let task_id = params.task_id.as_deref().ok_or_else(|| {
             crate::ArshyError::Ipc(
                 "task_id required for per-task query; omit it to search across all tasks".into(),
@@ -186,34 +203,35 @@ impl super::Store {
         let path = self.dir.join("events").join(format!("{}.jsonl", task_id));
 
         if !path.exists() {
-            return Ok((vec![], 0));
+            return Ok((vec![], super::EventSummary::default()));
         }
 
         let content = std::fs::read_to_string(&path)?;
-        let mut all_events: Vec<TaskEvent> = Vec::new();
-
+        let mut events = Vec::with_capacity(params.limit.min(1024));
+        let mut summary = super::EventSummary::default();
         for line in content.lines() {
             let line = line.trim();
             if line.is_empty() {
                 continue;
             }
-            match serde_json::from_str::<TaskEvent>(line) {
-                Ok(event) => all_events.push(event),
-                Err(_) => continue,
+            let Ok(event) = serde_json::from_str::<TaskEvent>(line) else {
+                continue;
+            };
+            if Self::event_matches(&event, params) {
+                let index = summary.total as usize;
+                summary.total += 1;
+                match event.severity.as_deref() {
+                    Some("error") => summary.errors += 1,
+                    Some("warning") => summary.warnings += 1,
+                    _ => {}
+                }
+                if index >= params.offset && events.len() < params.limit {
+                    events.push(event);
+                }
             }
         }
 
-        // Apply filters
-        let filtered: Vec<&TaskEvent> =
-            all_events.iter().filter(|e| Self::event_matches(e, params)).collect();
-
-        let total = filtered.len();
-
-        // Apply pagination (offset + limit)
-        let events: Vec<TaskEvent> =
-            filtered.into_iter().skip(params.offset).take(params.limit).cloned().collect();
-
-        Ok((events, total))
+        Ok((events, summary))
     }
 
     /// Search events across **all** tasks (execution-memory query).
@@ -240,7 +258,8 @@ impl super::Store {
         }
         files.sort_by(|a, b| b.0.cmp(&a.0));
 
-        let mut matches: Vec<(String, TaskEvent)> = Vec::new();
+        let mut total = 0usize;
+        let mut events = Vec::with_capacity(params.limit.min(1024));
         for (_mtime, path) in files {
             let task_id = path.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
             let content = std::fs::read_to_string(&path)?;
@@ -251,26 +270,21 @@ impl super::Store {
                 }
                 if let Ok(event) = serde_json::from_str::<TaskEvent>(line) {
                     if Self::event_matches(&event, params) {
-                        matches.push((task_id.clone(), event));
+                        if total >= params.offset && events.len() < params.limit {
+                            let mut value = serde_json::to_value(event).unwrap_or_default();
+                            if let serde_json::Value::Object(map) = &mut value {
+                                map.insert(
+                                    "task_id".to_string(),
+                                    serde_json::Value::String(task_id.clone()),
+                                );
+                            }
+                            events.push(value);
+                        }
+                        total += 1;
                     }
                 }
             }
         }
-
-        let total = matches.len();
-
-        let events: Vec<serde_json::Value> = matches
-            .into_iter()
-            .skip(params.offset)
-            .take(params.limit)
-            .map(|(task_id, event)| {
-                let mut value = serde_json::to_value(&event).unwrap_or_default();
-                if let serde_json::Value::Object(map) = &mut value {
-                    map.insert("task_id".to_string(), serde_json::Value::String(task_id));
-                }
-                value
-            })
-            .collect();
 
         Ok((events, total))
     }

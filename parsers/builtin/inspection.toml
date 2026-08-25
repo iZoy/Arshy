@@ -1,0 +1,19 @@
+[meta]
+name = "inspection"
+description = "Explicit read-only inspection route"
+detect_full = [
+  "git status",
+  "git log",
+  "git diff",
+  "git show",
+]
+detect = [
+  "echo", "cat", "ls", "ll", "dir", "pwd", "whoami", "date", "env", "printenv",
+  "uname", "hostname", "id", "groups", "tty", "head", "tail", "wc", "stat", "file",
+  "which", "whereis", "uniq", "sort", "cut", "tr", "printf", "locate", "du", "df",
+  "pgrep", "pidof", "true", "false", "test", "basename", "dirname", "realpath",
+  "readlink", "expr", "seq", "grep", "egrep", "fgrep", "rg", "ag", "sed",
+]
+parser_type = "toml"
+route = "fast"
+priority = 1000

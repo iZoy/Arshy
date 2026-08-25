@@ -94,7 +94,17 @@ async fn test_executor_timeout() {
         .with_config(ExecutorConfig { max_task_duration_ms: 500, ..Default::default() });
 
     let result = executor
-        .run("sleep 60", None, Some(500), "async", None, None, false, None, None)
+        .run(
+            "echo before-timeout; sleep 60",
+            None,
+            Some(500),
+            "async",
+            None,
+            None,
+            false,
+            None,
+            None,
+        )
         .await
         .unwrap();
 
@@ -107,6 +117,24 @@ async fn test_executor_timeout() {
         "expected Timeout or Killed, got {:?}",
         task.status
     );
+    if task.status == TaskStatus::Timeout {
+        assert_eq!(task.exit_code, Some(-2));
+    }
+    let raw = executor.tail(&result.task_id, 0, "raw").await.unwrap().join("\n");
+    assert!(raw.contains("before-timeout"), "partial output must survive timeout");
+}
+
+#[tokio::test]
+async fn requested_timeout_cannot_exceed_daemon_maximum() {
+    let (store, parser, bus, _tmp) = setup();
+    let executor = Executor::new(store, parser, bus)
+        .with_config(ExecutorConfig { max_task_duration_ms: 100, ..Default::default() });
+    let result = executor
+        .run("sleep 2", None, Some(10_000), "sync", None, None, false, None, None)
+        .await
+        .unwrap();
+    assert_eq!(result.status, TaskStatus::Timeout);
+    assert_eq!(result.exit_code, Some(-2));
 }
 
 #[tokio::test]
@@ -155,6 +183,127 @@ async fn test_executor_sync_mode_failure() {
 }
 
 #[tokio::test]
+async fn rejects_invalid_mode_and_parser_hint() {
+    let (store, parser, bus, _tmp) = setup();
+    let executor = Executor::new(store, parser, bus);
+
+    let invalid_mode = executor
+        .run("echo hi", None, None, "synx", None, None, false, None, None)
+        .await
+        .unwrap_err();
+    assert!(invalid_mode.to_string().contains("invalid execution mode"));
+
+    let invalid_hint = executor
+        .run("echo hi", None, None, "auto", Some("cargoo"), None, false, None, None)
+        .await
+        .unwrap_err();
+    assert!(invalid_hint.to_string().contains("unknown parser"));
+}
+
+#[tokio::test]
+async fn output_limits_truncate_without_deadlocking_the_child() {
+    let (store, parser, bus, _tmp) = setup();
+    let executor = Executor::new(store.clone(), parser, bus)
+        .with_config(ExecutorConfig { max_output_bytes: 64, ..Default::default() });
+
+    let structured = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        executor.run(
+            "yes noisy-output | head -n 5000",
+            None,
+            None,
+            "sync",
+            None,
+            None,
+            false,
+            None,
+            None,
+        ),
+    )
+    .await
+    .expect("output truncation must not deadlock")
+    .unwrap();
+    assert_eq!(structured.status, TaskStatus::Completed);
+    let raw = executor.tail(&structured.task_id, 0, "raw").await.unwrap().join("\n");
+    assert!(raw.len() <= 128, "captured raw output exceeded the bounded limit plus marker");
+    assert!(raw.contains("output truncated"));
+
+    let short = executor
+        .run(
+            "printf 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-extra'",
+            None,
+            None,
+            "auto",
+            None,
+            None,
+            false,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    assert!(short.short_command);
+    assert!(short.raw_output.unwrap().contains("output truncated"));
+}
+
+#[tokio::test]
+async fn spawn_failure_never_leaves_a_running_task() {
+    let (store, parser, bus, tmp) = setup();
+    let executor = Executor::new(store.clone(), parser, bus);
+    let missing = tmp.path().join("does-not-exist");
+
+    let result = executor
+        .run("echo unreachable", missing.to_str(), None, "async", None, None, false, None, None)
+        .await
+        .unwrap();
+    for _ in 0..20 {
+        if store.get_task(&result.task_id).unwrap().is_some_and(|task| task.status.is_terminal()) {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    let task = store.get_task(&result.task_id).unwrap().unwrap();
+    assert_eq!(task.status, TaskStatus::Failed);
+    assert_eq!(task.exit_code, Some(-1));
+}
+
+#[tokio::test]
+async fn concurrent_replays_execute_only_once() {
+    let (store, parser, bus, tmp) = setup();
+    let executor = Arc::new(Executor::new(store, parser, bus));
+    let cwd = tmp.path().to_str().unwrap();
+
+    let first = executor.run(
+        "printf x >> count.txt",
+        Some(cwd),
+        None,
+        "sync",
+        None,
+        None,
+        false,
+        None,
+        Some("same-session:42"),
+    );
+    let second = executor.run(
+        "printf x >> count.txt",
+        Some(cwd),
+        None,
+        "sync",
+        None,
+        None,
+        false,
+        None,
+        Some("same-session:42"),
+    );
+    let (first, second) = tokio::join!(first, second);
+    let first = first.unwrap();
+    let second = second.unwrap();
+
+    assert_eq!(first.task_id, second.task_id);
+    assert_eq!(std::fs::read_to_string(tmp.path().join("count.txt")).unwrap(), "x");
+}
+
+#[tokio::test]
 async fn test_executor_kill_graceful() {
     let (store, parser, bus, _tmp) = setup();
     let executor = Executor::new(store.clone(), parser, bus);
@@ -177,20 +326,40 @@ async fn test_executor_kill_graceful() {
     assert!(task.status == TaskStatus::Killed, "expected Killed, got {:?}", task.status);
 }
 
+#[tokio::test]
+async fn cancel_rejects_missing_and_terminal_tasks() {
+    let (store, parser, bus, _tmp) = setup();
+    let executor = Executor::new(store, parser, bus);
+    assert!(executor.kill("missing").await.unwrap_err().to_string().contains("not found"));
+
+    let result =
+        executor.run("true", None, None, "sync", None, None, false, None, None).await.unwrap();
+    let err = executor.kill(&result.task_id).await.unwrap_err();
+    assert!(err.to_string().contains("already"));
+}
+
 // ── P11: Auto mode tests ──────────────────────────────────────────────────
 
-/// is_short_command() edge cases
+fn uses_fast_path(command: &str) -> bool {
+    is_short_command(command, false)
+}
+
+fn parser_uses_structured_path(command: &str) -> bool {
+    is_short_command(command, true)
+}
+
+/// Fast-path selection edge cases.
 #[test]
 fn short_command_empty() {
-    assert!(is_short_command(""));
-    assert!(is_short_command("   "));
+    assert!(uses_fast_path(""));
+    assert!(uses_fast_path("   "));
 }
 
 #[test]
 fn short_command_under_80_chars() {
-    assert!(is_short_command("ls -la"));
-    assert!(is_short_command("echo hello world"));
-    assert!(is_short_command("git status"));
+    assert!(uses_fast_path("ls -la"));
+    assert!(uses_fast_path("echo hello world"));
+    assert!(uses_fast_path("git status"));
 }
 
 #[test]
@@ -198,90 +367,112 @@ fn short_command_over_80_chars() {
     // Inspection tools (echo, cat, etc.) bypass the 80-char limit —
     // their raw text is more useful than structured "log" events.
     let long_inspect = "echo this is a really really really really really really really long command that exceeds eighty characters easily";
-    assert!(is_short_command(long_inspect));
+    assert!(uses_fast_path(long_inspect));
     // Non-inspection commands over 80 chars are still non-short
     let long_build =
         "cargo build --manifest-path /some/really/really/really/long/path/Cargo.toml --release";
-    assert!(!is_short_command(long_build));
+    assert!(!uses_fast_path(long_build));
 }
 
 #[test]
-fn path_style_tool_invocations_are_not_short() {
-    // bin-path calls (node_modules, /usr/bin) must match by basename,
-    // otherwise tsc/eslint/... silently take the raw short path.
-    assert!(!is_short_command("./node_modules/.bin/tsc --noEmit greet.ts"));
-    assert!(!is_short_command("/usr/bin/tsc --noEmit greet.ts"));
-    assert!(!is_short_command("node_modules/.bin/eslint src/index.ts"));
-    assert!(!is_short_command("uv run --with pytest pytest -q"));
-    assert!(!is_short_command("python3 -m pytest -q"));
-    assert!(!is_short_command("tsc --noEmit greet.ts"));
+fn detected_parser_selects_structured_path() {
+    // The registry handles path-style detection. Once a parser matches, no
+    // tool-specific command list is needed in decision.rs.
+    assert!(!parser_uses_structured_path("./node_modules/.bin/tsc --noEmit greet.ts"));
+    assert!(!parser_uses_structured_path("/usr/bin/tsc --noEmit greet.ts"));
+    assert!(!parser_uses_structured_path("node_modules/.bin/eslint src/index.ts"));
+    assert!(!parser_uses_structured_path("uv run --with pytest pytest -q"));
+    assert!(!parser_uses_structured_path("python3 -m pytest -q"));
+    assert!(!parser_uses_structured_path("a-new-parser-tool"));
 }
 
 #[test]
 fn short_command_has_pipe() {
     // Simple pipes are now allowed as short commands
-    assert!(is_short_command("ls -la | grep foo"));
-    assert!(is_short_command("cat file.txt | head -5"));
+    assert!(uses_fast_path("ls -la | grep foo"));
+    assert!(uses_fast_path("cat file.txt | head -5"));
     // Multi-pipe text-processing chains with inspection tools → short
-    assert!(is_short_command("cat file | sort | uniq | head -n 20"));
+    assert!(uses_fast_path("cat file | sort | uniq | head -n 20"));
     // Non-inspection tools with many pipes → still non-short
-    assert!(!is_short_command("cargo build | grep error | wc -l"));
+    assert!(!parser_uses_structured_path("cargo build | grep error | wc -l"));
+    assert!(!parser_uses_structured_path("cat Cargo.toml | cargo metadata"));
+    assert!(!uses_fast_path("echo payload | sh"));
 }
 
 #[test]
 fn short_command_has_redirect() {
-    assert!(!is_short_command("echo hello >> out.txt"));
+    assert!(!uses_fast_path("echo hello >> out.txt"));
 }
 
 #[test]
 fn short_command_has_chaining() {
-    assert!(!is_short_command("make build && make test"));
-    assert!(!is_short_command("cd dir || exit 1"));
+    assert!(!uses_fast_path("make build && make test"));
+    assert!(!uses_fast_path("cd dir || exit 1"));
+    assert!(uses_fast_path("echo one; echo two"));
+    assert!(uses_fast_path("sed -n '1,2p' file | head"));
+    assert!(!uses_fast_path("sed -i.bak 's/a/b/' file"));
 }
 
 #[test]
 fn short_command_has_background() {
-    assert!(!is_short_command("npm run dev &"));
+    assert!(!uses_fast_path("npm run dev &"));
 }
 
 #[test]
 fn short_command_too_many_words() {
-    assert!(!is_short_command("one two three four five six"));
+    assert!(!uses_fast_path("one two three four five six"));
 }
 
 #[test]
 fn short_command_long_flag_detected() {
-    assert!(!is_short_command("cargo watch --watch src/"));
-    assert!(!is_short_command("tail -f /var/log/system.log"));
-    assert!(!is_short_command("python -m http.server 8080"));
+    assert!(!uses_fast_path("cargo watch --watch src/"));
+    assert!(!uses_fast_path("tail -f /var/log/system.log"));
+    assert!(!uses_fast_path("python -m http.server 8080"));
 }
 
 #[test]
 fn short_command_daemon_flag() {
-    assert!(!is_short_command("nginx daemon off"));
+    assert!(!uses_fast_path("nginx daemon off"));
 }
 
 #[test]
-fn short_command_long_output_prefixes() {
-    // Build/test commands always produce substantial output
-    assert!(!is_short_command("cargo test"));
-    assert!(!is_short_command("cargo build"));
-    assert!(!is_short_command("cargo clippy"));
-    assert!(!is_short_command("npm test"));
-    assert!(!is_short_command("npm run build"));
-    assert!(!is_short_command("yarn test"));
-    assert!(!is_short_command("go test ./..."));
-    assert!(!is_short_command("go build"));
-    assert!(!is_short_command("make"));
-    assert!(!is_short_command("make test"));
-    assert!(!is_short_command("pytest"));
-    assert!(!is_short_command("pip install requests"));
-    assert!(!is_short_command("docker build ."));
-    // Simple commands that don't produce much output should still be short
-    assert!(is_short_command("ls"));
-    assert!(is_short_command("echo hello"));
-    assert!(is_short_command("git status"));
-    assert!(is_short_command("pwd"));
+fn parser_assets_replace_hard_coded_build_tool_prefixes() {
+    for command in [
+        "cargo test",
+        "cargo build",
+        "cargo clippy",
+        "npm test",
+        "npm run build",
+        "yarn test",
+        "go test ./...",
+        "go build",
+        "make",
+        "make test",
+        "pytest",
+        "pip install requests",
+        "docker build .",
+    ] {
+        assert!(!parser_uses_structured_path(command), "{command}");
+    }
+
+    // Read-only inspection remains raw even if a broad parser (for example
+    // git) also recognizes the tool.
+    assert!(super::decision::is_short_command_with_route("ls", true, Some("fast")));
+    assert!(super::decision::is_short_command_with_route("echo hello", true, Some("fast")));
+    assert!(super::decision::is_short_command_with_route("git status", true, Some("fast")));
+    assert!(super::decision::is_short_command_with_route("pwd", true, Some("fast")));
+    assert!(!is_short_command("git commit -m test", true));
+    assert!(!is_short_command("git branch new-feature", true));
+    assert!(!is_short_command("git tag v1", true));
+    assert!(!is_short_command("git config user.name test", true));
+}
+
+#[test]
+fn quoted_shell_syntax_is_data_not_lifecycle() {
+    assert!(uses_fast_path("echo 'a > b; cargo build'"));
+    assert!(uses_fast_path("rg 'curl.*\\| sh' src"));
+    assert!(uses_fast_path("echo dev"));
+    assert!(!uses_fast_path("echo ok > out.txt"));
 }
 
 /// Auto mode with a short command returns raw_output + short_command flag.
@@ -414,10 +605,7 @@ async fn parse_hint_json_forces_structured_path() {
         .await
         .unwrap();
     assert!(!result.short_command, "parse_hint should force structured path");
-    assert_eq!(result.status, TaskStatus::Running);
-
-    // Wait for background completion
-    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    assert_eq!(result.status, TaskStatus::Completed);
 
     let task = store.get_task(&result.task_id).unwrap().unwrap();
     assert_eq!(task.status, TaskStatus::Completed);
@@ -477,9 +665,7 @@ async fn parse_hint_raw_forces_structured_path() {
         .await
         .unwrap();
     assert!(!result.short_command, "any parse_hint should force structured path");
-    assert_eq!(result.status, TaskStatus::Running);
-
-    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    assert_eq!(result.status, TaskStatus::Completed);
 
     let task = store.get_task(&result.task_id).unwrap().unwrap();
     assert_eq!(task.status, TaskStatus::Completed);
@@ -788,51 +974,13 @@ fn enrich_events_adds_context_for_errors() {
         "hint": null
     })];
     let cwd = std::path::Path::new(".");
-    let enriched = enrich_events(events, cwd, None);
+    let enriched = enrich_events(events, cwd);
     assert_eq!(enriched.len(), 1);
     // Should have context after enrichment (Cargo.toml exists in the repo)
     assert!(
         enriched[0].get("context").is_some() && !enriched[0]["context"].is_null(),
         "expected context to be populated"
     );
-}
-
-#[test]
-fn enrich_events_adds_hint_for_known_code() {
-    let events = vec![serde_json::json!({
-        "seq": 0,
-        "type": "diagnostic",
-        "severity": "error",
-        "code": "E0308",
-        "message": "mismatched types",
-        "location": null,
-        "context": null,
-        "hint": null
-    })];
-    let cwd = std::path::Path::new(".");
-    let enriched = enrich_events(events, cwd, Some("cargo"));
-    assert_eq!(enriched.len(), 1);
-    // E0308 is excluded from the HintDb (common code), so hint may be null
-    // But passing Some(tool) should not cause errors
-    let _ = enriched[0].get("hint");
-}
-
-#[test]
-fn enrich_events_skips_existing_hint() {
-    let events = vec![serde_json::json!({
-        "seq": 0,
-        "type": "diagnostic",
-        "severity": "error",
-        "code": "E0308",
-        "message": "mismatched types",
-        "location": null,
-        "context": null,
-        "hint": {"cause": "already set", "fix": null, "retry": null}
-    })];
-    let cwd = std::path::Path::new(".");
-    let enriched = enrich_events(events, cwd, Some("cargo"));
-    // Existing hint should be preserved
-    assert_eq!(enriched[0]["hint"]["cause"], "already set");
 }
 
 #[test]
@@ -860,7 +1008,7 @@ fn enrich_events_preserves_non_error_events() {
         }),
     ];
     let cwd = std::path::Path::new(".");
-    let enriched = enrich_events(events, cwd, None);
+    let enriched = enrich_events(events, cwd);
     assert_eq!(enriched.len(), 2);
     // Info event should be unchanged (no location to enrich)
     assert_eq!(enriched[0]["message"], "building...");
@@ -871,7 +1019,7 @@ fn enrich_events_preserves_non_error_events() {
 fn enrich_events_empty_input() {
     let events = vec![];
     let cwd = std::path::Path::new(".");
-    let enriched = enrich_events(events, cwd, None);
+    let enriched = enrich_events(events, cwd);
     assert!(enriched.is_empty());
 }
 
@@ -888,7 +1036,7 @@ fn enrich_events_no_tool_no_hints() {
         "hint": null
     })];
     let cwd = std::path::Path::new(".");
-    let enriched = enrich_events(events, cwd, None);
+    let enriched = enrich_events(events, cwd);
     // Without a tool, no language mapping → no hints
     assert!(enriched[0]["hint"].is_null());
 }

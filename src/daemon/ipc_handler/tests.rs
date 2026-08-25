@@ -317,12 +317,24 @@ async fn e2e_kill_nonexistent_task() {
         .send_request(
             METHOD_KILL,
             serde_json::json!({
-                "task_id": "nonexistent",
+                "task_id": "00000000-0000-0000-0000-000000000001",
             }),
         )
         .await
         .unwrap();
-    assert_eq!(resp.result["status"], "killed");
+    assert!(resp.result["error"]["message"].as_str().unwrap_or("").contains("not found"));
+}
+
+#[tokio::test]
+async fn e2e_rejects_path_like_task_ids() {
+    let (mut conn, _notif_rx, _store, _tmp) = spawn_daemon_pair().await;
+    for method in [METHOD_QUERY, METHOD_TAIL, METHOD_KILL] {
+        let resp = conn
+            .send_request(method, serde_json::json!({"task_id":"../../outside","limit":10}))
+            .await
+            .unwrap();
+        assert!(resp.result["error"]["message"].as_str().unwrap_or("").contains("invalid task_id"));
+    }
 }
 
 #[tokio::test]
@@ -460,8 +472,9 @@ async fn spawn_secure_daemon(
     store.initialize_schema().unwrap();
     let parser = Arc::new(Engine::new(&ParserConfig::default()).unwrap());
     let bus = EventBus::new();
-    let executor =
-        Arc::new(Executor::new(store.clone(), parser, bus.clone()).with_security(&security));
+    let executor = Arc::new(
+        Executor::new(store.clone(), parser, bus.clone()).with_security(&security).unwrap(),
+    );
     let (sd_tx, _) = watch::channel(false);
 
     tokio::spawn(async move {
@@ -488,6 +501,7 @@ async fn spawn_secure_daemon_with_audit(
     let executor = Arc::new(
         Executor::new(store.clone(), parser, bus.clone())
             .with_security(&security)
+            .unwrap()
             .with_audit_log(audit),
     );
     let (sd_tx, _) = watch::channel(false);
@@ -546,7 +560,12 @@ async fn i5_filter_allowed_safe_commands() {
             )
             .await
             .unwrap();
-        assert_eq!(resp.result["status"], "completed", "command '{}' should be allowed", cmd);
+        assert!(
+            resp.result.get("error").is_none(),
+            "command '{}' should pass the security policy: {:?}",
+            cmd,
+            resp.result
+        );
     }
 }
 
@@ -566,7 +585,7 @@ async fn i5_filter_whitelist_mode() {
         )
         .await
         .unwrap();
-    assert_eq!(resp.result["status"], "completed");
+    assert!(resp.result.get("error").is_none(), "whitelisted command should pass policy");
 
     let resp = conn
         .send_request(
@@ -586,7 +605,7 @@ async fn i5_filter_whitelist_mode() {
 async fn i5_sandbox_cwd_inside_allowed() {
     let tmp_dir = tempfile::TempDir::new().unwrap();
     let security = SecurityConfig {
-        sandbox_paths: vec![tmp_dir.path().to_string_lossy().to_string()],
+        allowed_cwds: vec![tmp_dir.path().to_string_lossy().to_string()],
         ..Default::default()
     };
     let (mut conn, _notif_rx, _tmp) = spawn_secure_daemon(security).await;
@@ -599,14 +618,14 @@ async fn i5_sandbox_cwd_inside_allowed() {
         )
         .await
         .unwrap();
-    assert_eq!(resp.result["status"], "completed");
+    assert!(resp.result.get("error").is_none(), "cwd inside allowed root should pass policy");
 }
 
 #[tokio::test]
 async fn i5_sandbox_cwd_outside_rejected() {
     let tmp_dir = tempfile::TempDir::new().unwrap();
     let security = SecurityConfig {
-        sandbox_paths: vec![tmp_dir.path().to_string_lossy().to_string()],
+        allowed_cwds: vec![tmp_dir.path().to_string_lossy().to_string()],
         ..Default::default()
     };
     let (mut conn, _notif_rx, _tmp) = spawn_secure_daemon(security).await;
@@ -650,7 +669,7 @@ async fn i5_readonly_blocks_kill() {
         .send_request(
             METHOD_KILL,
             serde_json::json!({
-                "task_id": "fake",
+                "task_id": "00000000-0000-0000-0000-000000000002",
             }),
         )
         .await
@@ -666,7 +685,7 @@ async fn i5_readonly_allows_query() {
         .send_request(
             METHOD_QUERY,
             serde_json::json!({
-                "task_id": "nonexistent", "limit": 10,
+                "task_id": "00000000-0000-0000-0000-000000000003", "limit": 10,
             }),
         )
         .await
@@ -695,7 +714,7 @@ async fn i5_full_mode_allows_all() {
         )
         .await
         .unwrap();
-    assert_eq!(resp.result["status"], "completed");
+    assert!(resp.result.get("error").is_none(), "full mode should allow execution requests");
 }
 
 // ── Audit log tests ───────────────────────────────────────────────────
@@ -715,7 +734,7 @@ async fn i5_audit_log_on_run() {
         )
         .await
         .unwrap();
-    assert_eq!(resp.result["status"], "completed");
+    assert!(resp.result.get("error").is_none(), "audited command should pass security policy");
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     let content = std::fs::read_to_string(&audit_path).unwrap();
     assert!(content.contains("echo audit_test"));
@@ -762,9 +781,17 @@ async fn i5_audit_log_append_only() {
     )
     .await
     .unwrap();
-    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-    let content = std::fs::read_to_string(&audit_path).unwrap();
-    let lines: Vec<&str> = content.trim().lines().collect();
+    // Completion auditing happens on the task path; poll for the durable
+    // append instead of relying on a fixed sleep that flakes under load.
+    let mut content = String::new();
+    for _ in 0..40 {
+        content = std::fs::read_to_string(&audit_path).unwrap_or_default();
+        if content.lines().count() >= 2 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    let lines: Vec<&str> = content.lines().collect();
     assert!(lines.len() >= 2);
 }
 

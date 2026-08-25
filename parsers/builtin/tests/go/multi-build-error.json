@@ -35,6 +35,13 @@
     "type": "diagnostic"
   },
   {
+    "file": "./service/auth.go",
+    "line": 8,
+    "message": "missing return at end of function",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
     "message": "mypackage/cmd",
     "severity": "error",
     "type": "test_result"
@@ -43,12 +50,5 @@
     "message": "mypackage/auth",
     "severity": "info",
     "type": "test_result"
-  },
-  {
-    "file": "./service/auth.go",
-    "line": 8,
-    "message": "missing return at end of function",
-    "severity": "error",
-    "type": "diagnostic"
   }
 ]

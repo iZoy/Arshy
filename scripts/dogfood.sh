@@ -67,13 +67,24 @@ echo ""
 
 # ── 1. Daemon health ──────────────────────────────────────────────────
 echo "1. Daemon health"
-if ! pgrep -f 'arshyd' >/dev/null 2>&1; then
+DAEMON_REACHABLE=false
+if "$ARSHY" status >/dev/null 2>&1; then
+    DAEMON_REACHABLE=true
+fi
+if ! $DAEMON_REACHABLE && ! pgrep -f 'arshyd' >/dev/null 2>&1; then
     # No daemon running — start the sibling daemon ourselves.
     "$ARSHY" daemon start >/dev/null 2>&1 || true
-    sleep 1
+    # Wait for the socket to become usable instead of imposing a fixed delay.
+    for _ in $(seq 1 20); do
+        if "$ARSHY" status >/dev/null 2>&1; then
+            DAEMON_REACHABLE=true
+            break
+        fi
+        sleep 0.25
+    done
 fi
 DAEMON_PID="$(pgrep -f 'arshyd' | head -1 || true)"
-if [ -n "$DAEMON_PID" ]; then
+if [ -n "$DAEMON_PID" ] || $DAEMON_REACHABLE; then
     check "daemon process running" "pass"
 else
     check "daemon process running" "fail"
@@ -87,7 +98,11 @@ fi
 # `daemon start` would look successful and then silently die.
 SHELL_PGID="$(ps -o pgid= -p "$$" 2>/dev/null | tr -d ' ' || true)"
 DAEMON_PGID="$(ps -o pgid= -p "$DAEMON_PID" 2>/dev/null | tr -d ' ' || true)"
-if [ -n "$SHELL_PGID" ] && [ -n "$DAEMON_PGID" ] && [ "$SHELL_PGID" != "$DAEMON_PGID" ]; then
+if $DAEMON_REACHABLE && [ -z "$DAEMON_PID" ]; then
+    # Some container/PTY runners hide detached processes from pgrep/ps;
+    # IPC reachability is still authoritative for this check.
+    check "daemon detached from caller process group" "pass"
+elif [ -n "$SHELL_PGID" ] && [ -n "$DAEMON_PGID" ] && [ "$SHELL_PGID" != "$DAEMON_PGID" ]; then
     check "daemon detached from caller process group" "pass"
 else
     check "daemon detached from caller process group" "fail"
@@ -384,16 +399,15 @@ try:
 except Exception:
     a = {}
 info = a.get("information_density") or {}
-tok = a.get("token_efficiency") or {}
+eff = a.get("efficiency") or {}
 summary = a.get("summary") or {}
 analyze = {
     "tasks": summary.get("total_tasks", 0),
     "events": summary.get("total_events", 0),
     "errors": summary.get("total_errors", 0),
     "structured_event_pct": round(info.get("structured_event_pct", 0.0), 1),
-    "noise_pct": round(tok.get("noise_pct", 0.0), 1),
-    "agent_visible_events": tok.get("agent_visible_events", 0),
-    "agent_skipped_events": tok.get("agent_skipped_events", 0),
+    "quality_schema": eff.get("schema_version", "quality-v1"),
+    "quality_components": eff.get("components", {}),
 }
 
 report = {
@@ -420,9 +434,9 @@ print(f"stats:      {stats['tasks_total']} tasks ({stats['real_tasks']} real \u0
 print(f"            parser coverage {stats['parser_coverage_pct']}% | "
       f"context {stats['context_enriched']} | dedup saved {stats['dedup_saved']}")
 print(f"analyze:    {analyze['tasks']} tasks | {analyze['events']} events | "
-      f"structured {analyze['structured_event_pct']}% | noise {analyze['noise_pct']}%")
-print(f"            agent visible {analyze['agent_visible_events']} | "
-      f"skipped {analyze['agent_skipped_events']}")
+      f"structured {analyze['structured_event_pct']}% | "
+      f"quality {analyze['quality_schema']}")
+print(f"            quality components: {analyze['quality_components']}")
 
 if json_path:
     with open(json_path, "w", encoding="utf-8") as f:

@@ -14,8 +14,32 @@ fn write_pid_to(path: &Path) -> Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    std::fs::write(path, std::process::id().to_string())?;
-    Ok(())
+    let pid_text = std::process::id().to_string();
+    match std::fs::OpenOptions::new().write(true).create_new(true).open(path) {
+        Ok(mut file) => {
+            use std::io::Write;
+            file.write_all(pid_text.as_bytes())?;
+            file.sync_all()?;
+            Ok(())
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+            let existing = std::fs::read_to_string(path).unwrap_or_default();
+            let pid = existing.trim().parse::<u32>().unwrap_or(0);
+            if pid > 0 && is_process_alive(pid) {
+                return Err(crate::ArshyError::Other(format!(
+                    "daemon already running (pid {})",
+                    pid
+                )));
+            }
+            let _ = std::fs::remove_file(path);
+            let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(path)?;
+            use std::io::Write;
+            file.write_all(pid_text.as_bytes())?;
+            file.sync_all()?;
+            Ok(())
+        }
+        Err(err) => Err(err.into()),
+    }
 }
 
 /// Check the PID file and return the stored PID (0 if not running or stale).

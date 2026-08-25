@@ -12,13 +12,18 @@
     "type": "log"
   },
   {
+    "file": "demo.py",
+    "line": 4,
+    "message": "  File \"demo.py\", line 4, in main",
+    "severity": "error",
+    "type": "location"
+  },
+  {
     "message": "    result = 1 / 0",
     "severity": "info",
     "type": "log"
   },
   {
-    "file": "demo.py",
-    "line": 4,
     "message": "ZeroDivisionError: division by zero",
     "severity": "error",
     "type": "diagnostic"

@@ -8,5 +8,6 @@ pub mod daemon;
 pub mod error;
 pub mod ipc;
 pub mod mcp;
+pub(crate) mod shell;
 
 pub use error::{ArshyError, Result};

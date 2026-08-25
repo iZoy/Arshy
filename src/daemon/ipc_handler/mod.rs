@@ -43,6 +43,9 @@ pub struct RunResult {
     pub error_count: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub warning_count: Option<u64>,
+    /// Number of visible structured events available through `arshy_query`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub event_count: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub raw_output: Option<String>,
     #[serde(default)]
@@ -57,14 +60,9 @@ pub struct RunResult {
     pub project_context: Option<serde_json::Value>,
     /// Size of the raw PTY output in bytes (only meaningful for long commands;
     /// short commands return raw_output verbatim). Used by metrics tooling
-    /// to compute per-task token savings.
+    /// for diagnostics and offline analytics.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub raw_output_bytes: Option<u64>,
-    /// Size of the structured output the agent actually received (the
-    /// summary + events + root cause + project context). Used by metrics
-    /// tooling to compute per-task token savings.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub agent_delivered_bytes: Option<u64>,
 }
 
 // ── Main handler entry ──────────────────────────────────────────────────────
@@ -91,86 +89,30 @@ pub async fn handle(
 
     let mut bus_rx = event_bus.subscribe();
     let tx_notif = tx.clone();
-    let enrichment_store = store.clone();
     let notif_handle = tokio::spawn(async move {
-        while let Ok(event) = bus_rx.recv().await {
-            // Enrich async tasks on TaskComplete (sync tasks are enriched inline)
-            if let BusEventKind::TaskComplete { ref task_id, .. } = event.kind {
-                let task_id = task_id.clone();
-                let store = enrichment_store.clone();
-                // If sync path already enriched, skip async enrichment entirely.
-                // Mark enriched immediately to prevent concurrent re-enrichment.
-                if store.is_enriched(&task_id) {
+        loop {
+            let event = match bus_rx.recv().await {
+                Ok(event) => event,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                    tracing::warn!(
+                        "connection {} skipped {} lagged notifications",
+                        conn_id,
+                        skipped
+                    );
                     continue;
                 }
-                let _ = store.mark_enriched(&task_id);
-                tokio::task::spawn(async move {
-                    // Small delay to let sync path's spawn_blocking finish if it started
-                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                    // Query events from store (non-log only)
-                    let params = QueryParams {
-                        task_id: Some(task_id.clone()),
-                        event_type: None,
-                        severity: None,
-                        code: None,
-                        file: None,
-                        limit: 200,
-                        offset: 0,
-                        include_logs: false,
-                    };
-                    let events_json: Vec<serde_json::Value> = store
-                        .query_events(&params)
-                        .ok()
-                        .map(|(evts, _total)| {
-                            evts.into_iter()
-                                .map(|e| serde_json::to_value(&e).unwrap_or_default())
-                                .collect()
-                        })
-                        .unwrap_or_default();
-
-                    if events_json.is_empty() {
-                        return;
-                    }
-
-                    // Use cwd from task record, or default to "."
-                    let cwd = store
-                        .get_task(&task_id)
-                        .ok()
-                        .flatten()
-                        .and_then(|t| t.cwd)
-                        .map(std::path::PathBuf::from)
-                        .unwrap_or_else(|| std::path::PathBuf::from("."));
-
-                    // Enrich in blocking context
-                    // Use stored detected_tool for HintDb lookup (Bug #2 fix)
-                    let tool_name = store.get_detected_tool(&task_id);
-                    let store_clone = store.clone();
-                    let enriched = tokio::task::spawn_blocking(move || {
-                        super::exec::enrich_events(events_json, &cwd, tool_name.as_deref())
-                    })
-                    .await
-                    .unwrap_or_default();
-
-                    // Persist enriched events
-                    let task_events: Vec<crate::ipc::TaskEvent> = enriched
-                        .iter()
-                        .filter_map(|e| serde_json::from_value(e.clone()).ok())
-                        .collect();
-                    if !task_events.is_empty() {
-                        if let Err(e) = store_clone.merge_enriched_events(&task_id, &task_events) {
-                            tracing::warn!(
-                                "async enrichment: failed to persist for {}: {}",
-                                task_id,
-                                e
-                            );
-                        }
-                    }
-                });
-            }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            };
             if let Some(notification) = bus_event_to_notification(&event) {
-                if tx_notif.try_send(Outbound::Notification(notification)).is_err() {
-                    tracing::warn!("notification dropped (channel full or closed)");
-                    break;
+                match tx_notif.try_send(Outbound::Notification(notification)) {
+                    Ok(()) => {}
+                    Err(mpsc::error::TrySendError::Full(_)) => {
+                        tracing::debug!(
+                            "connection {} notification dropped: outbound queue full",
+                            conn_id
+                        );
+                    }
+                    Err(mpsc::error::TrySendError::Closed(_)) => break,
                 }
             }
         }
@@ -180,7 +122,7 @@ pub async fn handle(
     // Initialize the default cwd to the daemon's startup directory. Without
     // this, a run() call from an agent that never invoked session/cd would
     // carry cwd=None, which causes compute_enhanced_project_context to leak
-    // the daemon's git diff stat into agent_delivered_bytes. Phase B Q-3 fix.
+    // the daemon's git diff stat into an unrelated command result.
     let mut default_cwd: Option<String> =
         std::env::current_dir().ok().map(|p| p.to_string_lossy().into_owned());
     loop {
@@ -242,9 +184,14 @@ pub async fn handle(
             match tid_val {
                 None => Err(crate::ArshyError::Ipc("missing task_id".into())),
                 Some(task_id_str) => {
+                    validate_task_id(task_id_str)?;
                     let task_id = task_id_str.to_string();
 
-                    // If task already complete, return immediately
+                    // Subscribe before checking state. If completion happens
+                    // between these two operations, it is then visible either
+                    // in the store or in this receiver; the previous reverse
+                    // order could miss the broadcast and wait until timeout.
+                    let mut bus_rx = event_bus.subscribe();
                     let immediate =
                         store.get_task(&task_id).ok().flatten().filter(|t| t.status.is_terminal());
 
@@ -256,8 +203,6 @@ pub async fn handle(
                             "duration_ms": task.duration_ms,
                         }))
                     } else {
-                        // Subscribe to EventBus and wait for TaskComplete
-                        let mut bus_rx = event_bus.subscribe();
                         let timeout = tokio::time::Duration::from_secs(600);
                         loop {
                             tokio::select! {
@@ -265,10 +210,9 @@ pub async fn handle(
                                     match event {
                                         Ok(BusEvent {
                                             kind: BusEventKind::TaskComplete {
-                                                task_id: ref tid, exit_code, duration_ms
+                                                task_id: ref tid, ref status, exit_code, duration_ms
                                             }, ..
                                         }) if tid == &task_id => {
-                                            let status = if exit_code == 0 { "completed" } else { "failed" };
                                             break Ok(serde_json::json!({
                                                 "task_id": tid,
                                                 "exit_code": exit_code,
@@ -382,9 +326,15 @@ async fn dispatch(
             };
             if let Ok((events, total)) = store.query_events(&query) {
                 let shown = events.len();
+                // On failures the inline sample is error-only, but
+                // event_count must still describe every visible structured
+                // event (including warnings/info) available to arshy_query.
+                let visible_total = result.event_count.unwrap_or(total as u64) as usize;
                 resp["events"] = serde_json::to_value(&events).unwrap_or_default();
-                resp["event_count"] = serde_json::json!(total);
-                if let Some((truncated, hint)) = truncation_hint(shown, total, &result.task_id) {
+                resp["event_count"] = serde_json::json!(visible_total);
+                if let Some((truncated, hint)) =
+                    truncation_hint(shown, visible_total, &result.task_id)
+                {
                     resp["events_truncated"] = serde_json::json!(truncated);
                     resp["events_hint"] = serde_json::json!(hint);
                 }
@@ -392,7 +342,11 @@ async fn dispatch(
             Ok(resp)
         }
         METHOD_QUERY => {
-            let params: QueryParams = serde_json::from_value(request.params.clone())?;
+            let mut params: QueryParams = serde_json::from_value(request.params.clone())?;
+            if let Some(task_id) = params.task_id.as_deref() {
+                validate_task_id(task_id)?;
+            }
+            params.limit = params.limit.min(1000);
             // task_id present → per-task query (unchanged shape); absent →
             // cross-task search across all tasks, events carry their task_id.
             let (events, total) = match &params.task_id {
@@ -422,7 +376,8 @@ async fn dispatch(
             let status: Option<String> =
                 request.params.get("status").and_then(|v| v.as_str()).map(String::from);
             let limit: usize =
-                request.params.get("limit").and_then(|v| v.as_u64()).unwrap_or(10) as usize;
+                request.params.get("limit").and_then(|v| v.as_u64()).unwrap_or(10).min(1000)
+                    as usize;
             let tasks = store.list_tasks(status.as_deref(), limit)?;
             Ok(serde_json::to_value(&tasks)?)
         }
@@ -432,8 +387,9 @@ async fn dispatch(
                 .get("task_id")
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| crate::ArshyError::Ipc("missing task_id".into()))?;
+            validate_task_id(task_id)?;
             executor.kill(task_id).await?;
-            Ok(serde_json::json!({ "task_id": task_id, "status": "killed" }))
+            Ok(serde_json::json!({ "task_id": task_id, "status": "cancelling" }))
         }
         METHOD_TAIL => {
             let task_id = request
@@ -441,6 +397,7 @@ async fn dispatch(
                 .get("task_id")
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| crate::ArshyError::Ipc("missing task_id".into()))?;
+            validate_task_id(task_id)?;
             let lines: usize =
                 request.params.get("lines").and_then(|v| v.as_u64()).unwrap_or(50) as usize;
             let format: String = request
@@ -518,6 +475,12 @@ async fn dispatch(
         }
         _ => Err(crate::ArshyError::Ipc(format!("unknown method: {}", request.method))),
     }
+}
+
+fn validate_task_id(task_id: &str) -> Result<()> {
+    uuid::Uuid::parse_str(task_id)
+        .map(|_| ())
+        .map_err(|_| crate::ArshyError::Ipc("invalid task_id".into()))
 }
 
 // ── Writer task ─────────────────────────────────────────────────────────────

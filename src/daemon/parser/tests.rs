@@ -64,13 +64,13 @@ mod python_traceback_pipeline_tests {
             out.push(m);
         }
 
-        // Sanity: the stream is fully parsed — 4 standalone frames, plus the
-        // first frame merged into the header diagnostic and the last frame
-        // merged into the exception diagnostic (pair merger).
+        // Sanity: the stream is fully parsed. Only the header's immediately
+        // following frame is pairable; intervening source/log lines must not
+        // cause a later frame to be attached to the exception by guesswork.
         assert_eq!(
             out.iter().filter(|e| e.event_type == "location").count(),
-            4,
-            "expected 4 standalone frames; got: {out:?}"
+            5,
+            "expected 5 standalone frames; got: {out:?}"
         );
 
         assert!(
@@ -297,6 +297,7 @@ mod harness_tests {
         code_ok: usize,
         file_ok: usize,
         line_ok: usize,
+        context_ok: usize,
     }
 
     fn run_fixture(
@@ -314,14 +315,35 @@ mod harness_tests {
 
         let lines: Vec<&str> = txt.lines().filter(|l| !l.trim().is_empty()).collect();
         let mut all_events: Vec<TaskEvent> = Vec::new();
+        let mut dedup = dedup::Deduplicator::new();
+        let mut pair = pair_merger::GenericPairMerger::new();
+        let mut context = RustcContextMerger::new();
         for line in &lines {
-            all_events.extend(session.parse_line(line, 0, tool.as_ref()));
+            for parsed in session.parse_line(line, 0, tool.as_ref()) {
+                if let Some(deduped) = dedup.feed(parsed) {
+                    for paired in pair.feed_all(deduped) {
+                        for merged in context.feed_all(paired) {
+                            all_events.push(merged);
+                        }
+                    }
+                }
+            }
         }
-
-        // Apply pair merger so fixture expectations match exec-pipeline output.
-        let (merged_events, _pairs_merged) =
-            pair_merger::merge_diagnostic_location_pairs(all_events);
-        all_events = merged_events;
+        if let Some(deduped) = dedup.finish() {
+            for paired in pair.feed_all(deduped) {
+                for merged in context.feed_all(paired) {
+                    all_events.push(merged);
+                }
+            }
+        }
+        for paired in pair.finish_all() {
+            for merged in context.feed_all(paired) {
+                all_events.push(merged);
+            }
+        }
+        for merged in context.finish_all() {
+            all_events.push(merged);
+        }
 
         // ── Bless mode: write actual output as expected JSON ──────────────
         if std::env::var("ARSHY_BLESS").is_ok() {
@@ -340,6 +362,9 @@ mod harness_tests {
                         obj["file"] = serde_json::json!(loc.file);
                         obj["line"] = serde_json::json!(loc.line);
                     }
+                    if let Some(ref context) = e.context {
+                        obj["context"] = serde_json::to_value(context).unwrap();
+                    }
                     obj
                 })
                 .collect();
@@ -356,6 +381,7 @@ mod harness_tests {
                     code_ok: 0,
                     file_ok: 0,
                     line_ok: 0,
+                    context_ok: 0,
                 },
             );
         }
@@ -371,6 +397,7 @@ mod harness_tests {
             code_ok: 0,
             file_ok: 0,
             line_ok: 0,
+            context_ok: 0,
         };
         for (i, exp) in expected.iter().enumerate() {
             if i >= all_events.len() {
@@ -387,6 +414,9 @@ mod harness_tests {
             let line_ok = exp.get("line").is_none_or(|v| {
                 event.location.as_ref().is_some_and(|loc| v.as_u64() == Some(loc.line))
             });
+            let context_ok = exp
+                .get("context")
+                .is_none_or(|v| serde_json::to_value(&event.context).ok().as_ref() == Some(v));
 
             if type_ok {
                 stats.type_ok += 1;
@@ -403,8 +433,11 @@ mod harness_tests {
             if line_ok {
                 stats.line_ok += 1;
             }
+            if context_ok {
+                stats.context_ok += 1;
+            }
 
-            if type_ok && sev_ok && code_ok && file_ok && line_ok {
+            if type_ok && sev_ok && code_ok && file_ok && line_ok && context_ok {
                 matched += 1;
             }
         }
@@ -417,12 +450,13 @@ mod harness_tests {
             return String::new();
         }
         format!(
-            "type={:.0}% sev={:.0}% code={:.0}% file={:.0}% line={:.0}%",
+            "type={:.0}% sev={:.0}% code={:.0}% file={:.0}% line={:.0}% context={:.0}%",
             stats.type_ok as f64 / stats.total as f64 * 100.0,
             stats.severity_ok as f64 / stats.total as f64 * 100.0,
             stats.code_ok as f64 / stats.total as f64 * 100.0,
             stats.file_ok as f64 / stats.total as f64 * 100.0,
             stats.line_ok as f64 / stats.total as f64 * 100.0,
+            stats.context_ok as f64 / stats.total as f64 * 100.0,
         )
     }
 
@@ -679,8 +713,8 @@ mod harness_tests {
         ];
 
         for name in &parsers {
-            let tool = engine.detect(name);
-            assert!(tool.is_some(), "parser '{}' not detected by engine", name);
+            let tool = engine.get_by_name(name);
+            assert!(tool.is_some(), "parser '{}' not loaded by engine", name);
         }
     }
 
@@ -768,12 +802,6 @@ mod benchmark {
         raw_lines: usize,
         /// Number of structured events produced.
         events: usize,
-        /// Word count of raw input text.
-        raw_tokens: usize,
-        /// Word count of structured JSON output.
-        structured_tokens: usize,
-        /// raw_tokens / structured_tokens.
-        compression_ratio: f64,
         /// Total actionable fields in structured output (type+severity+code+file+line+message per event).
         structured_fields: usize,
         /// Average actionable fields per event.
@@ -813,10 +841,6 @@ mod benchmark {
         total_fixtures: usize,
         total_raw_lines: usize,
         total_events: usize,
-        total_raw_tokens: usize,
-        total_structured_tokens: usize,
-        /// Overall compression ratio (total_raw / total_structured).
-        compression_ratio: f64,
         /// Total actionable fields across all structured events.
         total_structured_fields: usize,
         /// Average actionable fields per event across all fixtures.
@@ -835,27 +859,6 @@ mod benchmark {
         total_unparsed_error_lines: usize,
         /// Per-parser results.
         details: Vec<FixtureResult>,
-    }
-
-    /// Count tokens in a string — heuristic BPE approximation (cl100k_base).
-    /// Splits alphanumeric sequences and counts special syntax/punctuation symbols.
-    fn count_tokens(text: &str) -> usize {
-        let mut tokens: f64 = 0.0;
-        let mut in_word = false;
-        for c in text.chars() {
-            if c.is_alphanumeric() {
-                if !in_word {
-                    tokens += 1.2;
-                    in_word = true;
-                }
-            } else {
-                in_word = false;
-                if !c.is_whitespace() {
-                    tokens += 0.75;
-                }
-            }
-        }
-        tokens.round() as usize
     }
 
     /// Find the 0-indexed line number of the first error or warning in raw text.
@@ -947,13 +950,6 @@ mod benchmark {
             events.extend(line_events);
         }
 
-        let raw_tokens = count_tokens(&txt);
-        let structured_json = serde_json::to_string(&events).unwrap();
-        let structured_tokens = count_tokens(&structured_json);
-
-        let compression_ratio =
-            if structured_tokens > 0 { raw_tokens as f64 / structured_tokens as f64 } else { 0.0 };
-
         let raw_first_error_line = find_first_error_line(&raw_lines);
         let (merged_events, _pairs_merged) = pair_merger::merge_diagnostic_location_pairs(events);
         let events = merged_events;
@@ -1009,9 +1005,6 @@ mod benchmark {
             fixture: txt_path.file_stem().unwrap().to_str().unwrap().to_string(),
             raw_lines: raw_lines.len(),
             events: events.len(),
-            raw_tokens,
-            structured_tokens,
-            compression_ratio,
             structured_fields,
             fields_per_event,
             raw_first_error_line,
@@ -1056,14 +1049,7 @@ mod benchmark {
         let total_fixtures = all_results.len();
         let total_raw_lines = all_results.iter().map(|r| r.raw_lines).sum();
         let total_events = all_results.iter().map(|r| r.events).sum();
-        let total_raw_tokens = all_results.iter().map(|r| r.raw_tokens).sum();
-        let total_structured_tokens: usize = all_results.iter().map(|r| r.structured_tokens).sum();
         let total_structured_fields: usize = all_results.iter().map(|r| r.structured_fields).sum();
-        let compression_ratio = if total_structured_tokens > 0 {
-            total_raw_tokens as f64 / total_structured_tokens as f64
-        } else {
-            0.0
-        };
         let avg_fields_per_event = if total_events > 0 {
             total_structured_fields as f64 / total_events as f64
         } else {
@@ -1097,9 +1083,6 @@ mod benchmark {
             total_fixtures,
             total_raw_lines,
             total_events,
-            total_raw_tokens,
-            total_structured_tokens,
-            compression_ratio,
             total_structured_fields,
             avg_fields_per_event,
             error_speed_advantage_pct,

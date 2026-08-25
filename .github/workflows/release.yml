@@ -7,6 +7,8 @@ on:
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
 
 jobs:
   build:
@@ -37,6 +39,10 @@ jobs:
       - name: Test
         run: cargo test --release --target ${{ matrix.target }}
 
+      - name: Verify release version
+        shell: bash
+        run: test "$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)" = "${GITHUB_REF_NAME#v}"
+
       - name: Build release binary
         run: cargo build --release --target ${{ matrix.target }}
 
@@ -56,7 +62,7 @@ jobs:
           # published tarballs clean and their checksums stable.
           COPYFILE_DISABLE=1 tar -czf ../../../${ARCHIVE} arshyd arshy
           cd ../../..
-          shasum -a 256 ${ARCHIVE} > ${ARCHIVE}.sha256
+          if command -v shasum >/dev/null 2>&1; then shasum -a 256 ${ARCHIVE} > ${ARCHIVE}.sha256; else sha256sum ${ARCHIVE} > ${ARCHIVE}.sha256; fi
 
       - name: Upload to release
         uses: softprops/action-gh-release@v2
@@ -65,3 +71,10 @@ jobs:
             arshy-*.tar.gz
             arshy-*.tar.gz.sha256
           generate_release_notes: true
+
+      - name: Attest release archives
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            arshy-*.tar.gz
+            arshy-*.tar.gz.sha256

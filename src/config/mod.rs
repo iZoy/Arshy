@@ -173,7 +173,7 @@ mod tests {
         assert_eq!(cfg.daemon.max_concurrent_tasks, 4);
         assert_eq!(cfg.daemon.max_output_bytes, 10_485_760);
         // Store
-        assert!(cfg.store.integrity_check);
+        assert!(!cfg.store.integrity_check);
         assert_eq!(cfg.store.prune_keep, 1000);
         assert_eq!(cfg.store.prune_older_than_days, 30);
         // Parser

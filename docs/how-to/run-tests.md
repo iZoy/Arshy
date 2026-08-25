@@ -38,7 +38,7 @@ cargo test --bin arshy proxy::tests::test_initialize_echoes_newer_supported_vers
 
 ## 集成测试（真实进程）
 
-`tests/integration.rs` 会真实拉起 `arshyd` daemon 与 `arshy --from-mcp` proxy
+`tests/integration.rs` 会真实拉起 `arshyd` daemon 与 `arshy mcp serve` proxy
 子进程，走完整 UDS/JSON-RPC 与 MCP 链路。每个测试使用**独立临时目录**（socket +
 store），`TestDaemon` 守卫保证进程必被回收，不会污染真实数据或挂起 cargo。
 

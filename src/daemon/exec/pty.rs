@@ -33,6 +33,13 @@ impl ProcessHandle {
     /// Kill the process immediately (SIGKILL).
     /// Uses start_kill() which is non-blocking.
     pub fn force_kill(&mut self) -> Result<()> {
+        // Every command is spawned as its own process-group leader. Kill the
+        // group first so pipelines and grandchildren do not survive a task
+        // timeout after the wrapper shell exits.
+        #[cfg(unix)]
+        unsafe {
+            libc::kill(-(self.pid as libc::pid_t), libc::SIGKILL);
+        }
         if let Some(ref mut child) = self.child {
             child
                 .start_kill()
@@ -150,6 +157,12 @@ pub async fn spawn_command(
 
     let mut cmd = tokio::process::Command::new("sh");
     cmd.arg("-c").arg(command).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+
+    // Isolate the whole shell pipeline in a new process group. Lifecycle
+    // management signals `-pid`; without this, that signal usually targets a
+    // nonexistent group and descendants can leak past timeout/cancellation.
+    #[cfg(unix)]
+    cmd.process_group(0);
 
     if let Some(dir) = cwd {
         cmd.current_dir(dir);
@@ -294,6 +307,16 @@ mod tests {
         // But start_kill + wait gives us Some(-1) or None depending on platform
         // We just verify it didn't wait the full 60 seconds
         assert!(exit.is_some() || exit.is_none()); // process terminated
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn spawned_command_is_its_process_group_leader() {
+        let mut handle = spawn_command("sleep 60", None, None).await.unwrap();
+        let pgid = unsafe { libc::getpgid(handle.pid as libc::pid_t) };
+        assert_eq!(pgid, handle.pid as libc::pid_t);
+        handle.force_kill().unwrap();
+        let _ = handle.wait().await;
     }
 
     #[tokio::test]

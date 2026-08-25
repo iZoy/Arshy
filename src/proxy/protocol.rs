@@ -49,6 +49,7 @@ pub(crate) async fn write_mcp_notification<W: tokio::io::AsyncWriteExt + Unpin>(
         }
         "task/complete" => {
             let task_id = notif.params["task_id"].as_str().unwrap_or("");
+            let status = notif.params["status"].as_str().unwrap_or("failed");
             let exit_code = notif.params["exit_code"].as_i64().unwrap_or(-1);
             let level =
                 if exit_code == 0 { protocol::LogLevel::Info } else { protocol::LogLevel::Error };
@@ -58,6 +59,7 @@ pub(crate) async fn write_mcp_notification<W: tokio::io::AsyncWriteExt + Unpin>(
                 serde_json::json!({
                     "event": "task_complete",
                     "task_id": task_id,
+                    "status": status,
                     "exit_code": exit_code,
                 }),
             )
@@ -184,9 +186,9 @@ pub(crate) fn format_duration(ms: Option<u64>) -> String {
     }
 }
 
-pub(crate) async fn write_json_response<W: tokio::io::AsyncWrite + Unpin>(
+pub(crate) async fn write_json_response<W: tokio::io::AsyncWrite + Unpin, I: serde::Serialize>(
     stdout: &mut BufWriter<W>,
-    id: u64,
+    id: I,
     result: &serde_json::Value,
 ) -> Result<()> {
     let response = serde_json::json!({ "jsonrpc": "2.0", "id": id, "result": result });
@@ -197,9 +199,9 @@ pub(crate) async fn write_json_response<W: tokio::io::AsyncWrite + Unpin>(
     Ok(())
 }
 
-pub(crate) async fn write_json_error<W: tokio::io::AsyncWrite + Unpin>(
+pub(crate) async fn write_json_error<W: tokio::io::AsyncWrite + Unpin, I: serde::Serialize>(
     stdout: &mut BufWriter<W>,
-    id: u64,
+    id: I,
     code: i64,
     message: &str,
     retryable: bool,
@@ -221,9 +223,9 @@ pub(crate) async fn write_json_error<W: tokio::io::AsyncWrite + Unpin>(
 }
 
 /// Write a structured MCP error with code + retryable data field.
-pub(crate) async fn write_structured_error(
+pub(crate) async fn write_structured_error<I: serde::Serialize>(
     stdout: &mut BufWriter<tokio::io::Stdout>,
-    id: u64,
+    id: I,
     err: arshy_lib::ArshyError,
 ) -> Result<()> {
     let response = serde_json::json!({
@@ -255,10 +257,12 @@ pub(crate) fn notification_to_json(notif: &Notification) -> Option<serde_json::V
         }
         "task/complete" => {
             let task_id = notif.params["task_id"].as_str().unwrap_or("");
+            let status = notif.params["status"].as_str().unwrap_or("failed");
             let exit_code = notif.params["exit_code"].as_i64().unwrap_or(-1);
             Some(serde_json::json!({
                 "event": "task_complete",
                 "task_id": task_id,
+                "status": status,
                 "exit_code": exit_code,
             }))
         }

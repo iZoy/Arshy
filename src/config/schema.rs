@@ -36,8 +36,9 @@ fn d_4() -> u32 {
     4
 }
 fn d_idle_timeout() -> u64 {
-    // 15 minutes of inactivity before the daemon self-exits (0 = disabled).
-    900
+    // Five minutes balances warm reuse with low background residency.
+    // A value of 0 disables idle exit.
+    300
 }
 fn d_1000() -> usize {
     1000
@@ -92,9 +93,6 @@ fn default_blocked_patterns() -> Vec<String> {
 }
 fn default_access_level() -> String {
     "full".into()
-}
-fn default_sandbox_mode() -> String {
-    "none".into()
 }
 fn default_max_commands_per_second() -> f64 {
     10.0
@@ -177,7 +175,6 @@ partial_section!(PartialDaemonConfig {
     kill_force_ms: u64,
     max_concurrent_tasks: u32,
     idle_timeout_secs: u64,
-    sandbox_mode: String,
 });
 
 partial_section!(PartialStoreConfig {
@@ -202,7 +199,7 @@ partial_section!(PartialTelemetryConfig {});
 partial_section!(PartialSecurityConfig {
     blocked_patterns: Vec<String>,
     allowed_commands: Vec<String>,
-    sandbox_paths: Vec<String>,
+    allowed_cwds: Vec<String>,
     access_level: String,
     audit_log: String,
     rate_limit: RateLimitConfig,
@@ -235,10 +232,6 @@ pub struct DaemonConfig {
     /// lingering forever when the IDE is closed. Set to 0 to disable.
     #[serde(default = "d_idle_timeout")]
     pub idle_timeout_secs: u64,
-    /// Sandbox mode: "none" (default) or "workspace" (lock execution to the
-    /// daemon's working directory). "process"/"container" are not implemented.
-    #[serde(default = "default_sandbox_mode")]
-    pub sandbox_mode: String,
 }
 
 impl Default for DaemonConfig {
@@ -254,7 +247,6 @@ impl Default for DaemonConfig {
             kill_force_ms: d_2s(),
             max_concurrent_tasks: d_4(),
             idle_timeout_secs: d_idle_timeout(),
-            sandbox_mode: default_sandbox_mode(),
         }
     }
 }
@@ -274,7 +266,9 @@ pub struct StoreConfig {
     /// Defaults to `${XDG_DATA_HOME}/arshy`.
     #[serde(default = "default_store_dir")]
     pub store_dir: PathBuf,
-    #[serde(default = "d_true")]
+    /// Full event-history validation is O(history size), so it is opt-in and
+    /// kept off the latency-sensitive on-demand startup path.
+    #[serde(default)]
     pub integrity_check: bool,
     #[serde(default)]
     pub auto_prune: bool,
@@ -288,7 +282,7 @@ impl Default for StoreConfig {
     fn default() -> Self {
         Self {
             store_dir: default_store_dir(),
-            integrity_check: d_true(),
+            integrity_check: false,
             auto_prune: false,
             prune_keep: d_1000(),
             prune_older_than_days: d_30(),
@@ -343,7 +337,9 @@ pub struct SecurityConfig {
     #[serde(default)]
     pub allowed_commands: Option<Vec<String>>,
     #[serde(default)]
-    pub sandbox_paths: Vec<String>,
+    /// Optional canonical roots allowed as command working directories. This
+    /// is a cwd guard, not an OS-level filesystem sandbox.
+    pub allowed_cwds: Vec<String>,
     #[serde(default = "default_access_level")]
     pub access_level: String,
     #[serde(default)]
@@ -357,7 +353,7 @@ impl Default for SecurityConfig {
         Self {
             blocked_patterns: default_blocked_patterns(),
             allowed_commands: None,
-            sandbox_paths: Vec::new(),
+            allowed_cwds: Vec::new(),
             access_level: default_access_level(),
             audit_log: None,
             rate_limit: RateLimitConfig::default(),
@@ -435,7 +431,7 @@ mod tests {
     #[test]
     fn defaults_are_sane() {
         let d = DaemonConfig::default();
-        assert_eq!(d.sandbox_mode, "none");
+        assert!(d.idle_timeout_secs > 0);
         assert!(d.max_concurrent_tasks > 0);
         let s = StoreConfig::default();
         assert!(s.prune_keep > 0);

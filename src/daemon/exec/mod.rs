@@ -3,8 +3,8 @@
 //! Execution modes:
 //! - **sync**: Wait for completion, return full result (blocking).
 //! - **async**: Return immediately with task_id, stream events via notifications.
-//! - **auto**: Smart — short commands get zero-overhead sync path,
-//!   long commands get async + structured output.
+//! - **auto**: Inspection commands get the raw fast path; parser-backed or
+//!   lifecycle-sensitive commands get structured execution.
 
 pub mod process;
 pub mod pty;
@@ -19,10 +19,10 @@ mod tests;
 
 pub(crate) use background::{run_background, BackgroundTask, CompletionInfo};
 pub(crate) use cwd::prepare_cwd;
-pub(crate) use decision::{classify_carrier, is_short_command};
+#[allow(unused_imports)]
+pub(crate) use decision::{classify_carrier, is_short_command, is_short_command_with_route};
 pub(crate) use enrich::{
-    calculate_agent_delivered_bytes, compute_enhanced_project_context, enrich_events,
-    extract_root_cause, filter_events_errors_only,
+    compute_enhanced_project_context, enrich_events, extract_root_cause, filter_events_errors_only,
 };
 
 use crate::ipc::{Task, TaskStatus};
@@ -46,20 +46,23 @@ pub struct Executor {
     event_bus: EventBus,
     config: ExecutorConfig,
     filter: CommandFilter,
-    sandbox_paths: Vec<String>,
+    allowed_cwds: Vec<String>,
     access_level: String,
     audit_log: Option<Arc<AuditLog>>,
     /// Registry of running tasks' kill signal senders.
     kill_registry: Arc<TokioMutex<HashMap<String, tokio::sync::mpsc::Sender<()>>>>,
     rate_limiter: Arc<TokioMutex<RateLimiter>>,
     /// Bound on concurrent structured tasks (`daemon.max_concurrent_tasks`).
-    /// Short commands are not limited — they are already bounded by the rate
-    /// limiter and must stay zero-overhead.
+    /// Raw fast-path commands are not limited — they are already bounded by
+    /// the rate limiter and must stay zero-overhead.
     task_semaphore: Arc<Semaphore>,
     /// Short-lived cache of run results keyed by the proxy-injected
     /// `dedup_key` (MCP request id). Prevents a replayed `tools/call` after a
     /// connection blip from executing the same command twice.
     run_dedup: Arc<TokioMutex<HashMap<String, (RunResult, std::time::Instant)>>>,
+    /// Per-key single-flight locks close the race between the cache lookup and
+    /// execution. Weak entries disappear once all callers for a key finish.
+    run_dedup_locks: Arc<TokioMutex<HashMap<String, std::sync::Weak<TokioMutex<()>>>>>,
     /// Restricted error-code reference tables (docker/kubectl/aws exit
     /// codes, ...). Served on demand through `task/query`; never inlined.
     /// Reloadable at runtime (user tables hot-reload via file watcher).
@@ -96,6 +99,24 @@ const RUN_DEDUP_TTL_SECS: u64 = 120;
 /// Cap on dedup cache entries to bound memory.
 const RUN_DEDUP_CACHE_MAX: usize = 256;
 
+/// Cancellation-safe activity marker for a fast-path command. The proxy can
+/// disconnect while a command is still running; a `Drop` guard guarantees the
+/// idle watchdog is released even when that cancels the executor future.
+struct FastActivityGuard(Arc<Store>);
+
+impl FastActivityGuard {
+    fn new(store: Arc<Store>) -> Self {
+        store.begin_fast_activity();
+        Self(store)
+    }
+}
+
+impl Drop for FastActivityGuard {
+    fn drop(&mut self) {
+        self.0.end_fast_activity();
+    }
+}
+
 impl Executor {
     pub fn new(store: Arc<Store>, parser: Arc<Engine>, event_bus: EventBus) -> Self {
         Self {
@@ -104,7 +125,7 @@ impl Executor {
             event_bus,
             config: ExecutorConfig::default(),
             filter: CommandFilter::permissive(),
-            sandbox_paths: Vec::new(),
+            allowed_cwds: Vec::new(),
             access_level: "full".into(),
             audit_log: None,
             kill_registry: Arc::new(TokioMutex::new(HashMap::new())),
@@ -113,6 +134,7 @@ impl Executor {
                 ExecutorConfig::default().max_concurrent_tasks,
             )),
             run_dedup: Arc::new(TokioMutex::new(HashMap::new())),
+            run_dedup_locks: Arc::new(TokioMutex::new(HashMap::new())),
             reference: Arc::new(RwLock::new(ReferenceTable::default())),
         }
     }
@@ -128,12 +150,9 @@ impl Executor {
         self
     }
 
-    pub fn with_security(mut self, config: &crate::config::SecurityConfig) -> Self {
-        self.filter = CommandFilter::from_config(config).unwrap_or_else(|e| {
-            tracing::error!("security config: {} — using permissive fallback", e);
-            CommandFilter::permissive()
-        });
-        self.sandbox_paths = config.sandbox_paths.clone();
+    pub fn with_security(mut self, config: &crate::config::SecurityConfig) -> Result<Self> {
+        self.filter = CommandFilter::from_config(config)?;
+        self.allowed_cwds = config.allowed_cwds.clone();
         self.access_level = config.access_level.clone();
 
         // Initialize rate limiter from config
@@ -144,7 +163,7 @@ impl Executor {
         };
         self.rate_limiter = Arc::new(TokioMutex::new(rate_limiter));
 
-        self
+        Ok(self)
     }
 
     pub fn with_audit_log(mut self, audit_log: Arc<AuditLog>) -> Self {
@@ -193,6 +212,7 @@ impl Executor {
         purpose: Option<&str>,
         dedup_key: Option<&str>,
     ) -> Result<RunResult> {
+        let mut dedup_guard = None;
         if let Some(key) = dedup_key {
             let cache = self.run_dedup.lock().await;
             if let Some((result, at)) = cache.get(key) {
@@ -200,6 +220,30 @@ impl Executor {
                     return Ok(result.clone());
                 }
             }
+            drop(cache);
+
+            let key_lock = {
+                let mut locks = self.run_dedup_locks.lock().await;
+                locks.retain(|_, lock| lock.strong_count() > 0);
+                if let Some(existing) = locks.get(key).and_then(std::sync::Weak::upgrade) {
+                    existing
+                } else {
+                    let created = Arc::new(TokioMutex::new(()));
+                    locks.insert(key.to_string(), Arc::downgrade(&created));
+                    created
+                }
+            };
+            let guard = key_lock.lock_owned().await;
+
+            // Another caller may have completed while this caller waited.
+            let cache = self.run_dedup.lock().await;
+            if let Some((result, at)) = cache.get(key) {
+                if at.elapsed().as_secs() < RUN_DEDUP_TTL_SECS {
+                    return Ok(result.clone());
+                }
+            }
+            drop(cache);
+            dedup_guard = Some(guard);
         }
 
         let result = self
@@ -214,6 +258,8 @@ impl Executor {
             }
         }
 
+        drop(dedup_guard);
+
         Ok(result)
     }
 
@@ -222,8 +268,8 @@ impl Executor {
     /// Mode behavior:
     /// - **sync**: Wait for completion, full structured path.
     /// - **async**: Return immediately with task_id, events stream via notifications.
-    /// - **auto**: Smart — short commands get zero-overhead sync path (raw stdout),
-    ///   long commands get sync with 60s timeout (structured result in 1 call).
+    /// - **auto**: Read-only inspection gets the raw fast path; parser-backed
+    ///   commands get structured sync with a 60s wait before async fallback.
     ///   Only commands exceeding 60s degrade to async (returns task_id).
     #[allow(clippy::too_many_arguments)]
     async fn run_inner(
@@ -237,6 +283,13 @@ impl Executor {
         errors_only: bool,
         purpose: Option<&str>,
     ) -> Result<RunResult> {
+        if !matches!(mode, "auto" | "sync" | "async") {
+            return Err(ArshyError::Ipc(format!(
+                "invalid execution mode '{}': expected auto, sync, or async",
+                mode
+            )));
+        }
+
         // ── Rate limit check (always run) ───────────────────────────────────
         {
             let mut limiter = self.rate_limiter.lock().await;
@@ -266,7 +319,7 @@ impl Executor {
 
         let check_result = {
             let cwd_owned = cwd.unwrap_or(".").to_string();
-            let paths = self.sandbox_paths.clone();
+            let paths = self.allowed_cwds.clone();
             tokio::task::spawn_blocking(move || super::security::check_path(&cwd_owned, &paths))
                 .await
                 .map_err(|e| ArshyError::Ipc(format!("sandbox check panicked: {}", e)))?
@@ -287,26 +340,66 @@ impl Executor {
         let spawn_cwd = fallback_cwd.or_else(|| cwd_path.clone());
         let env_for_spawn = effective_env.as_ref().or(env);
 
-        // Record activity for the idle watchdog. Every command counts —
-        // short and long — so a daemon that only served short commands
+        // Record activity for the idle deadline. Every command counts — raw
+        // and structured — so a daemon that only served inspection commands
         // (which never touch the store) still idle-exits.
         self.store.mark_activity();
-        // Q1 telemetry: execution carrier distribution (all commands, short
-        // and long; persisted per-task for long commands below).
+        // Q1 telemetry: execution carrier distribution (all commands; persisted
+        // per-task for structured commands below).
         let carrier = classify_carrier(command);
         super::telemetry::record_carrier(carrier.as_str());
 
         let is_auto = mode == "auto";
         let is_explicit_sync = mode == "sync";
-        let is_short = is_short_command(command);
         // When the agent provides a parse_hint, it expects structured output —
         // bypass the zero-overhead short path to ensure parser processing.
         let has_hint = parse_hint.is_some();
 
+        // Detect before choosing the execution path. Parser definitions own
+        // command detection, so adding a TOML parser automatically opts its
+        // commands into structured execution without editing Rust policy.
+        let detected_tool = if parse_hint == Some("json") {
+            // Historical explicit JSON mode: it forces the structured path,
+            // while the pipeline's whole-output JSON layer performs parsing.
+            // It is not a registry asset and therefore has no ParsedTool.
+            None
+        } else if let Some(hint) = parse_hint {
+            Some(self.parser.get_by_name(hint).ok_or_else(|| {
+                ArshyError::Ipc(format!(
+                    "unknown parser '{}'; omit parse_hint for auto-detection",
+                    hint
+                ))
+            })?)
+        } else {
+            self.parser.detect(command)
+        };
+        let is_short = is_short_command_with_route(
+            command,
+            detected_tool.is_some() || has_hint,
+            if has_hint {
+                Some("structured")
+            } else {
+                detected_tool.as_ref().map(|tool| tool.route.as_str())
+            },
+        );
+
+        // `max_concurrent_tasks` is a daemon-wide resource bound, not a
+        // parser-only bound. Fast-path commands are cheaper, but leaving them
+        // unlimited lets concurrent MCP clients create an unbounded number of
+        // processes when the rate limiter is disabled (the default).
+        let task_permit = self.task_semaphore.clone().try_acquire_owned().map_err(|_| {
+            ArshyError::Ipc(format!(
+                "too many concurrent tasks: limit {} reached (max_concurrent_tasks)",
+                self.config.max_concurrent_tasks
+            ))
+        })?;
+
         // ── Auto + short (no hint) → zero-overhead fast path ──────────────
         if is_auto && is_short && !has_hint {
+            let _permit = task_permit;
             super::telemetry::record_task_created();
             let spawn_cwd_str = spawn_cwd.as_ref().map(|p| p.to_string_lossy().to_string());
+            let _activity = FastActivityGuard::new(self.store.clone());
             let result =
                 self.run_short(command, spawn_cwd_str.as_deref(), timeout_ms, env_for_spawn).await;
             // Clean up symlink fallback if used
@@ -319,25 +412,9 @@ impl Executor {
         }
 
         // ── Full structured path ──────────────────────────────────────────
-        // Enforce `daemon.max_concurrent_tasks` on the structured path. The
-        // short path stays free (it is bounded by the rate limiter) so
-        // zero-overhead commands are never queued behind builds.
-        let _permit = match self.task_semaphore.clone().try_acquire_owned() {
-            Ok(permit) => permit,
-            Err(_) => {
-                return Err(ArshyError::Ipc(format!(
-                    "too many concurrent tasks: limit {} reached (max_concurrent_tasks)",
-                    self.config.max_concurrent_tasks
-                )));
-            }
-        };
+        let _permit = task_permit;
 
-        // When parse_hint names a parser, use it directly; otherwise auto-detect.
-        let tool = if let Some(hint) = parse_hint {
-            self.parser.get_by_name(hint).or_else(|| self.parser.detect(command))
-        } else {
-            self.parser.detect(command)
-        };
+        let tool = detected_tool;
         let task_id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now().to_rfc3339();
         let cwd_string = cwd.map(String::from);
@@ -359,11 +436,6 @@ impl Executor {
             carrier: Some(carrier.as_str().to_string()),
         };
         self.store.insert_task(&task)?;
-        // Store detected tool name for async enrichment (Bug #2 fix)
-        if let Some(ref t) = tool {
-            let _ = self.store.set_detected_tool(&task_id, &t.tool_name);
-        }
-
         // Auto + non-short → sync (wait for completion, with 30s timeout)
         // Explicit sync/async → as-is
         let is_sync = is_explicit_sync || (is_auto && !is_short);
@@ -382,7 +454,6 @@ impl Executor {
         let cmd = command.to_string();
         let task_id_bg = task_id.clone();
         let detected_tool = tool;
-        let detected_tool_clone = detected_tool.clone();
 
         super::telemetry::record_task_created();
 
@@ -413,12 +484,34 @@ impl Executor {
             env: effective_env.or_else(|| env.cloned()),
         };
         let task_id_cleanup = task_id.clone();
+        let store_on_failure = store_for_enrichment.clone();
+        let event_bus_on_failure = self.event_bus.clone();
         let symlink_cleanup = symlink_to_cleanup;
         tokio::spawn(async move {
             // Hold the concurrency permit for the whole task lifetime.
             let _permit = _permit;
             if let Err(e) = run_background(task).await {
                 tracing::error!("background task failed: {}", e);
+                // A pre-spawn failure used to leave the persisted task in
+                // Running forever, which also disabled daemon idle exit. Keep
+                // the lifecycle terminal even when execution never started.
+                let _ = store_on_failure.update_task(
+                    &task_id_cleanup,
+                    &TaskStatus::Failed,
+                    Some(-1),
+                    Some(0),
+                );
+                store_on_failure.mark_activity();
+                event_bus_on_failure.publish(crate::daemon::bus::BusEvent {
+                    connection_id: 0,
+                    kind: crate::daemon::bus::BusEventKind::TaskComplete {
+                        task_id: task_id_cleanup.clone(),
+                        status: "failed".into(),
+                        exit_code: -1,
+                        duration_ms: 0,
+                    },
+                });
+                super::telemetry::record_task_completed(false);
             }
             // Clean up symlink fallback if used
             if let Some(ref link) = symlink_cleanup {
@@ -436,12 +529,12 @@ impl Executor {
                 duration_ms: None,
                 error_count: None,
                 warning_count: None,
+                event_count: None,
                 raw_output: None,
                 short_command: false,
                 root_cause: None,
                 project_context: None,
                 raw_output_bytes: None,
-                agent_delivered_bytes: None,
             });
         }
 
@@ -466,12 +559,12 @@ impl Executor {
                                 duration_ms: None,
                                 error_count: None,
                                 warning_count: None,
+                                event_count: None,
                                 raw_output: None,
                                 short_command: false,
                                 root_cause: None,
                                 project_context: None,
                                 raw_output_bytes: None,
-                                agent_delivered_bytes: None,
                             });
                         }
                     }
@@ -483,7 +576,10 @@ impl Executor {
                     Ok(info) => {
                         // Query events from store — only used for summary/root_cause computation.
                         // The full events array is NOT sent to the agent; use arshy_query for detail.
-                        let events_json: Option<Vec<serde_json::Value>> = {
+                        let (events_json, mut event_summary): (
+                            Option<Vec<serde_json::Value>>,
+                            super::store::EventSummary,
+                        ) = {
                             let params = crate::ipc::QueryParams {
                                 task_id: Some(task_id.clone()),
                                 event_type: None,
@@ -494,60 +590,41 @@ impl Executor {
                                 offset: 0,
                                 include_logs: false,
                             };
-                            self.store.query_events(&params).ok().map(|(evts, _total)| {
-                                evts.into_iter()
-                                    .map(|e| serde_json::to_value(&e).unwrap_or_default())
-                                    .collect()
-                            })
+                            self.store
+                                .query_events_with_summary(&params)
+                                .map(|(evts, summary)| {
+                                    (
+                                        Some(
+                                            evts.into_iter()
+                                                .map(|e| {
+                                                    serde_json::to_value(&e).unwrap_or_default()
+                                                })
+                                                .collect(),
+                                        ),
+                                        summary,
+                                    )
+                                })
+                                .unwrap_or((None, super::store::EventSummary::default()))
                         };
 
                         let events_json = if errors_only {
+                            event_summary.total = event_summary.errors;
+                            event_summary.warnings = 0;
                             filter_events_errors_only(&events_json)
                         } else {
                             events_json
                         };
 
-                        // Count errors / warnings from the SAME events array we send
-                        // to the agent. Previously we used `info.error_count` from the
-                        // background task, which counts *all* events including logs —
-                        // but the response's `events` array filters logs out, so the
-                        // count was inconsistent with what the agent actually sees
-                        // (e.g. Go build: events=2 error vs response.error_count=0).
-                        let response_error_count: u64 = events_json
-                            .as_ref()
-                            .map(|evts| {
-                                evts.iter()
-                                    .filter(|e| {
-                                        e.get("severity").and_then(|v| v.as_str()) == Some("error")
-                                    })
-                                    .count() as u64
-                            })
-                            .unwrap_or(0);
-                        let response_warning_count: u64 = events_json
-                            .as_ref()
-                            .map(|evts| {
-                                evts.iter()
-                                    .filter(|e| {
-                                        e.get("severity").and_then(|v| v.as_str())
-                                            == Some("warning")
-                                    })
-                                    .count() as u64
-                            })
-                            .unwrap_or(0);
+                        // Counts describe the complete visible event set, not
+                        // just the first 200 events loaded for enrichment.
+                        let response_error_count = event_summary.errors;
+                        let response_warning_count = event_summary.warnings;
+                        let response_event_count = event_summary.total;
 
-                        // Enrich error/warning events with surrounding source context + hints
-                        let enriched_events = {
-                            let cwd_path = std::path::PathBuf::from(cwd.unwrap_or("."));
-                            let evts = events_json.clone().unwrap_or_default();
-                            let evts_fallback = evts.clone();
-                            let tool_name =
-                                detected_tool_clone.as_ref().map(|t| t.tool_name.clone());
-                            tokio::task::spawn_blocking(move || {
-                                Some(enrich_events(evts, &cwd_path, tool_name.as_deref()))
-                            })
-                            .await
-                            .unwrap_or(Some(evts_fallback))
-                        };
+                        // Background completion enriches both sync and async
+                        // tasks before signalling done, so this response reads
+                        // the same persisted representation as later queries.
+                        let enriched_events = events_json.clone();
 
                         let project_context = {
                             let status_clone = info.status.clone();
@@ -564,77 +641,20 @@ impl Executor {
                             .unwrap_or(None)
                         };
 
-                        // Persist enriched events back to store (context + hints)
-                        // Uses merge strategy to preserve log events (Bug #1 fix)
-                        if let Some(ref evts) = enriched_events {
-                            let task_events: Vec<crate::ipc::TaskEvent> = evts
-                                .iter()
-                                .filter_map(|e| serde_json::from_value(e.clone()).ok())
-                                .collect();
-                            if !task_events.is_empty() {
-                                if let Err(e) = store_for_enrichment
-                                    .merge_enriched_events(&task_id, &task_events)
-                                {
-                                    tracing::warn!(
-                                        "failed to persist enriched events for {}: {}",
-                                        task_id,
-                                        e
-                                    );
-                                }
-                                let _ = store_for_enrichment.mark_enriched(&task_id);
-                            }
-                        }
-
-                        // Compute and save agent_delivered_bytes for telemetry
-                        let rc_msg = extract_root_cause(&enriched_events).and_then(|rc| {
-                            rc.get("message").and_then(|v| v.as_str()).map(|s| s.to_string())
-                        });
-                        let rc_file = extract_root_cause(&enriched_events).and_then(|rc| {
-                            rc.get("file").and_then(|v| v.as_str()).map(|s| s.to_string())
-                        });
-                        let git_diff = project_context.as_ref().and_then(|pc| {
-                            pc.get("git_diff_stat").and_then(|v| v.as_str()).map(|s| s.to_string())
-                        });
-
-                        // Compute agent_delivered_bytes against the actual raw
-                        // size from the task record. We pass response_error_count /
-                        // response_warning_count (computed from the same events we
-                        // ship to the agent) so the formula's base cost reflects
-                        // what's actually rendered.
                         let raw_len = store_for_enrichment.get_task_raw_output_bytes(&task_id);
-                        let delivered_bytes = calculate_agent_delivered_bytes(
-                            false,
-                            raw_len,
-                            response_error_count,
-                            response_warning_count,
-                            rc_msg.as_deref(),
-                            rc_file.as_deref(),
-                            git_diff.as_deref(),
-                        );
-                        let _ = store_for_enrichment
-                            .update_task_agent_delivered_bytes(&task_id, delivered_bytes);
-
-                        // Surface per-task metrics in the run response so consumers
-                        // (measure-savings, dashboards, agents) can compute
-                        // per-task savings without re-querying the store.
-                        let raw_output_bytes =
-                            store_for_enrichment.get_task_raw_output_bytes(&task_id);
                         Ok(RunResult {
                             task_id: task_id.clone(),
                             status: info.status.clone(),
                             exit_code: Some(info.exit_code),
                             duration_ms: Some(info.duration_ms),
-                            // Use counts derived from the same `events_json` we ship
-                            // to the agent — see comment above for why this can't be
-                            // `info.error_count` directly.
                             error_count: Some(response_error_count),
                             warning_count: Some(response_warning_count),
+                            event_count: Some(response_event_count),
                             raw_output: None,
                             short_command: false,
                             root_cause: extract_root_cause(&enriched_events),
                             project_context,
-                            raw_output_bytes: Some(raw_output_bytes),
-                            agent_delivered_bytes: Some(delivered_bytes),
+                            raw_output_bytes: Some(raw_len),
                         })
                     }
                     Err(_) => Ok(RunResult {
@@ -644,12 +664,12 @@ impl Executor {
                         duration_ms: None,
                         error_count: None,
                         warning_count: None,
+                        event_count: None,
                         raw_output: None,
                         short_command: false,
                         root_cause: None,
                         project_context: None,
                         raw_output_bytes: None,
-                        agent_delivered_bytes: None,
                     }),
                 }
             }
@@ -657,7 +677,7 @@ impl Executor {
         }
     }
 
-    /// Zero-overhead fast path for short commands.
+    /// Zero-overhead raw-output path for inspection commands.
     ///
     /// Skips Store insert, parser session, EventBus — directly spawns, waits,
     /// and returns raw stdout. Security checks and audit logging still apply.
@@ -675,18 +695,33 @@ impl Executor {
         let mut handle = pty::spawn_command(command, cwd_path.as_deref(), env).await?;
         let _pid = handle.pid; // captured for audit/debug, not exposed to agent
 
-        let timeout_dur = tokio::time::Duration::from_millis(
-            timeout_ms.unwrap_or(self.config.max_task_duration_ms),
-        );
+        let effective_timeout = timeout_ms
+            .map(|value| value.min(self.config.max_task_duration_ms))
+            .unwrap_or(self.config.max_task_duration_ms);
+        let timeout_dur = tokio::time::Duration::from_millis(effective_timeout);
 
         // Collect both stdout and stderr (the `_source` tag is deliberately
         // ignored): short commands return one merged raw blob so a failing
         // `git push` / `ls missing` still surfaces its stderr diagnostics.
         let mut stdout_lines: Vec<String> = Vec::new();
+        let mut captured_bytes = 0u64;
+        let mut total_bytes = 0u64;
+        let mut truncated = false;
+        let max_bytes = self.config.max_output_bytes;
         let timed_out = tokio::select! {
             _result = async {
                 while let Some((_source, line)) = handle.output_rx.recv().await {
-                    stdout_lines.push(line);
+                    let line_bytes = line.len() as u64 + u64::from(!stdout_lines.is_empty());
+                    total_bytes = total_bytes.saturating_add(line_bytes);
+                    if !truncated && captured_bytes.saturating_add(line_bytes) <= max_bytes {
+                        captured_bytes = captured_bytes.saturating_add(line_bytes);
+                        stdout_lines.push(line);
+                    } else {
+                        // Continue draining after the capture limit. Dropping
+                        // the receiver can back-pressure the child's pipes and
+                        // turn output truncation into an indefinite hang.
+                        truncated = true;
+                    }
                 }
             } => Ok(()),
             _ = tokio::time::sleep(timeout_dur) => {
@@ -710,7 +745,13 @@ impl Executor {
             }
         };
 
-        let raw_output = stdout_lines.join("\n");
+        let mut raw_output = stdout_lines.join("\n");
+        if truncated {
+            if !raw_output.is_empty() {
+                raw_output.push('\n');
+            }
+            raw_output.push_str(&format!("[output truncated at {} bytes]", max_bytes));
+        }
 
         // Audit log
         if let Some(ref audit) = self.audit_log {
@@ -732,17 +773,29 @@ impl Executor {
             duration_ms: Some(duration_ms),
             error_count: None,
             warning_count: None,
+            event_count: None,
             raw_output: Some(raw_output),
             short_command: true,
             root_cause: None,
             project_context: None,
-            raw_output_bytes: None,
-            agent_delivered_bytes: None,
+            raw_output_bytes: Some(total_bytes),
         })
     }
 
     /// Kill a running task gracefully (SIGINT → SIGTERM → SIGKILL).
     pub async fn kill(&self, task_id: &str) -> Result<()> {
+        let stored = self
+            .store
+            .get_task(task_id)?
+            .ok_or_else(|| ArshyError::TaskNotFound(task_id.to_string()))?;
+        if stored.status.is_terminal() {
+            return Err(ArshyError::Ipc(format!(
+                "task {} is already {}",
+                task_id,
+                stored.status.as_str()
+            )));
+        }
+
         let kill_tx = self.kill_registry.lock().await.remove(task_id);
         match kill_tx {
             Some(tx) => {
@@ -751,9 +804,11 @@ impl Executor {
                 Ok(())
             }
             None => {
-                // Task not found in registry — may have already finished.
-                // Mark as killed in DB anyway.
+                // A Running task without a registry entry is inconsistent but
+                // cannot be controlled. Make it terminal so it does not pin
+                // daemon idle exit forever.
                 self.store.update_task(task_id, &TaskStatus::Killed, Some(-1), None)?;
+                self.store.mark_activity();
                 Ok(())
             }
         }
@@ -793,6 +848,9 @@ impl Executor {
     /// Tail the most recent events of a task, or the last `lines` lines of
     /// the raw output when `format` is "raw" (`<store>/raw/<task_id>.txt`).
     pub async fn tail(&self, task_id: &str, lines: usize, format: &str) -> Result<Vec<String>> {
+        if self.store.get_task(task_id)?.is_none() {
+            return Err(ArshyError::TaskNotFound(task_id.to_string()));
+        }
         // 0 = all lines (raw channel needs a way to fetch the whole output).
         let lines = if lines == 0 { usize::MAX } else { lines };
         if format == "raw" {

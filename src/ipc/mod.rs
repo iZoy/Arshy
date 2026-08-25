@@ -104,6 +104,16 @@ impl TaskStatus {
     pub fn is_terminal(&self) -> bool {
         matches!(self, Self::Completed | Self::Failed | Self::Killed | Self::Timeout)
     }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Running => "running",
+            Self::Completed => "completed",
+            Self::Failed => "failed",
+            Self::Killed => "killed",
+            Self::Timeout => "timeout",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -324,34 +334,18 @@ pub struct StatsResponse {
     /// Per-parser usage counts (top parsers by task count).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub per_parser_usage: Option<Vec<ParserCount>>,
-    /// Basis used to compute `estimated_token_savings_pct`.
-    ///
-    /// Honest telemetry: the savings number is only as trustworthy as how we
-    /// measured it. The 10% fallback heuristic in `get_stats()` was a silent
-    /// contributor to the published figure — this field makes it explicit.
-    ///
-    /// - `"measured"`: every task had an exact `agent_delivered_bytes`.
-    /// - `"estimated"`: at least one task used the 10% fallback heuristic;
-    ///   treat the savings figure as approximate.
-    /// - `"none"`: no raw output yet (nothing to measure).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub savings_basis: Option<String>,
-    /// Number of tasks whose `agent_delivered_bytes` was the 10% fallback
-    /// heuristic rather than a measured value. Honest counter for QA / CI.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub savings_fallback_task_count: Option<u64>,
     /// Total raw output bytes across all tasks.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub total_raw_output_bytes: Option<u64>,
-    /// Total structured events bytes across all tasks.
+    /// Total deterministically serialized structured event bytes across tasks.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub total_agent_delivered_bytes: Option<u64>,
+    pub total_structured_output_bytes: Option<u64>,
     /// Total agent-visible events (non-log) across all tasks.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub total_agent_visible_events: Option<u64>,
+    pub total_visible_events: Option<u64>,
     /// Total agent-skipped events (log type) across all tasks.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub total_agent_skipped_events: Option<u64>,
+    pub total_skipped_noise_events: Option<u64>,
     /// Total locations extracted across all tasks.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub total_locations_extracted: Option<u64>,
@@ -361,6 +355,40 @@ pub struct StatsResponse {
     /// Total contexts enriched across all tasks.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub total_contexts_enriched: Option<u64>,
+    /// Versioned, analytics-only efficiency report. Never present in a run
+    /// response or on the executor's hot path.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub efficiency: Option<EfficiencyReport>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EfficiencyReport {
+    /// Component-only quality measurements. There is intentionally no
+    /// aggregate score: each component has different semantics and must not
+    /// be presented as a universal token-saving percentage.
+    pub schema_version: String,
+    pub components: EfficiencyComponents,
+    pub counters: EfficiencyCounters,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EfficiencyComponents {
+    pub content_convergence_pct: Option<f64>,
+    pub noise_filter_pct: Option<f64>,
+    pub diagnostic_completeness_pct: Option<f64>,
+    pub dedup_reduction_pct: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EfficiencyCounters {
+    pub raw_output_bytes: u64,
+    pub structured_output_bytes: u64,
+    pub visible_events: u64,
+    pub skipped_noise_events: u64,
+    pub dedup_collapsed_events: u64,
+    pub locations_extracted: u64,
+    pub codes_extracted: u64,
+    pub contexts_enriched: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

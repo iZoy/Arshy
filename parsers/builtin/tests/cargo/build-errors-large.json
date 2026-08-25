@@ -1,6 +1,16 @@
 [
   {
     "code": "E0308",
+    "context": {
+      "after": [
+        "15 |     pub name: String,",
+        "   |                ^^^^^^ expected `String`, found `&str`",
+        "   = note: expected type `String`",
+        "              found type `&str`"
+      ],
+      "before": [],
+      "line": "mismatched types"
+    },
     "file": "src/models/user.rs",
     "line": 15,
     "message": "mismatched types",
@@ -8,37 +18,15 @@
     "type": "diagnostic"
   },
   {
-    "message": "   |",
-    "severity": "info",
-    "type": "log"
-  },
-  {
-    "message": "15 |     pub name: String,",
-    "severity": "info",
-    "type": "log"
-  },
-  {
-    "message": "   |                ^^^^^^ expected `String`, found `&str`",
-    "severity": "info",
-    "type": "log"
-  },
-  {
-    "message": "   |",
-    "severity": "info",
-    "type": "log"
-  },
-  {
-    "message": "   = note: expected type `String`",
-    "severity": "info",
-    "type": "log"
-  },
-  {
-    "message": "              found type `&str`",
-    "severity": "info",
-    "type": "log"
-  },
-  {
     "code": "E0308",
+    "context": {
+      "after": [
+        "22 |     pub email: Option<String>,",
+        "   |                          ^^^^^^ expected `String`, found `&str`"
+      ],
+      "before": [],
+      "line": "mismatched types"
+    },
     "file": "src/models/user.rs",
     "line": 22,
     "message": "mismatched types",
@@ -46,22 +34,18 @@
     "type": "diagnostic"
   },
   {
-    "message": "   |",
-    "severity": "info",
-    "type": "log"
-  },
-  {
-    "message": "22 |     pub email: Option<String>,",
-    "severity": "info",
-    "type": "log"
-  },
-  {
-    "message": "   |                          ^^^^^^ expected `String`, found `&str`",
-    "severity": "info",
-    "type": "log"
-  },
-  {
     "code": "E0599",
+    "context": {
+      "after": [
+        "45 |     user.save(&pool).await?;",
+        "   |          ^^^^ method not found in `User`",
+        "the trait bound `DatabasePool: sqlx::Executor` is not satisfied",
+        "50 |     sqlx::query(\"INSERT INTO users ...\")",
+        "   |                    ^^^^^^^^^^^^^^^^^^^^ the trait `sqlx::Executor` is not implemented for `DatabasePool`"
+      ],
+      "before": [],
+      "line": "no method named `save` found for struct `User`"
+    },
     "file": "src/handlers/auth.rs",
     "line": 45,
     "message": "no method named `save` found for struct `User`",
@@ -69,45 +53,15 @@
     "type": "diagnostic"
   },
   {
-    "message": "   |",
-    "severity": "info",
-    "type": "log"
-  },
-  {
-    "message": "45 |     user.save(&pool).await?;",
-    "severity": "info",
-    "type": "log"
-  },
-  {
-    "message": "   |          ^^^^ method not found in `User`",
-    "severity": "info",
-    "type": "log"
-  },
-  {
-    "code": "E0277",
-    "file": "src/handlers/auth.rs",
-    "line": 50,
-    "message": "the trait bound `DatabasePool: sqlx::Executor` is not satisfied",
-    "severity": "error",
-    "type": "diagnostic"
-  },
-  {
-    "message": "   |",
-    "severity": "info",
-    "type": "log"
-  },
-  {
-    "message": "50 |     sqlx::query(\"INSERT INTO users ...\")",
-    "severity": "info",
-    "type": "log"
-  },
-  {
-    "message": "   |                    ^^^^^^^^^^^^^^^^^^^^ the trait `sqlx::Executor` is not implemented for `DatabasePool`",
-    "severity": "info",
-    "type": "log"
-  },
-  {
     "code": "E0308",
+    "context": {
+      "after": [
+        "65 |     let id: i64 = row.get(\"id\");",
+        "   |               ^^^ expected `i64`, found `String`"
+      ],
+      "before": [],
+      "line": "mismatched types"
+    },
     "file": "src/handlers/auth.rs",
     "line": 65,
     "message": "mismatched types",
@@ -115,22 +69,15 @@
     "type": "diagnostic"
   },
   {
-    "message": "   |",
-    "severity": "info",
-    "type": "log"
-  },
-  {
-    "message": "65 |     let id: i64 = row.get(\"id\");",
-    "severity": "info",
-    "type": "log"
-  },
-  {
-    "message": "   |               ^^^ expected `i64`, found `String`",
-    "severity": "info",
-    "type": "log"
-  },
-  {
     "code": "E0308",
+    "context": {
+      "after": [
+        "12 |     pub title: String,",
+        "   |                ^^^^^^ expected `String`, found `&str`"
+      ],
+      "before": [],
+      "line": "mismatched types"
+    },
     "file": "src/models/post.rs",
     "line": 12,
     "message": "mismatched types",
@@ -138,22 +85,15 @@
     "type": "diagnostic"
   },
   {
-    "message": "   |",
-    "severity": "info",
-    "type": "log"
-  },
-  {
-    "message": "12 |     pub title: String,",
-    "severity": "info",
-    "type": "log"
-  },
-  {
-    "message": "   |                ^^^^^^ expected `String`, found `&str`",
-    "severity": "info",
-    "type": "log"
-  },
-  {
     "code": "E0308",
+    "context": {
+      "after": [
+        "18 |     pub body: Option<String>,",
+        "   |                        ^^^^^^ expected `String`, found `&str`"
+      ],
+      "before": [],
+      "line": "mismatched types"
+    },
     "file": "src/models/post.rs",
     "line": 18,
     "message": "mismatched types",
@@ -161,22 +101,15 @@
     "type": "diagnostic"
   },
   {
-    "message": "   |",
-    "severity": "info",
-    "type": "log"
-  },
-  {
-    "message": "18 |     pub body: Option<String>,",
-    "severity": "info",
-    "type": "log"
-  },
-  {
-    "message": "   |                        ^^^^^^ expected `String`, found `&str`",
-    "severity": "info",
-    "type": "log"
-  },
-  {
     "code": "E0599",
+    "context": {
+      "after": [
+        "30 |     post.publish().await?;",
+        "   |          ^^^^^^^ method not found in `Post`"
+      ],
+      "before": [],
+      "line": "no method named `publish` found for struct `Post`"
+    },
     "file": "src/handlers/posts.rs",
     "line": 30,
     "message": "no method named `publish` found for struct `Post`",
@@ -184,22 +117,15 @@
     "type": "diagnostic"
   },
   {
-    "message": "   |",
-    "severity": "info",
-    "type": "log"
-  },
-  {
-    "message": "30 |     post.publish().await?;",
-    "severity": "info",
-    "type": "log"
-  },
-  {
-    "message": "   |          ^^^^^^^ method not found in `Post`",
-    "severity": "info",
-    "type": "log"
-  },
-  {
     "code": "E0277",
+    "context": {
+      "after": [
+        "35 |     let posts = sqlx::query_as!(Post, \"SELECT * FROM posts\").fetch_all(&pool).await?;",
+        "   |                                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `From<sqlx::Error>` is not implemented for `AppError`"
+      ],
+      "before": [],
+      "line": "`?` couldn't convert the error type"
+    },
     "file": "src/handlers/posts.rs",
     "line": 35,
     "message": "`?` couldn't convert the error type",
@@ -207,22 +133,15 @@
     "type": "diagnostic"
   },
   {
-    "message": "   |",
-    "severity": "info",
-    "type": "log"
-  },
-  {
-    "message": "35 |     let posts = sqlx::query_as!(Post, \"SELECT * FROM posts\").fetch_all(&pool).await?;",
-    "severity": "info",
-    "type": "log"
-  },
-  {
-    "message": "   |                                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `From<sqlx::Error>` is not implemented for `AppError`",
-    "severity": "error",
-    "type": "log"
-  },
-  {
     "code": "E0308",
+    "context": {
+      "after": [
+        "50 |     let author: String = row.get(\"author_id\");",
+        "   |                  ^^^^^^ expected `String`, found `i64`"
+      ],
+      "before": [],
+      "line": "mismatched types"
+    },
     "file": "src/handlers/posts.rs",
     "line": 50,
     "message": "mismatched types",
@@ -230,22 +149,18 @@
     "type": "diagnostic"
   },
   {
-    "message": "   |",
-    "severity": "info",
-    "type": "log"
-  },
-  {
-    "message": "50 |     let author: String = row.get(\"author_id\");",
-    "severity": "info",
-    "type": "log"
-  },
-  {
-    "message": "   |                  ^^^^^^ expected `String`, found `i64`",
-    "severity": "info",
-    "type": "log"
-  },
-  {
     "code": "E0599",
+    "context": {
+      "after": [
+        "60 |     post.delete(&pool).await?;",
+        "   |          ^^^^^^ method not found in `Post`",
+        "the trait bound `AppError: From<ValidationError>` is not satisfied",
+        "20 |     validate(&req).map_err(AppError::from)?;",
+        "   |                    ^^^^^^^^^^^^^^^^^^^^^^^^ the trait `From<ValidationError>` is not implemented for `AppError`"
+      ],
+      "before": [],
+      "line": "no method named `delete` found for struct `Post`"
+    },
     "file": "src/handlers/posts.rs",
     "line": 60,
     "message": "no method named `delete` found for struct `Post`",
@@ -253,45 +168,15 @@
     "type": "diagnostic"
   },
   {
-    "message": "   |",
-    "severity": "info",
-    "type": "log"
-  },
-  {
-    "message": "60 |     post.delete(&pool).await?;",
-    "severity": "info",
-    "type": "log"
-  },
-  {
-    "message": "   |          ^^^^^^ method not found in `Post`",
-    "severity": "info",
-    "type": "log"
-  },
-  {
-    "code": "E0277",
-    "file": "src/middleware/validation.rs",
-    "line": 20,
-    "message": "the trait bound `AppError: From<ValidationError>` is not satisfied",
-    "severity": "error",
-    "type": "diagnostic"
-  },
-  {
-    "message": "   |",
-    "severity": "info",
-    "type": "log"
-  },
-  {
-    "message": "20 |     validate(&req).map_err(AppError::from)?;",
-    "severity": "error",
-    "type": "log"
-  },
-  {
-    "message": "   |                    ^^^^^^^^^^^^^^^^^^^^^^^^ the trait `From<ValidationError>` is not implemented for `AppError`",
-    "severity": "error",
-    "type": "log"
-  },
-  {
     "code": "E0308",
+    "context": {
+      "after": [
+        "35 |     let rules: Vec<Rule> = config.get(\"rules\");",
+        "   |                          ^^^^^^^^^^^^^^^^^^^^^^ expected `Vec<Rule>`, found `Value`"
+      ],
+      "before": [],
+      "line": "mismatched types"
+    },
     "file": "src/middleware/validation.rs",
     "line": 35,
     "message": "mismatched types",
@@ -299,22 +184,15 @@
     "type": "diagnostic"
   },
   {
-    "message": "   |",
-    "severity": "info",
-    "type": "log"
-  },
-  {
-    "message": "35 |     let rules: Vec<Rule> = config.get(\"rules\");",
-    "severity": "info",
-    "type": "log"
-  },
-  {
-    "message": "   |                          ^^^^^^^^^^^^^^^^^^^^^^ expected `Vec<Rule>`, found `Value`",
-    "severity": "info",
-    "type": "log"
-  },
-  {
     "code": "E0599",
+    "context": {
+      "after": [
+        "45 |     validator.check(&input)?;",
+        "   |               ^^^^^ method not found in `Validator`"
+      ],
+      "before": [],
+      "line": "no method named `check` found for struct `Validator`"
+    },
     "file": "src/middleware/validation.rs",
     "line": 45,
     "message": "no method named `check` found for struct `Validator`",
@@ -322,22 +200,15 @@
     "type": "diagnostic"
   },
   {
-    "message": "   |",
-    "severity": "info",
-    "type": "log"
-  },
-  {
-    "message": "45 |     validator.check(&input)?;",
-    "severity": "info",
-    "type": "log"
-  },
-  {
-    "message": "   |               ^^^^^ method not found in `Validator`",
-    "severity": "info",
-    "type": "log"
-  },
-  {
     "code": "E0308",
+    "context": {
+      "after": [
+        "10 |     pub port: u16,",
+        "   |                ^^ expected `u16`, found `String`"
+      ],
+      "before": [],
+      "line": "mismatched types"
+    },
     "file": "src/config.rs",
     "line": 10,
     "message": "mismatched types",
@@ -345,22 +216,15 @@
     "type": "diagnostic"
   },
   {
-    "message": "   |",
-    "severity": "info",
-    "type": "log"
-  },
-  {
-    "message": "10 |     pub port: u16,",
-    "severity": "info",
-    "type": "log"
-  },
-  {
-    "message": "   |                ^^ expected `u16`, found `String`",
-    "severity": "info",
-    "type": "log"
-  },
-  {
     "code": "E0308",
+    "context": {
+      "after": [
+        "15 |     pub database_url: String,",
+        "   |                      ^^^^^^ expected `String`, found `&str`"
+      ],
+      "before": [],
+      "line": "mismatched types"
+    },
     "file": "src/config.rs",
     "line": 15,
     "message": "mismatched types",
@@ -368,22 +232,15 @@
     "type": "diagnostic"
   },
   {
-    "message": "   |",
-    "severity": "info",
-    "type": "log"
-  },
-  {
-    "message": "15 |     pub database_url: String,",
-    "severity": "info",
-    "type": "log"
-  },
-  {
-    "message": "   |                      ^^^^^^ expected `String`, found `&str`",
-    "severity": "info",
-    "type": "log"
-  },
-  {
     "code": "E0599",
+    "context": {
+      "after": [
+        "25 |     let pool = db.connect().await?;",
+        "   |                    ^^^^^^^ method not found in `DatabaseConfig`"
+      ],
+      "before": [],
+      "line": "no method named `connect` found for struct `DatabaseConfig`"
+    },
     "file": "src/main.rs",
     "line": 25,
     "message": "no method named `connect` found for struct `DatabaseConfig`",
@@ -391,21 +248,13 @@
     "type": "diagnostic"
   },
   {
-    "message": "   |",
-    "severity": "info",
-    "type": "log"
-  },
-  {
-    "message": "25 |     let pool = db.connect().await?;",
-    "severity": "info",
-    "type": "log"
-  },
-  {
-    "message": "   |                    ^^^^^^^ method not found in `DatabaseConfig`",
-    "severity": "info",
-    "type": "log"
-  },
-  {
+    "context": {
+      "after": [
+        "3  | use std::collections::HashMap;"
+      ],
+      "before": [],
+      "line": "unused import `std::collections::HashMap`"
+    },
     "file": "src/models/user.rs",
     "line": 3,
     "message": "unused import `std::collections::HashMap`",
@@ -413,21 +262,14 @@
     "type": "diagnostic"
   },
   {
-    "message": "   |",
-    "severity": "info",
-    "type": "log"
-  },
-  {
-    "message": "3  | use std::collections::HashMap;",
-    "severity": "info",
-    "type": "log"
-  },
-  {
-    "message": "   |     ^^^^^^^^^^^^^^^^^^^^^^^^^",
-    "severity": "info",
-    "type": "log"
-  },
-  {
+    "context": {
+      "after": [
+        "12 |     let debug = true;",
+        "   |         ^^^^^ help: prefix with an underscore: `_debug`"
+      ],
+      "before": [],
+      "line": "unused variable `debug`"
+    },
     "file": "src/handlers/auth.rs",
     "line": 12,
     "message": "unused variable `debug`",
@@ -435,21 +277,13 @@
     "type": "diagnostic"
   },
   {
-    "message": "   |",
-    "severity": "info",
-    "type": "log"
-  },
-  {
-    "message": "12 |     let debug = true;",
-    "severity": "info",
-    "type": "log"
-  },
-  {
-    "message": "   |         ^^^^^ help: prefix with an underscore: `_debug`",
-    "severity": "info",
-    "type": "log"
-  },
-  {
+    "context": {
+      "after": [
+        "5  | use chrono::Utc;"
+      ],
+      "before": [],
+      "line": "unused import `chrono::Utc`"
+    },
     "file": "src/models/post.rs",
     "line": 5,
     "message": "unused import `chrono::Utc`",
@@ -457,21 +291,14 @@
     "type": "diagnostic"
   },
   {
-    "message": "   |",
-    "severity": "info",
-    "type": "log"
-  },
-  {
-    "message": "5  | use chrono::Utc;",
-    "severity": "info",
-    "type": "log"
-  },
-  {
-    "message": "   |     ^^^^^^^^^^",
-    "severity": "info",
-    "type": "log"
-  },
-  {
+    "context": {
+      "after": [
+        "20 |     let mut posts = Vec::new();",
+        "   |         help: remove this `mut`"
+      ],
+      "before": [],
+      "line": "variable does not need to be mutable"
+    },
     "file": "src/handlers/posts.rs",
     "line": 20,
     "message": "variable does not need to be mutable",
@@ -479,43 +306,18 @@
     "type": "diagnostic"
   },
   {
-    "message": "   |",
-    "severity": "info",
-    "type": "log"
-  },
-  {
-    "message": "20 |     let mut posts = Vec::new();",
-    "severity": "info",
-    "type": "log"
-  },
-  {
-    "message": "   |         ----^^^^^",
-    "severity": "info",
-    "type": "log"
-  },
-  {
-    "message": "   |         |",
-    "severity": "info",
-    "type": "log"
-  },
-  {
-    "message": "   |         help: remove this `mut`",
-    "severity": "info",
-    "type": "log"
+    "message": "error: aborting due to 17 previous errors; 4 warnings emitted",
+    "severity": "error",
+    "type": "diagnostic"
   },
   {
     "message": "Some errors have detailed explanations: E0308, E0277, E0599.",
-    "severity": "error",
+    "severity": "info",
     "type": "log"
   },
   {
     "message": "For more information about an error, try `rustc --explain E0308`.",
-    "severity": "error",
+    "severity": "info",
     "type": "log"
-  },
-  {
-    "message": "error: aborting due to 17 previous errors; 4 warnings emitted",
-    "severity": "error",
-    "type": "diagnostic"
   }
 ]

@@ -147,35 +147,13 @@ fn starts_with_ignore_ascii_case(haystack: &str, prefix: &str) -> bool {
 
 /// Classify severity from a raw output line using common cross-language patterns.
 fn classify_severity(line: &str) -> &'static str {
-    let is_error = contains_ignore_ascii_case(line, "error")
-        || contains_ignore_ascii_case(line, "fatal")
-        || contains_ignore_ascii_case(line, "failed")
-        || contains_ignore_ascii_case(line, "panic")
-        || contains_ignore_ascii_case(line, "aborted")
-        || contains_ignore_ascii_case(line, "traceback")
-        || contains_ignore_ascii_case(line, "killed")
-        || contains_ignore_ascii_case(line, "segmentation fault")
-        || contains_ignore_ascii_case(line, "bus error")
-        || contains_ignore_ascii_case(line, "assertion failed")
-        || starts_with_ignore_ascii_case(line, "e ")
-        || starts_with_ignore_ascii_case(line, "e\t");
-
-    if is_error {
-        return "error";
+    if let Some(event) = super::heuristic::try_parse_heuristic(line) {
+        return match event.severity.as_deref() {
+            Some("error") => "error",
+            Some("warning") => "warning",
+            _ => "info",
+        };
     }
-
-    let is_warning = contains_ignore_ascii_case(line, "warning")
-        || contains_ignore_ascii_case(line, "warn")
-        || contains_ignore_ascii_case(line, "deprecated")
-        || contains_ignore_ascii_case(line, "notice")
-        || contains_ignore_ascii_case(line, "attention")
-        || starts_with_ignore_ascii_case(line, "w ")
-        || starts_with_ignore_ascii_case(line, "w\t");
-
-    if is_warning {
-        return "warning";
-    }
-
     "info"
 }
 
@@ -349,6 +327,9 @@ mod tests {
 
         let warn = raw_event("Warning: deprecated usage", 2);
         assert_eq!(warn.severity, Some("warning".into()));
+
+        let success = raw_event("test result: ok. 12 passed; 0 failed", 3);
+        assert_eq!(success.severity, Some("info".into()));
     }
 
     /// S3: enhanced error/warning detection

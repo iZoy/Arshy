@@ -5,13 +5,13 @@
     "type": "summary"
   },
   {
-    "message": "audited 50 packages",
-    "severity": "info",
-    "type": "summary"
-  },
-  {
     "message": "deprecated foo@1.0.0",
     "severity": "warning",
     "type": "diagnostic"
+  },
+  {
+    "message": "audited 50 packages",
+    "severity": "info",
+    "type": "summary"
   }
 ]

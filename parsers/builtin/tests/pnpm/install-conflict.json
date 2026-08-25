@@ -1,5 +1,10 @@
 [
   {
+    "message": " WARN  3 deprecated subdependencies found: fsevents@1.2.13, glob@7.2.3, inflight@1.0.6",
+    "severity": "warning",
+    "type": "diagnostic"
+  },
+  {
     "message": "Packages: +127",
     "severity": "info",
     "type": "summary"
@@ -10,14 +15,14 @@
     "type": "log"
   },
   {
-    "message": " WARN  3 deprecated subdependencies found: fsevents@1.2.13, glob@7.2.3, inflight@1.0.6",
-    "severity": "warning",
+    "message": "Progress: resolved 127, reused 89, downloaded 38, added 127, done",
+    "severity": "info",
     "type": "diagnostic"
   },
   {
     "message": " WARN  Issues with peer dependencies found",
     "severity": "warning",
-    "type": "log"
+    "type": "diagnostic"
   },
   {
     "message": ".",
@@ -38,10 +43,5 @@
     "message": " ERR_PNPM_PEER_DEP_ISSUES  Unmet peer dependencies",
     "severity": "info",
     "type": "log"
-  },
-  {
-    "message": "Progress: resolved 127, reused 89, downloaded 38, added 127, done",
-    "severity": "info",
-    "type": "diagnostic"
   }
 ]

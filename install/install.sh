@@ -1,152 +1,138 @@
-#!/bin/bash
-set -e
+#!/usr/bin/env bash
+set -euo pipefail
 
-# Arshy — One-Click Auto Installer
-#   install only:          curl -fsSL https://raw.githubusercontent.com/iZoy/Arshy/main/install/install.sh | sh
-#   install + enable one agent (ONE LINE):
-#                          curl -fsSL https://raw.githubusercontent.com/iZoy/Arshy/main/install/install.sh | sh -s -- --agent codex
-#
-# Args:
-#   --agent <id>    after install, wire arshy into that agent (codex, claude-code,
-#                   cursor, vscode, gemini, antigravity, opencode, aider, workbuddy)
-#                   and verify with `arshy doctor --agent <id>`
-#   --version <tag> release tag to download (default: v0.0.1); ignored when building
-#                   from source with cargo
-#   --dry-run       print the plan without changing anything
+# Generic Arshy installer. It installs only the two release binaries and never
+# edits an Agent config, shell profile, GUI PATH, or workspace file.
 
-AGENT=""
-VERSION="v0.0.1"
-DRY_RUN=false
-while [ "$#" -gt 0 ]; do
+VERSION="v0.1.0-dev.1"
+INSTALL_DIR="${HOME}/.local/bin"
+DRY_RUN=0
+
+usage() {
+    cat <<'EOF'
+Usage: install.sh [--version TAG] [--install-dir DIR] [--dry-run]
+
+Downloads a verified Arshy release for the current OS and architecture.
+After installation, configure any MCP-capable client with:
+  arshy mcp config
+EOF
+}
+
+while (($# > 0)); do
     case "$1" in
-        --agent) AGENT="${2:-}"; shift 2 ;;
-        --version) VERSION="${2:-}"; shift 2 ;;
-        --dry-run) DRY_RUN=true; shift ;;
+        --version)
+            [[ $# -ge 2 ]] || { echo "--version requires a tag" >&2; exit 2; }
+            VERSION="$2"
+            shift 2
+            ;;
+        --install-dir)
+            [[ $# -ge 2 ]] || { echo "--install-dir requires a path" >&2; exit 2; }
+            INSTALL_DIR="$2"
+            shift 2
+            ;;
+        --dry-run)
+            DRY_RUN=1
+            shift
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
         *)
-            echo "Unknown option: $1"
-            echo "Usage: install.sh [--agent <id>] [--version <tag>] [--dry-run]"
-            exit 1
+            echo "unknown option: $1" >&2
+            usage >&2
+            exit 2
             ;;
     esac
 done
 
-say() {
-    if [ "$DRY_RUN" = true ]; then echo "  [dry-run] $*"; else echo "$*"; fi
-}
-run() { # run "$description" command...
-    local desc="$1"; shift
-    say "$desc"
-    if [ "$DRY_RUN" = true ]; then return 0; fi
-    "$@"
-}
-
-echo "========================================="
-echo "   Arshy Command Center - Auto Installer"
-echo "========================================="
-[ -n "$AGENT" ] && echo "Target agent: $AGENT"
-[ "$DRY_RUN" = true ] && echo "DRY-RUN: nothing will be installed or configured."
-
-# 1. Detect OS & Architecture
 OS="$(uname -s)"
 ARCH="$(uname -m)"
-echo "Detected Environment: $OS ($ARCH)"
+case "${OS}-${ARCH}" in
+    Darwin-arm64|Darwin-aarch64) TARGET="aarch64-apple-darwin" ;;
+    Darwin-x86_64) TARGET="x86_64-apple-darwin" ;;
+    Linux-x86_64) TARGET="x86_64-unknown-linux-gnu" ;;
+    Linux-arm64|Linux-aarch64) TARGET="aarch64-unknown-linux-gnu" ;;
+    *)
+        echo "unsupported platform: ${OS} (${ARCH})" >&2
+        exit 1
+        ;;
+esac
 
-INSTALL_DIR="$HOME/.local/bin"
-run "create install dir $INSTALL_DIR" mkdir -p "$INSTALL_DIR"
+BASE_URL="https://github.com/iZoy/Arshy/releases/download/${VERSION}"
+ARCHIVE="arshy-${VERSION}-${TARGET}.tar.gz"
+CHECKSUM="${ARCHIVE}.sha256"
 
-# 2. Build or Fetch Binary
-BUILT=false
-if command -v cargo >/dev/null 2>&1; then
-    echo "Found Rust toolchain. Compiling from source..."
-    if [ "$DRY_RUN" = false ]; then
-        cargo build --release
-        cp target/release/arshy "$INSTALL_DIR/arshy"
-        cp target/release/arshyd "$INSTALL_DIR/arshyd"
+if ((DRY_RUN)); then
+    printf 'version:     %s\nplatform:    %s\narchive:     %s/%s\ninstall dir: %s\n' \
+        "$VERSION" "$TARGET" "$BASE_URL" "$ARCHIVE" "$INSTALL_DIR"
+    exit 0
+fi
+
+download() {
+    local url="$1" output="$2"
+    if command -v curl >/dev/null 2>&1; then
+        curl --fail --location --silent --show-error "$url" --output "$output"
+    elif command -v wget >/dev/null 2>&1; then
+        wget --https-only --quiet --output-document="$output" "$url"
     else
-        say "cargo build --release && cp target/release/{arshy,arshyd} -> $INSTALL_DIR"
+        echo "curl or wget is required" >&2
+        exit 1
     fi
-    BUILT=true
-else
-    echo "Rust compiler not found. Fetching prebuilt release $VERSION..."
-    # Artifact naming must match .github/workflows/release.yml:
-    # arshy-${VERSION}-${TARGET}.tar.gz with a rust target triple
-    # (e.g. arshy-v0.0.1-aarch64-apple-darwin.tar.gz).
-    case "$OS-$ARCH" in
-        Darwin-arm64|Darwin-aarch64) TARGET="aarch64-apple-darwin" ;;
-        Darwin-x86_64) TARGET="x86_64-apple-darwin" ;;
-        Linux-x86_64) TARGET="x86_64-unknown-linux-gnu" ;;
-        Linux-arm64|Linux-aarch64) TARGET="aarch64-unknown-linux-gnu" ;;
-        *) echo "Unsupported platform: $OS ($ARCH)"; exit 1 ;;
-    esac
-    URL="https://github.com/iZoy/Arshy/releases/download/${VERSION}/arshy-${VERSION}-${TARGET}.tar.gz"
-    echo "Downloading binary from: $URL"
-    if [ "$DRY_RUN" = false ]; then
-        if command -v curl >/dev/null 2>&1; then
-            curl -sSL "$URL" | tar -xz -C "$INSTALL_DIR"
-        elif command -v wget >/dev/null 2>&1; then
-            wget -qO- "$URL" | tar -xz -C "$INSTALL_DIR"
-        else
-            echo "Error: Neither curl nor wget found in PATH. Cannot download binary."
-            exit 1
-        fi
-        BUILT=true
+}
+
+verify_checksum() {
+    local checksum_file="$1" archive_file="$2"
+    if command -v shasum >/dev/null 2>&1; then
+        (cd "$(dirname "$archive_file")" && shasum -a 256 -c "$(basename "$checksum_file")")
+    elif command -v sha256sum >/dev/null 2>&1; then
+        (cd "$(dirname "$archive_file")" && sha256sum --check "$(basename "$checksum_file")")
     else
-        say "curl -sSL $URL | tar -xz -C $INSTALL_DIR"
-        BUILT=true
+        echo "shasum or sha256sum is required to verify the release" >&2
+        exit 1
     fi
-fi
+}
 
-if [ "$BUILT" = false ]; then
-    echo "Error: Failed to install Arshy binaries."
-    exit 1
-fi
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/arshy-install.XXXXXX")"
+cleanup() { rm -rf "$TMP_DIR"; }
+trap cleanup EXIT
 
-say "installed binaries -> $INSTALL_DIR (export PATH=\"$INSTALL_DIR:\$PATH\")"
-export PATH="$INSTALL_DIR:$PATH"
+echo "Downloading Arshy ${VERSION} (${TARGET})..."
+download "${BASE_URL}/${ARCHIVE}" "${TMP_DIR}/${ARCHIVE}"
+download "${BASE_URL}/${CHECKSUM}" "${TMP_DIR}/${CHECKSUM}"
+verify_checksum "${TMP_DIR}/${CHECKSUM}" "${TMP_DIR}/${ARCHIVE}"
 
-# 3. Transparent shell hook shims
-run "configure transparent shell hook shims" "$INSTALL_DIR/arshy" hook install
+mkdir -p "${TMP_DIR}/extracted" "${INSTALL_DIR}"
+tar -xzf "${TMP_DIR}/${ARCHIVE}" -C "${TMP_DIR}/extracted"
+[[ -x "${TMP_DIR}/extracted/arshy" ]] || { echo "archive is missing arshy" >&2; exit 1; }
+[[ -x "${TMP_DIR}/extracted/arshyd" ]] || { echo "archive is missing arshyd" >&2; exit 1; }
 
-# 4. Daemon auto-start strategy
-# arshy uses ON-DEMAND auto-start by design: the daemon is spawned automatically the
-# first time an agent runs a command inside a workspace that has opted in (a
-# `.arshy.toml` marker or `.arshy/` directory present). There is NO OS-level
-# (launchd/systemd) autostart — this is intentional so nothing starts on every boot.
-echo "Daemon auto-start: on-demand (no OS-level registration)."
-echo "  Opt a workspace in with:  arshy init"
-echo "  (optional) OS-level:      arshy install-launchd  /  arshy install-systemd"
+# Stage both files before replacing either installed binary. A failed copy
+# restores the previous pair so an interrupted upgrade cannot split versions.
+STAGE="${INSTALL_DIR}/.arshy-stage.$$"
+BACKUP="${TMP_DIR}/backup"
+mkdir -p "${STAGE}" "${BACKUP}"
+cp "${TMP_DIR}/extracted/arshy" "${STAGE}/arshy"
+cp "${TMP_DIR}/extracted/arshyd" "${STAGE}/arshyd"
+chmod 755 "${STAGE}/arshy" "${STAGE}/arshyd"
 
-# 5. Code-sign binaries (macOS only)
-# Ad-hoc code-signing prevents macOS from silently SIGKILL-ing the socket-bound daemon
-# binary. NOTE: re-running `cargo build --release && cp` without this step reintroduces
-# the risk, so it is part of the installer and should be repeated on manual rebuilds.
-if [ "$OS" = "Darwin" ] && command -v codesign >/dev/null 2>&1; then
-    say "ad-hoc code-signing binaries (macOS)"
-    if [ "$DRY_RUN" = false ]; then
-        codesign --force --deep -s - "$INSTALL_DIR/arshy" 2>/dev/null || echo "  (codesign arshy skipped)"
-        codesign --force --deep -s - "$INSTALL_DIR/arshyd" 2>/dev/null || echo "  (codesign arshyd skipped)"
-    fi
-fi
+had_arshy=0
+had_arshyd=0
+[[ -e "${INSTALL_DIR}/arshy" ]] && { cp "${INSTALL_DIR}/arshy" "${BACKUP}/arshy"; had_arshy=1; }
+[[ -e "${INSTALL_DIR}/arshyd" ]] && { cp "${INSTALL_DIR}/arshyd" "${BACKUP}/arshyd"; had_arshyd=1; }
+rollback() {
+    if [[ -f "${BACKUP}/arshy" ]]; then cp "${BACKUP}/arshy" "${INSTALL_DIR}/arshy"; elif ((had_arshy == 0)); then rm -f "${INSTALL_DIR}/arshy"; fi
+    if [[ -f "${BACKUP}/arshyd" ]]; then cp "${BACKUP}/arshyd" "${INSTALL_DIR}/arshyd"; elif ((had_arshyd == 0)); then rm -f "${INSTALL_DIR}/arshyd"; fi
+    rm -rf "${STAGE}"
+}
+trap rollback ERR
+mv -f "${STAGE}/arshy" "${INSTALL_DIR}/arshy"
+mv -f "${STAGE}/arshyd" "${INSTALL_DIR}/arshyd"
+rm -rf "${STAGE}"
+trap - ERR
 
-# 6. Optional: one-line agent enablement
-if [ -n "$AGENT" ]; then
-    echo ""
-    echo "Enabling arshy for $AGENT..."
-    run "arshy setup $AGENT" "$INSTALL_DIR/arshy" setup "$AGENT"
-    run "arshy doctor --agent $AGENT (verification)" "$INSTALL_DIR/arshy" doctor --agent "$AGENT"
-    echo ""
-    echo "Restart $AGENT to activate arshy (arshy_exec / arshy_query become available)."
-fi
-
-echo "========================================="
-echo "   Installation Completed Successfully! 🎉"
-echo "========================================="
-echo "Please restart your terminal or run:"
-echo "   source ~/.zshrc (or ~/.bashrc)"
-echo ""
-echo "To check installation status, run:"
-echo "   arshy status"
-echo ""
-echo "Drop your custom TOML parser definitions into:"
-echo "   ~/.arshy/parsers/"
-echo "========================================="
+echo "Installed arshy and arshyd in ${INSTALL_DIR}."
+echo "If needed, add this directory to PATH:"
+echo "  export PATH=\"${INSTALL_DIR}:\$PATH\""
+echo "Generic MCP configuration:"
+"$INSTALL_DIR/arshy" mcp config

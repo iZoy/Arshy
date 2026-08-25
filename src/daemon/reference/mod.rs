@@ -28,8 +28,6 @@ struct ReferenceFile {
 struct ReferenceMeta {
     #[serde(default)]
     name: String,
-    #[serde(default)]
-    description: String,
 }
 
 /// A single code reference. `message` states what the code means;
@@ -37,6 +35,7 @@ struct ReferenceMeta {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReferenceEntry {
     /// Tool the entry belongs to (filled from `meta.name` at load time).
+    #[serde(default)]
     pub tool: String,
     pub code: String,
     pub message: String,
@@ -115,33 +114,28 @@ impl ReferenceTable {
     }
 }
 
-#[derive(rust_embed::RustEmbed)]
-#[folder = "reference/builtin/"]
-#[include = "*.toml"]
-struct BuiltinReferenceAssets;
-
 /// Load all builtin reference tables. Logs warnings for parse failures.
 fn load_builtins() -> Vec<(String, ReferenceFile)> {
-    BuiltinReferenceAssets::iter()
-        .filter_map(|file_path| {
-            let name = file_path.to_string();
-            let file = BuiltinReferenceAssets::get(&file_path)?;
-            let content = std::str::from_utf8(file.data.as_ref()).ok()?;
-            match toml::from_str::<ReferenceFile>(content) {
-                Ok(def) => {
-                    if def.meta.name.is_empty() {
-                        tracing::warn!("reference file '{}': missing meta.name", name);
-                        return None;
-                    }
-                    Some((name, def))
-                }
-                Err(e) => {
-                    tracing::error!("reference file '{}': {}", name, e);
-                    None
-                }
-            }
-        })
-        .collect()
+    // Keep the builtin set explicit. This avoids silently shipping an empty
+    // table when an embed glob is not expanded by a particular build tool.
+    [
+        ("aws.toml", include_str!("../../../reference/builtin/aws.toml")),
+        ("docker.toml", include_str!("../../../reference/builtin/docker.toml")),
+        ("kubectl.toml", include_str!("../../../reference/builtin/kubectl.toml")),
+    ]
+    .into_iter()
+    .filter_map(|(name, content)| match toml::from_str::<ReferenceFile>(content) {
+        Ok(def) if !def.meta.name.is_empty() => Some((name.to_string(), def)),
+        Ok(_) => {
+            tracing::warn!("reference file '{}': missing meta.name", name);
+            None
+        }
+        Err(e) => {
+            tracing::error!("reference file '{}': {}", name, e);
+            None
+        }
+    })
+    .collect()
 }
 
 /// Load a reference table from a filesystem path.
@@ -187,7 +181,8 @@ mod tests {
         assert!(docker_130.iter().all(|e| e.tool == "docker"));
         let aws_130 = table.lookup("130", Some("aws")).unwrap();
         assert!(aws_130.iter().all(|e| e.tool == "aws"));
-        assert!(table.lookup("130", Some("kubectl")).is_none());
+        let kubectl_130 = table.lookup("130", Some("kubectl")).unwrap();
+        assert!(kubectl_130.iter().all(|e| e.tool == "kubectl"));
     }
 
     #[test]

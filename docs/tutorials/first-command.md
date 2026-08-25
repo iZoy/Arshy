@@ -42,8 +42,8 @@ arshy run "echo hello from arshy"
 
 `arshy run` 默认 `--mode auto`，自动区分命令长短：
 
-- **短命令**（`ls`、`echo`、`git status` 等检查类工具，或词数 ≤ 5 且长度 ≤ 80 的简单命令）：立即返回原始输出，零开销。
-- **长命令**（`cargo build`、`npm test`、`pytest`、`rustc` 等构建/测试前缀，以及含 `&&`、重定向、多管道、`--watch` 等特征的命令）：进入结构化路径，输出经过 6 层解析管线，事件去重、错误附带 `file:line` 与源代码上下文。
+- **原始快速路径**（`ls`、`echo`、`git status` 等检查类工具）：立即返回原始输出，零解析开销。
+- **结构化路径**：命令命中 parser 资产，或者包含 chaining、重定向、后台运行、`--watch` 等生命周期信号时，输出进入 6 层解析管线，事件去重、错误附带 `file:line` 与源代码上下文。新增 parser TOML 不需要再修改 Rust 命令名单。
 
 判断一条命令是否走长路径，看返回里的 `short_command` 字段即可。
 
@@ -211,7 +211,7 @@ pretty 视图会展示任务总数（按状态拆分）、事件数、失败率�
 arshy analyze --format pretty
 ```
 
-报告分几个区块：Summary（任务/事件/错误总量）、TOKEN EFFICIENCY（agent 可见事件占比与预估 token 节省）、INFORMATION DENSITY（带位置/错误码/上下文的事件数）、COMMAND PATTERNS（短/长命令占比、重试最多的命令）、REPAIR LOOP（修复循环）与 TOP RETRIED。
+报告包含 Summary、quality-v1 分项指标、INFORMATION DENSITY 与 COMMAND PATTERNS 等区块。它们是显式 analytics 的工程指标，不是 token 节省估算。
 
 ### 标记任务用途
 

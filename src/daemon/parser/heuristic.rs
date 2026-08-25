@@ -10,6 +10,9 @@ use std::sync::LazyLock;
 /// Try to match a line using heuristic error/warning detection.
 /// Returns `Some(event)` if a keyword matched, `None` otherwise.
 pub fn try_parse_heuristic(line: &str) -> Option<TaskEvent> {
+    if is_success_summary(line) {
+        return None;
+    }
     // Try error patterns first (higher priority)
     for pat in ERROR_PATTERNS.iter() {
         if let Some(caps) = pat.regex.captures(line) {
@@ -23,6 +26,24 @@ pub fn try_parse_heuristic(line: &str) -> Option<TaskEvent> {
         }
     }
     None
+}
+
+/// Common test runners include words such as "failed" in successful zero
+/// counters. Those summaries are evidence of success, not weak error signals.
+pub(crate) fn is_success_summary(line: &str) -> bool {
+    let lower = line.trim().to_ascii_lowercase();
+    if lower.starts_with("test result: ok") {
+        return true;
+    }
+    let has_zero_failure = ["0 failed", "0 failures", "failed: 0", "failures: 0"]
+        .iter()
+        .any(|needle| lower.contains(needle));
+    let has_strong_error = lower.contains("error:")
+        || lower.contains("error[")
+        || lower.contains("traceback")
+        || lower.contains("segmentation fault")
+        || (lower.contains("panic") && !lower.contains("0 panic"));
+    has_zero_failure && !has_strong_error
 }
 
 struct HeuristicPattern {
@@ -79,7 +100,7 @@ static ERROR_PATTERNS: LazyLock<Vec<HeuristicPattern>> = LazyLock::new(|| {
         // Leading \b only — no trailing \b allows "panic" to match "panicked" and "panic!"
         HeuristicPattern {
             regex: Regex::new(
-                r"(?i)\b(?:fatal\s+error|FAILED|panic|traceback|segmentation fault|bus error|killed)",
+                r"(?i)\b(?:fatal\s+error|FAILED|panic|traceback|segmentation fault|bus error|killed|aborted)",
             )
             .unwrap(),
             file_group: None,
@@ -91,6 +112,12 @@ static ERROR_PATTERNS: LazyLock<Vec<HeuristicPattern>> = LazyLock::new(|| {
         // Rejects: "error handling", "error messages" (natural language)
         HeuristicPattern {
             regex: Regex::new(r"(?i)(?:^|[:\|]\s*)error(?:\[[\w]+\])?\s*:").unwrap(),
+            file_group: None,
+            line_group: None,
+            col_group: None,
+        },
+        HeuristicPattern {
+            regex: Regex::new(r"(?i)(?:^|\s)fatal\s*:").unwrap(),
             file_group: None,
             line_group: None,
             col_group: None,
@@ -117,7 +144,7 @@ static WARNING_PATTERNS: LazyLock<Vec<HeuristicPattern>> = LazyLock::new(|| {
         },
         // Standalone warning keywords
         HeuristicPattern {
-            regex: Regex::new(r"(?i)\b(?:warning|deprecated)\b").unwrap(),
+            regex: Regex::new(r"(?i)\b(?:warn(?:ing)?|deprecated|notice|attention)\b").unwrap(),
             file_group: None,
             line_group: None,
             col_group: None,
@@ -170,6 +197,16 @@ mod tests {
     fn failed_keyword() {
         let evt = try_parse_heuristic("FAILED: 2/15 tests").expect("should match");
         assert_eq!(evt.severity.as_deref(), Some("error"));
+    }
+
+    #[test]
+    fn successful_test_summaries_are_not_errors() {
+        assert!(try_parse_heuristic(
+            "test result: ok. 521 passed; 0 failed; 0 ignored; finished in 19.2s"
+        )
+        .is_none());
+        assert!(try_parse_heuristic("Tests: 0 failed, 12 passed, 12 total").is_none());
+        assert!(try_parse_heuristic("FAILED: 2/15 tests").is_some());
     }
 
     #[test]

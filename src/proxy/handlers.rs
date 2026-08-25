@@ -11,9 +11,9 @@ use super::protocol::{
 
 // ── MCP handlers ────────────────────────────────────────────────────────────
 
-pub(crate) async fn handle_initialize<W: tokio::io::AsyncWrite + Unpin>(
+pub(crate) async fn handle_initialize<W: tokio::io::AsyncWrite + Unpin, I: serde::Serialize>(
     stdout: &mut BufWriter<W>,
-    id: u64,
+    id: I,
     request: &serde_json::Value,
 ) -> Result<()> {
     // Per MCP spec: respond with our supported version; the client decides
@@ -27,8 +27,8 @@ pub(crate) async fn handle_initialize<W: tokio::io::AsyncWrite + Unpin>(
             "version": env!("CARGO_PKG_VERSION"),
         },
         "capabilities": {
-            "tools": { "listChanged": true },
-            "resources": { "listChanged": true },
+            "tools": { "listChanged": false },
+            "resources": { "listChanged": false },
             "logging": {},
         },
         "instructions": instructions::default_instructions(),
@@ -36,9 +36,9 @@ pub(crate) async fn handle_initialize<W: tokio::io::AsyncWrite + Unpin>(
     write_json_response(stdout, id, &caps).await
 }
 
-pub(crate) async fn handle_tools_list(
+pub(crate) async fn handle_tools_list<I: serde::Serialize>(
     stdout: &mut BufWriter<tokio::io::Stdout>,
-    id: u64,
+    id: I,
 ) -> Result<()> {
     let tools = instructions::tool_definitions();
     write_json_response(stdout, id, &serde_json::json!({ "tools": tools })).await
@@ -72,11 +72,29 @@ pub(crate) fn build_tail_result(result: &serde_json::Value) -> serde_json::Value
     })
 }
 
+fn build_task_list_result(result: &serde_json::Value) -> serde_json::Value {
+    let tasks = result.as_array().cloned().unwrap_or_default();
+    serde_json::json!({
+        "content": [{"type": "text", "text": format!("{} task{}", tasks.len(), if tasks.len() == 1 { "" } else { "s" })}],
+        "tasks": tasks,
+    })
+}
+
+fn build_task_cancel_result(result: &serde_json::Value) -> serde_json::Value {
+    let task_id = result.get("task_id").and_then(|v| v.as_str()).unwrap_or("");
+    serde_json::json!({
+        "content": [{"type": "text", "text": format!("cancellation requested for task {}", task_id)}],
+        "task_id": task_id,
+        "status": "cancelling",
+    })
+}
+
 pub(crate) async fn handle_tool_call(
     daemon: &mut DaemonConnection,
     stdout: &mut BufWriter<tokio::io::Stdout>,
     request: &serde_json::Value,
-    id: u64,
+    id: &serde_json::Value,
+    proxy_session_id: &str,
 ) -> Result<Option<String>> {
     let tool_name = request["params"]["name"].as_str().unwrap_or("");
     let mut args = request["params"]["arguments"].clone();
@@ -89,7 +107,7 @@ pub(crate) async fn handle_tool_call(
     };
     // `raw` is a first-class raw-output channel: force format=raw and default
     // to a generous line count (0 = all lines).
-    if tool_name == "arshy_exec" && args.get("action").and_then(|v| v.as_str()) == Some("raw") {
+    if tool_name == "arshy_task" && args.get("action").and_then(|v| v.as_str()) == Some("raw") {
         if let Some(obj) = args.as_object_mut() {
             obj.insert("format".into(), serde_json::json!("raw"));
             obj.entry("lines").or_insert(serde_json::json!(200));
@@ -100,7 +118,34 @@ pub(crate) async fn handle_tool_call(
     // instead of executing the command twice.
     if ipc_method == ipc::METHOD_RUN {
         if let Some(obj) = args.as_object_mut() {
-            obj.insert("dedup_key".into(), serde_json::json!(id.to_string()));
+            // The daemon is shared and may have been auto-started from a
+            // different project. Preserve the MCP proxy's launch directory
+            // when the client omits cwd; otherwise commands silently run in
+            // the daemon's unrelated startup directory.
+            if !obj.contains_key("cwd") {
+                if let Ok(cwd) = std::env::current_dir() {
+                    obj.insert("cwd".into(), serde_json::json!(cwd));
+                }
+            } else if let Some(relative) = obj.get("cwd").and_then(|value| value.as_str()) {
+                let path = std::path::Path::new(relative);
+                if path.is_relative() {
+                    if let Ok(base) = std::env::current_dir() {
+                        obj.insert("cwd".into(), serde_json::json!(base.join(path)));
+                    }
+                }
+            }
+            // MCP request ids are only unique within one client session. The
+            // daemon cache is shared across proxy processes, so scope the key
+            // by a per-proxy session nonce to prevent a new client reusing id
+            // `2` from receiving another client's cached result.
+            obj.insert(
+                "dedup_key".into(),
+                serde_json::json!(format!(
+                    "{}:{}",
+                    proxy_session_id,
+                    serde_json::to_string(id).unwrap_or_else(|_| "null".into())
+                )),
+            );
         }
     }
 
@@ -130,6 +175,16 @@ pub(crate) async fn handle_tool_call(
     // `lines` array + `task_id` forwarded for programmatic access.
     if ipc_method == ipc::METHOD_TAIL {
         write_json_response(stdout, id, &build_tail_result(result)).await?;
+        return Ok(None);
+    }
+
+    if ipc_method == ipc::METHOD_LIST {
+        write_json_response(stdout, id, &build_task_list_result(result)).await?;
+        return Ok(None);
+    }
+
+    if ipc_method == ipc::METHOD_KILL {
+        write_json_response(stdout, id, &build_task_cancel_result(result)).await?;
         return Ok(None);
     }
 
@@ -209,12 +264,12 @@ pub(crate) async fn handle_tool_call(
         // printed. Point it at the raw-output channel instead of leaving it
         // blind (token restraint: hint only, no raw text inlined).
         let event_count = result.get("event_count").and_then(|v| v.as_u64()).unwrap_or(0);
-        if event_count == 0 {
+        if event_count == 0 && status != "running" {
             if let Some(tid) = result.get("task_id").and_then(|v| v.as_str()) {
                 if !tid.is_empty() {
                     text.push_str(&format!(
                         "\n(0 structured events — fetch the original output with \
-                         arshy_exec(action:\"raw\", task_id:\"{}\"))",
+                         arshy_task(action:\"raw\", task_id:\"{}\"))",
                         tid
                     ));
                 }
@@ -229,11 +284,8 @@ pub(crate) async fn handle_tool_call(
     // exit_code=1 is ambiguous (grep no match, diff differs, test condition false)
     // and should not trigger MCP isError.
     let has_errors = result.get("error_count").and_then(|v| v.as_u64()).unwrap_or(0) > 0;
-    let exit_high = result.get("exit_code").and_then(|v| v.as_i64()).is_some_and(|c| c >= 2);
-    let is_error = status == "failed"
-        || status == "timeout"
-        || exit_high
-        || (status == "completed" && has_errors);
+    let exit_code = result.get("exit_code").and_then(|v| v.as_i64());
+    let is_error = should_mark_tool_error(status, exit_code, has_errors);
 
     let mut result_obj = serde_json::json!({ "content": content });
     if is_error {
@@ -283,14 +335,25 @@ pub(crate) async fn handle_tool_call(
     Ok(task_id)
 }
 
+fn should_mark_tool_error(status: &str, exit_code: Option<i64>, has_errors: bool) -> bool {
+    let abnormal_exit = exit_code.is_some_and(|code| !(0..2).contains(&code));
+    status == "timeout" || abnormal_exit || has_errors
+}
+
 // ── MCP resource handlers ───────────────────────────────────────────────────
 
 pub(crate) async fn handle_resources_list(
     daemon: &mut DaemonConnection,
     stdout: &mut BufWriter<tokio::io::Stdout>,
-    id: u64,
+    id: &serde_json::Value,
 ) -> Result<()> {
     let response = daemon.send_request(ipc::METHOD_LIST, serde_json::json!({"limit": 50})).await?;
+    if let Some(error) = response.result.get("error") {
+        let code = error["code"].as_i64().unwrap_or(ipc::error_code::INTERNAL_ERROR);
+        let message = error["message"].as_str().unwrap_or("daemon error");
+        write_json_error(stdout, id, code, message, false).await?;
+        return Ok(());
+    }
     let tasks = response.result.as_array().cloned().unwrap_or_default();
 
     let resources: Vec<protocol::ResourceDefinition> = tasks
@@ -315,7 +378,7 @@ pub(crate) async fn handle_resources_read(
     daemon: &mut DaemonConnection,
     stdout: &mut BufWriter<tokio::io::Stdout>,
     request: &serde_json::Value,
-    id: u64,
+    id: &serde_json::Value,
 ) -> Result<()> {
     let uri = request["params"]["uri"].as_str().unwrap_or("");
     let task_id = uri.strip_prefix("arshy://task/").unwrap_or("");
@@ -342,6 +405,13 @@ pub(crate) async fn handle_resources_read(
             }),
         )
         .await?;
+
+    if let Some(error) = query_resp.result.get("error") {
+        let code = error["code"].as_i64().unwrap_or(ipc::error_code::INTERNAL_ERROR);
+        let message = error["message"].as_str().unwrap_or("daemon error");
+        write_json_error(stdout, id, code, message, false).await?;
+        return Ok(());
+    }
 
     let events = query_resp.result["events"].as_array().cloned().unwrap_or_default();
     let total = query_resp.result["total"].as_u64().unwrap_or(0);
@@ -372,9 +442,10 @@ pub(crate) async fn handle_resources_read(
 
 /// Map MCP tool name to IPC method.
 ///
-/// 2-tool model:
-/// - `arshy_exec` → action-based dispatch (run/kill/list/tail/cd)
-/// - `arshy_query` → structured event queries
+/// Public MCP model:
+/// - `arshy_exec` → execute one command
+/// - `arshy_query` → search structured diagnostic events
+/// - `arshy_task` → cancel/list/raw lifecycle operations
 ///
 /// Unknown tools are an error — a typo'd tool name must never silently
 /// fall back to running a command.
@@ -383,16 +454,31 @@ pub(crate) fn mcp_tool_to_ipc_method(
     args: &serde_json::Value,
 ) -> Result<&'static str> {
     match tool_name {
-        "arshy_exec" => Ok(match args.get("action").and_then(|v| v.as_str()) {
-            Some("kill") => ipc::METHOD_KILL,
-            Some("list") => ipc::METHOD_LIST,
-            Some("tail") => ipc::METHOD_TAIL,
-            Some("raw") => ipc::METHOD_TAIL,
-            Some("cd") => ipc::METHOD_CD,
-            Some("subscribe") => ipc::METHOD_SUBSCRIBE,
-            _ => ipc::METHOD_RUN, // "run" is default for arshy_exec
-        }),
+        "arshy_exec" => Ok(ipc::METHOD_RUN),
         "arshy_query" => Ok(ipc::METHOD_QUERY),
+        "arshy_task" => match args.get("action").and_then(|v| v.as_str()) {
+            Some("cancel") | Some("kill") => Ok(ipc::METHOD_KILL),
+            Some("list") => Ok(ipc::METHOD_LIST),
+            Some("raw") => Ok(ipc::METHOD_TAIL),
+            Some(other) => {
+                Err(arshy_lib::ArshyError::Ipc(format!("unknown arshy_task action: {}", other)))
+            }
+            None => Err(arshy_lib::ArshyError::Ipc("missing arshy_task action".into())),
+        },
         _ => Err(arshy_lib::ArshyError::Ipc(format!("unknown tool: {}", tool_name))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_mark_tool_error;
+
+    #[test]
+    fn exit_one_without_diagnostics_is_not_an_mcp_transport_error() {
+        assert!(!should_mark_tool_error("failed", Some(1), false));
+        assert!(should_mark_tool_error("failed", Some(1), true));
+        assert!(should_mark_tool_error("failed", Some(2), false));
+        assert!(should_mark_tool_error("failed", Some(-1), false));
+        assert!(should_mark_tool_error("timeout", Some(1), false));
     }
 }

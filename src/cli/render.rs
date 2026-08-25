@@ -321,9 +321,6 @@ pub fn render_benchmark(result: &serde_json::Value) -> String {
     let fixtures = result.get("total_fixtures").and_then(|v| v.as_u64()).unwrap_or(0);
     let raw_lines = result.get("total_raw_lines").and_then(|v| v.as_u64()).unwrap_or(0);
     let events = result.get("total_events").and_then(|v| v.as_u64()).unwrap_or(0);
-    let raw_tokens = result.get("total_raw_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-    let struct_tokens = result.get("total_structured_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-    let ratio = result.get("compression_ratio").and_then(|v| v.as_f64()).unwrap_or(0.0);
     let fields = result.get("total_structured_fields").and_then(|v| v.as_u64()).unwrap_or(0);
     let fields_per = result.get("avg_fields_per_event").and_then(|v| v.as_f64()).unwrap_or(0.0);
     let speed = result.get("error_speed_advantage_pct").and_then(|v| v.as_f64()).unwrap_or(0.0);
@@ -332,14 +329,12 @@ pub fn render_benchmark(result: &serde_json::Value) -> String {
 
     let comparison = result.get("comparison");
 
-    let ratio_diff = comparison.and_then(|c| c.get("compression_ratio")).and_then(|v| v.as_f64());
     let accuracy_diff = comparison.and_then(|c| c.get("avg_accuracy")).and_then(|v| v.as_f64());
     let speed_diff =
         comparison.and_then(|c| c.get("error_speed_advantage_pct")).and_then(|v| v.as_f64());
     let unparsed_diff =
         comparison.and_then(|c| c.get("total_unparsed_error_lines")).and_then(|v| v.as_i64());
 
-    let ratio_diff_str = fmt_diff(ratio_diff, "x", false);
     let acc_diff_str = fmt_diff(accuracy_diff, "%", true);
     let speed_diff_str = fmt_diff(speed_diff, "%", false);
     let unparsed_diff_str = fmt_diff_int(unparsed_diff, " lines");
@@ -372,11 +367,11 @@ pub fn render_benchmark(result: &serde_json::Value) -> String {
     let _ = writeln!(out);
 
     box_top(&mut out);
-    box_line(&mut out, &format!("{}TOKEN EFFICIENCY{}", BOLD, RESET));
+    box_line(&mut out, &format!("{}STRUCTURED OUTPUT QUALITY{}", BOLD, RESET));
     box_divider(&mut out);
-    box_line(&mut out, &format!("  Raw text (approx BPE): {} tokens", raw_tokens));
-    box_line(&mut out, &format!("  Structured JSON:       {} tokens", struct_tokens));
-    box_line(&mut out, &format!("  Ratio:                 {:.1}x{}", ratio, ratio_diff_str));
+    box_line(&mut out, &format!("  Actionable fields/event: {:.1}", fields_per));
+    box_line(&mut out, &format!("  Error location speed:    {:.0}%{}", speed, speed_diff_str));
+    box_line(&mut out, "  Measurement: parser fixtures; no token estimate");
     box_bottom(&mut out);
     let _ = writeln!(out);
 
@@ -418,7 +413,6 @@ pub fn render_benchmark(result: &serde_json::Value) -> String {
             let lines = d.get("raw_lines").and_then(|v| v.as_u64()).unwrap_or(0);
             let evts = d.get("events").and_then(|v| v.as_u64()).unwrap_or(0);
             let flds = d.get("structured_fields").and_then(|v| v.as_u64()).unwrap_or(0);
-            let comp = d.get("compression_ratio").and_then(|v| v.as_f64()).unwrap_or(0.0);
             let acc = d.get("accuracy").and_then(|v| v.as_f64()).unwrap_or(0.0) * 100.0;
             let unparsed_fixture =
                 d.get("unparsed_error_lines").and_then(|v| v.as_u64()).unwrap_or(0);
@@ -458,20 +452,13 @@ pub fn render_benchmark(result: &serde_json::Value) -> String {
             let lines_padded = pad_left(&lines.to_string(), 5);
             let evts_padded = pad_left(&evts.to_string(), 6);
             let flds_padded = pad_left(&flds.to_string(), 6);
-            let comp_padded = pad_left(&format!("{:.1}x", comp), 8);
             let acc_padded = pad_left(&acc_str, 8);
             let unparsed_padded = pad_left(&unparsed_str, 8);
 
             let _ = writeln!(
                 out,
-                "  │ {} │ {} │ {} │ {} │ {} │ {} │ {} │",
-                name_padded,
-                lines_padded,
-                evts_padded,
-                flds_padded,
-                comp_padded,
-                acc_padded,
-                unparsed_padded
+                "  │ {} │ {} │ {} │ {} │ {} │ {} │",
+                name_padded, lines_padded, evts_padded, flds_padded, acc_padded, unparsed_padded
             );
         }
 
@@ -499,15 +486,23 @@ pub fn render_analyze(result: &serde_json::Value) -> String {
     let avg_tasks_per_day =
         summary.and_then(|s| s.get("avg_tasks_per_day")).and_then(|v| v.as_f64()).unwrap_or(0.0);
 
-    let token_eff = result.get("token_efficiency");
-    let agent_visible =
-        token_eff.and_then(|t| t.get("agent_visible_events")).and_then(|v| v.as_u64()).unwrap_or(0);
-    let agent_skipped =
-        token_eff.and_then(|t| t.get("agent_skipped_events")).and_then(|v| v.as_u64()).unwrap_or(0);
-    let savings_pct = token_eff
-        .and_then(|t| t.get("estimated_token_savings_pct"))
-        .and_then(|v| v.as_f64())
-        .unwrap_or(0.0);
+    let efficiency = result.get("efficiency");
+    let content_pct = efficiency
+        .and_then(|e| e.get("components"))
+        .and_then(|c| c.get("content_convergence_pct"))
+        .and_then(|v| v.as_f64());
+    let noise_pct = efficiency
+        .and_then(|e| e.get("components"))
+        .and_then(|c| c.get("noise_filter_pct"))
+        .and_then(|v| v.as_f64());
+    let diagnostic_pct = efficiency
+        .and_then(|e| e.get("components"))
+        .and_then(|c| c.get("diagnostic_completeness_pct"))
+        .and_then(|v| v.as_f64());
+    let dedup_pct = efficiency
+        .and_then(|e| e.get("components"))
+        .and_then(|c| c.get("dedup_reduction_pct"))
+        .and_then(|v| v.as_f64());
 
     let info = result.get("information_density");
     let avg_fields =
@@ -520,28 +515,9 @@ pub fn render_analyze(result: &serde_json::Value) -> String {
         info.and_then(|i| i.get("events_with_context")).and_then(|v| v.as_u64()).unwrap_or(0);
 
     let patterns = result.get("command_patterns");
-    let short_pct =
-        patterns.and_then(|p| p.get("short_cmd_pct")).and_then(|v| v.as_f64()).unwrap_or(0.0);
-    let long_pct =
-        patterns.and_then(|p| p.get("long_cmd_pct")).and_then(|v| v.as_f64()).unwrap_or(0.0);
-    let total_retries =
-        patterns.and_then(|p| p.get("total_retry_runs")).and_then(|v| v.as_u64()).unwrap_or(0);
-    let top_retried = patterns.and_then(|p| p.get("top_retried")).and_then(|v| v.as_array());
     let carriers = patterns.and_then(|p| p.get("carrier_distribution"));
     let carrier_of = |key: &str| -> u64 {
         carriers.and_then(|c| c.get(key)).and_then(|v| v.as_u64()).unwrap_or(0)
-    };
-
-    let total_data_events = agent_visible + agent_skipped;
-    let visible_pct = if total_data_events > 0 {
-        agent_visible as f64 / total_data_events as f64 * 100.0
-    } else {
-        0.0
-    };
-    let skipped_pct = if total_data_events > 0 {
-        agent_skipped as f64 / total_data_events as f64 * 100.0
-    } else {
-        0.0
     };
 
     let mut out = String::new();
@@ -570,12 +546,25 @@ pub fn render_analyze(result: &serde_json::Value) -> String {
     );
     let _ = writeln!(out);
 
-    // Phase A (Q-2): token savings is a marketing figure, not a user-facing
-    // metric. The computed value is still available via `--format json`
-    // (and for the `measure-savings` reproducibility script) — but the pretty
-    // default render does not surface it. Internal honest measurement is
-    // preserved; we just do not advertise it to end users.
-    let _ = (agent_visible, agent_skipped, visible_pct, skipped_pct, savings_pct);
+    box_top(&mut out);
+    box_line(&mut out, &format!("{}ARSHY QUALITY COMPONENTS (quality-v1){}", BOLD, RESET));
+    box_divider(&mut out);
+    for (label, value) in [
+        ("Content convergence", content_pct),
+        ("Noise filtering", noise_pct),
+        ("Diagnostic completeness", diagnostic_pct),
+        ("Dedup reduction", dedup_pct),
+    ] {
+        box_line(
+            &mut out,
+            &format!(
+                "  {label:<24} {}",
+                value.map_or_else(|| "n/a".into(), |v| format!("{v:.1}%"))
+            ),
+        );
+    }
+    box_bottom(&mut out);
+    let _ = writeln!(out);
 
     box_top(&mut out);
     box_line(&mut out, &format!("{}INFORMATION DENSITY{}", BOLD, RESET));
@@ -608,22 +597,12 @@ pub fn render_analyze(result: &serde_json::Value) -> String {
     box_bottom(&mut out);
     let _ = writeln!(out);
 
-    let repair = result.get("repair_loop");
-    let fix_loops = repair.and_then(|r| r.get("fix_loops")).and_then(|v| v.as_u64()).unwrap_or(0);
-    let avg_retries =
-        repair.and_then(|r| r.get("avg_retries_to_fix")).and_then(|v| v.as_f64()).unwrap_or(0.0);
-    let avg_fix_ms =
-        repair.and_then(|r| r.get("avg_fix_duration_ms")).and_then(|v| v.as_u64()).unwrap_or(0);
-    let fastest_fix_ms =
-        repair.and_then(|r| r.get("fastest_fix_ms")).and_then(|v| v.as_u64()).unwrap_or(0);
-
     box_top(&mut out);
     box_line(&mut out, &format!("{}COMMAND PATTERNS{}", BOLD, RESET));
     box_divider(&mut out);
-    box_line(&mut out, &format!("  Short commands:        {:.1}%", short_pct));
-    box_line(&mut out, &format!("  Long commands:         {:.1}%", long_pct));
-    box_line(&mut out, &format!("  Total retries:         {}", fmt_commas(total_retries)));
-    box_line(&mut out, "");
+    let unique_commands =
+        patterns.and_then(|p| p.get("unique_commands")).and_then(|v| v.as_u64()).unwrap_or(0);
+    box_line(&mut out, &format!("  Unique commands:       {}", fmt_commas(unique_commands)));
     box_line(&mut out, "  Carrier distribution (Q1):");
     box_line(&mut out, &format!("    shell:              {}", fmt_commas(carrier_of("shell"))));
     box_line(
@@ -636,59 +615,8 @@ pub fn render_analyze(result: &serde_json::Value) -> String {
         &format!("    script_other:       {}", fmt_commas(carrier_of("script_other"))),
     );
     box_line(&mut out, &format!("    unknown:            {}", fmt_commas(carrier_of("unknown"))));
-    box_line(&mut out, "");
-    let has_retried = top_retried.is_some_and(|arr| !arr.is_empty());
-    if has_retried {
-        box_line(&mut out, "  Top retried:");
-        for entry in top_retried.unwrap() {
-            let cmd = entry.get(0).and_then(|v| v.as_str()).unwrap_or("");
-            let count = entry.get(1).and_then(|v| v.as_u64()).unwrap_or(0);
-            let name = truncate_name(cmd, 18);
-            box_line(&mut out, &format!("    {:<18} {}x", name, count));
-        }
-    }
     box_bottom(&mut out);
     let _ = writeln!(out);
-
-    if fix_loops > 0 {
-        box_top(&mut out);
-        box_line(&mut out, &format!("{}REPAIR LOOP{}", BOLD, RESET));
-        box_divider(&mut out);
-        box_line(&mut out, &format!("  Fix loops:             {}", fmt_commas(fix_loops)));
-        box_line(&mut out, &format!("  Avg retries to fix:    {:.1}", avg_retries));
-        box_line(
-            &mut out,
-            &format!("  Avg fix duration:      {}", format_duration_text(avg_fix_ms)),
-        );
-        box_line(
-            &mut out,
-            &format!("  Fastest fix:           {}", format_duration_text(fastest_fix_ms)),
-        );
-        box_bottom(&mut out);
-        let _ = writeln!(out);
-    }
-
-    if let Some(parsers) = top_retried {
-        if !parsers.is_empty() {
-            let max_count =
-                parsers.iter().filter_map(|p| p.get(1).and_then(|v| v.as_u64())).max().unwrap_or(1);
-
-            box_top(&mut out);
-            box_line(&mut out, &format!("{}TOP RETRIED{}", BOLD, RESET));
-            box_divider(&mut out);
-
-            for entry in parsers.iter().take(5) {
-                let cmd = entry.get(0).and_then(|v| v.as_str()).unwrap_or("");
-                let count = entry.get(1).and_then(|v| v.as_u64()).unwrap_or(0);
-                let bar = render_bar(count, max_count, 26);
-                let name = truncate_name(cmd, 12);
-                box_line(&mut out, &format!("  {:<12} {:>4} {}", name, count, bar));
-            }
-
-            box_bottom(&mut out);
-            let _ = writeln!(out);
-        }
-    }
     out
 }
 
@@ -752,7 +680,7 @@ pub fn render_run_text(result: &serde_json::Value) -> String {
         if let Some(tid) = result.get("task_id").and_then(|v| v.as_str()) {
             if !tid.is_empty() {
                 out.push_str(&format!(
-                    "\n(0 structured events — fetch original output: arshy_exec(action:\"raw\", task_id:\"{}\"))",
+                    "\n(0 structured events — fetch original output: arshy_task(action:\"raw\", task_id:\"{}\"))",
                     tid
                 ));
             }
@@ -881,61 +809,32 @@ mod tests {
         })));
         assert!(s.contains("ARSHY PARSER BENCHMARK RESULTS"));
         assert!(s.contains("37 fixtures"));
-        assert!(s.contains("TOKEN EFFICIENCY"));
+        assert!(s.contains("STRUCTURED OUTPUT QUALITY"));
     }
 
     #[test]
     fn render_analyze_reports_sections() {
-        // Phase A (Q-2): the user-facing analyze pretty output no longer
-        // surfaces token savings — it stays in `--format json` for internal /
-        // reproducibility use. We assert the new contract.
+        // Analyze exposes component measurements, never an aggregate score or
+        // token estimate.
         let s = strip_ansi(&render_analyze(&json!({
             "summary": {"total_tasks": 5},
-            "command_patterns": {"top_retried": []},
-            "token_efficiency": {
-                "agent_visible_events": 10,
-                "agent_skipped_events": 3,
-                "estimated_token_savings_pct": 28.0
+            "command_patterns": {"unique_commands": 2, "carrier_distribution": {}},
+            "efficiency": {
+                "schema_version": "quality-v1",
+                "components": {
+                    "content_convergence_pct": 80.0,
+                    "noise_filter_pct": 30.0,
+                    "diagnostic_completeness_pct": 70.0,
+                    "dedup_reduction_pct": 10.0
+                }
             }
         })));
         assert!(s.contains("ARSHY IMPACT REPORT"));
-        assert!(
-            !s.contains("TOKEN EFFICIENCY"),
-            "user-facing analyze must not display token savings"
-        );
-        assert!(
-            !s.contains("Estimated savings"),
-            "user-facing analyze must not display savings pct"
-        );
+        assert!(s.contains("ARSHY QUALITY COMPONENTS"));
+        assert!(!s.contains("/100"));
+        assert!(!s.contains("TOKEN EFFICIENCY"));
+        assert!(!s.contains("Estimated savings"));
         assert!(s.contains("INFORMATION DENSITY"));
-    }
-
-    #[test]
-    fn render_analyze_shows_repair_loop_section_when_loops_exist() {
-        let s = strip_ansi(&render_analyze(&json!({
-            "summary": {"total_tasks": 5},
-            "command_patterns": {"top_retried": []},
-            "repair_loop": {
-                "fix_loops": 3,
-                "avg_retries_to_fix": 2.0,
-                "avg_fix_duration_ms": 15000,
-                "fastest_fix_ms": 4000
-            }
-        })));
-        assert!(s.contains("REPAIR LOOP"));
-        assert!(s.contains("Fix loops:             3"));
-        assert!(s.contains("Avg retries to fix:    2.0"));
-        assert!(s.contains("Avg fix duration:      15.0s"));
-        assert!(s.contains("Fastest fix:           4.0s"));
-
-        // No loops → no section, but rendering stays robust.
-        let empty = strip_ansi(&render_analyze(&json!({
-            "summary": {"total_tasks": 5},
-            "command_patterns": {"top_retried": []},
-            "repair_loop": {"fix_loops": 0, "avg_retries_to_fix": 0.0,
-                            "avg_fix_duration_ms": 0, "fastest_fix_ms": 0}
-        })));
-        assert!(!empty.contains("REPAIR LOOP"));
     }
 
     #[test]

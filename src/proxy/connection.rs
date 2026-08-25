@@ -117,7 +117,7 @@ pub(crate) async fn connect_or_start(
                 tracing::warn!("stale socket detected, removing {}", socket_path.display());
                 let _ = std::fs::remove_file(socket_path);
             }
-            start_daemon()?;
+            start_daemon(socket_path)?;
             for _ in 0..40 {
                 tokio::time::sleep(Duration::from_millis(250)).await;
                 if let Ok(s) = ipc::connect(socket_path).await {
@@ -140,9 +140,10 @@ pub(crate) async fn connect_or_start(
 ///    (never a stale PATH-resolved binary from an old `cargo install`).
 /// 2. **Session detachment** — `setsid()` so the daemon survives the caller's
 ///    session teardown (agent tool calls, CI steps, short-lived scripts).
-/// 3. **Spawn-lock** — atomic `/tmp/arshyd.spawn-lock` prevents duplicate spawns.
+/// 3. **Spawn-lock** — atomic lock next to the configured socket prevents
+///    duplicate spawns without cross-user `/tmp` collisions.
 /// 4. **Circuit breaker** — suppresses auto-start after 5 crashes in 2 minutes.
-pub(crate) fn start_daemon() -> Result<()> {
+pub(crate) fn start_daemon(socket_path: &std::path::Path) -> Result<()> {
     use libc;
     use std::fs::OpenOptions;
     use std::io::Write;
@@ -157,8 +158,15 @@ pub(crate) fn start_daemon() -> Result<()> {
     }
 
     // Atomic lock — if another proxy already spawned (or is spawning) the daemon,
-    // this will fail and we'll just wait for the socket to appear.
-    let lock_path = std::path::PathBuf::from("/tmp/arshyd.spawn-lock");
+    // this will fail and we'll just wait for the socket to appear. The lock is
+    // scoped to the socket so separate users/configurations cannot interfere.
+    let lock_path = spawn_lock_path(socket_path);
+    if let Ok(pid_text) = std::fs::read_to_string(&lock_path) {
+        let pid = pid_text.lines().next().and_then(|line| line.trim().parse::<i32>().ok());
+        if pid.is_some_and(|pid| unsafe { libc::kill(pid, 0) } != 0) {
+            let _ = std::fs::remove_file(&lock_path);
+        }
+    }
     let mut lock_file = match OpenOptions::new().create_new(true).write(true).open(&lock_path) {
         Ok(f) => f,
         Err(_) => {
@@ -200,12 +208,18 @@ pub(crate) fn start_daemon() -> Result<()> {
         arshy_lib::ArshyError::DaemonUnreachable(format!("spawn {}: {}", path.display(), e))
     })?;
 
-    // Release the lock once the daemon has started.
+    // Keep the lock until arshyd has successfully bound its socket. The
+    // daemon removes it after startup; this closes the race where concurrent
+    // proxies all spawn a second daemon while the first is still booting.
     drop(lock_file);
-    let _ = std::fs::remove_file(&lock_path);
 
     tracing::info!("spawned arshyd (pid {}) from {}", child.id(), path.display());
     Ok(())
+}
+
+fn spawn_lock_path(socket_path: &std::path::Path) -> std::path::PathBuf {
+    let name = socket_path.file_name().and_then(|name| name.to_str()).unwrap_or("arshyd");
+    socket_path.with_file_name(format!("{}.spawn-lock", name))
 }
 
 // ── Circuit breaker: prevents daemon crash-looping ───────────────────────

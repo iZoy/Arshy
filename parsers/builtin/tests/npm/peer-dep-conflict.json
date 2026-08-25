@@ -5,14 +5,14 @@
     "type": "diagnostic"
   },
   {
-    "message": "npm ERR!",
-    "severity": "info",
-    "type": "log"
-  },
-  {
     "message": "ERESOLVE unable to resolve dependency tree",
     "severity": "error",
     "type": "diagnostic"
+  },
+  {
+    "message": "npm ERR!",
+    "severity": "info",
+    "type": "log"
   },
   {
     "message": "While resolving: myapp@1.0.0",
@@ -30,14 +30,14 @@
     "type": "diagnostic"
   },
   {
-    "message": "npm ERR!",
-    "severity": "info",
-    "type": "log"
-  },
-  {
     "message": "peer react@\"^18.0.0\" from @mui/material@5.14.0",
     "severity": "error",
     "type": "diagnostic"
+  },
+  {
+    "message": "npm ERR!",
+    "severity": "info",
+    "type": "log"
   },
   {
     "message": "Conflicting peer dependency: react@18.0.0",

@@ -35,6 +35,14 @@
     "type": "crash"
   },
   {
+    "code": "node",
+    "file": "node:internal/process/task_queues",
+    "line": 95,
+    "message": "      at processTicksAndRejections (node:internal/process/task_queues:95:5)",
+    "severity": "error",
+    "type": "crash"
+  },
+  {
     "file": "src/api/login.test.ts",
     "line": 0,
     "message": "FAIL src/api/login.test.ts",
@@ -48,16 +56,8 @@
   },
   {
     "message": "    TypeError: Cannot read properties of undefined (reading 'token')",
-    "severity": "error",
+    "severity": "info",
     "type": "log"
-  },
-  {
-    "code": "node",
-    "file": "node:internal/process/task_queues",
-    "line": 95,
-    "message": "      at processTicksAndRejections (node:internal/process/task_queues:95:5)",
-    "severity": "error",
-    "type": "crash"
   },
   {
     "code": "node",
@@ -68,16 +68,16 @@
     "type": "crash"
   },
   {
-    "message": "Tests:       2 failed, 18 passed, 20 total",
-    "severity": "info",
-    "type": "summary"
-  },
-  {
     "code": "node",
     "file": "src/api/login.test.ts",
     "line": 55,
     "message": "      at Object.<anonymous> (src/api/login.test.ts:55:5)",
     "severity": "error",
     "type": "crash"
+  },
+  {
+    "message": "Tests:       2 failed, 18 passed, 20 total",
+    "severity": "info",
+    "type": "summary"
   }
 ]

@@ -48,13 +48,13 @@
     "type": "log"
   },
   {
-    "message": "Tests  2 failed | 18 passed",
-    "severity": "error",
-    "type": "summary"
-  },
-  {
     "message": "Test Files  2 failed (2)",
     "severity": "error",
     "type": "diagnostic"
+  },
+  {
+    "message": "Tests  2 failed | 18 passed",
+    "severity": "error",
+    "type": "summary"
   }
 ]

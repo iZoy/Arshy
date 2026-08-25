@@ -36,9 +36,6 @@ pub fn merge_partial(mut cfg: Config, partial: PartialConfig) -> Config {
         if let Some(v) = d.idle_timeout_secs {
             cfg.daemon.idle_timeout_secs = v;
         }
-        if let Some(v) = d.sandbox_mode {
-            cfg.daemon.sandbox_mode = v;
-        }
     }
     if let Some(s) = partial.store {
         if let Some(v) = s.store_dir {
@@ -80,8 +77,8 @@ pub fn merge_partial(mut cfg: Config, partial: PartialConfig) -> Config {
         if let Some(v) = s.allowed_commands {
             cfg.security.allowed_commands = Some(v);
         }
-        if let Some(v) = s.sandbox_paths {
-            cfg.security.sandbox_paths = v;
+        if let Some(v) = s.allowed_cwds {
+            cfg.security.allowed_cwds = v;
         }
         if let Some(v) = s.access_level {
             cfg.security.access_level = v;

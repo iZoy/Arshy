@@ -16,9 +16,10 @@ impl NotificationRouter {
                 });
                 (ipc::NOTIF_TASK_UPDATE, payload)
             }
-            BusEventKind::TaskComplete { task_id, exit_code, duration_ms } => {
+            BusEventKind::TaskComplete { task_id, status, exit_code, duration_ms } => {
                 let payload = serde_json::json!({
                     "task_id": task_id,
+                    "status": status,
                     "exit_code": exit_code,
                     "duration_ms": duration_ms,
                 });
@@ -73,12 +74,14 @@ mod tests {
     fn router_task_complete_success() {
         let event = make_bus_event(BusEventKind::TaskComplete {
             task_id: "t2".into(),
+            status: "completed".into(),
             exit_code: 0,
             duration_ms: 1500,
         });
         let notif = NotificationRouter::to_notification(&event).unwrap();
         assert_eq!(notif.method, ipc::NOTIF_TASK_COMPLETE);
         assert_eq!(notif.params["exit_code"], 0);
+        assert_eq!(notif.params["status"], "completed");
         assert_eq!(notif.params["duration_ms"], 1500);
     }
 
@@ -86,6 +89,7 @@ mod tests {
     fn router_task_complete_failure() {
         let event = make_bus_event(BusEventKind::TaskComplete {
             task_id: "t3".into(),
+            status: "failed".into(),
             exit_code: 1,
             duration_ms: 300,
         });

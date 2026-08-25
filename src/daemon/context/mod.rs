@@ -6,13 +6,8 @@ use crate::ipc::{EventContext, EventLocation, TaskEvent};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-/// Async version — reads the file using tokio::fs to avoid blocking.
-pub async fn extract_context_async(file: &str, line: u64) -> Option<EventContext> {
-    let content = tokio::fs::read_to_string(file).await.ok()?;
-    parse_context(&content, line)
-}
-
-/// Parse context from file content string. Shared between sync and async paths.
+/// Parse context from file content string.
+#[cfg(test)]
 fn parse_context(content: &str, line: u64) -> Option<EventContext> {
     let lines: Vec<&str> = content.lines().collect();
     let idx = (line as usize).saturating_sub(1);
@@ -65,16 +60,22 @@ impl ContextEnricher {
 
     fn read_context(&mut self, cwd: &Path, loc: &EventLocation) -> Option<EventContext> {
         let path = cwd.join(&loc.file);
-        let lines = self
-            .file_cache
-            .entry(path.clone())
-            .or_insert_with(|| {
-                std::fs::read_to_string(&path)
-                    .ok()
-                    .map(|c| c.lines().map(String::from).collect())
-                    .unwrap_or_default()
-            })
-            .clone();
+        const MAX_CONTEXT_FILE_BYTES: u64 = 2 * 1024 * 1024;
+        const MAX_CONTEXT_FILES: usize = 32;
+        if !self.file_cache.contains_key(&path) && self.file_cache.len() >= MAX_CONTEXT_FILES {
+            return None;
+        }
+        let lines = self.file_cache.entry(path.clone()).or_insert_with(|| {
+            let within_limit =
+                std::fs::metadata(&path).is_ok_and(|meta| meta.len() <= MAX_CONTEXT_FILE_BYTES);
+            if !within_limit {
+                return Vec::new();
+            }
+            std::fs::read_to_string(&path)
+                .ok()
+                .map(|c| c.lines().map(String::from).collect())
+                .unwrap_or_default()
+        });
         if lines.is_empty() {
             return None;
         }
@@ -114,17 +115,6 @@ mod tests {
     #[test]
     fn missing_file_returns_none() {
         assert!(extract_context("/nonexistent/file.txt", 1).is_none());
-    }
-
-    #[tokio::test]
-    async fn async_extract_context() {
-        let ctx = extract_context_async("Cargo.toml", 1).await.unwrap();
-        assert!(!ctx.line.is_empty());
-    }
-
-    #[tokio::test]
-    async fn async_missing_file_returns_none() {
-        assert!(extract_context_async("/nonexistent/file.txt", 1).await.is_none());
     }
 
     #[test]

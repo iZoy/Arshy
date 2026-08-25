@@ -12,13 +12,18 @@
     "type": "log"
   },
   {
+    "file": "check.py",
+    "line": 2,
+    "message": "  File \"check.py\", line 2, in validate",
+    "severity": "error",
+    "type": "location"
+  },
+  {
     "message": "    assert user.is_active, \"user must be active\"",
     "severity": "info",
     "type": "log"
   },
   {
-    "file": "check.py",
-    "line": 2,
     "message": "AssertionError: user must be active",
     "severity": "error",
     "type": "diagnostic"

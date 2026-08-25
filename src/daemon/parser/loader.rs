@@ -29,11 +29,11 @@ impl ParserWatcher {
     {
         let (tx, rx) = mpsc::channel::<notify::Result<Event>>();
 
-        let mut watcher = RecommendedWatcher::new(
-            tx,
-            notify::Config::default().with_poll_interval(Duration::from_secs(2)),
-        )
-        .map_err(|e| crate::ArshyError::Config(format!("notify watcher: {}", e)))?;
+        // RecommendedWatcher uses the platform's native event backend
+        // (FSEvents/kqueue/inotify). Do not impose a periodic poll interval on
+        // an otherwise idle daemon.
+        let mut watcher = RecommendedWatcher::new(tx, notify::Config::default())
+            .map_err(|e| crate::ArshyError::Config(format!("notify watcher: {}", e)))?;
 
         // Watch all configured parser directories
         for dir in dirs {
@@ -50,18 +50,35 @@ impl ParserWatcher {
         std::thread::Builder::new()
             .name("parser-watcher".into())
             .spawn(move || {
-                let mut last_trigger = std::time::Instant::now();
                 let debounce = Duration::from_millis(500);
 
                 while let Ok(event_result) = rx.recv() {
                     match event_result {
-                        Ok(event) => {
-                            if is_parser_event(&event) && last_trigger.elapsed() > debounce {
-                                last_trigger = std::time::Instant::now();
-                                tracing::info!("parser file changed: {:?}", event.paths);
-                                on_change();
+                        Ok(event) if is_parser_event(&event) => {
+                            let mut changed_paths = event.paths;
+                            // Trailing-edge debounce: wait until the editor's
+                            // write/rename burst is quiet, then reload the final
+                            // file exactly once. A leading-edge timestamp used
+                            // to drop the first startup event and could reload
+                            // an intermediate file with no later retry.
+                            let mut deadline = std::time::Instant::now() + debounce;
+                            loop {
+                                let remaining =
+                                    deadline.saturating_duration_since(std::time::Instant::now());
+                                match rx.recv_timeout(remaining) {
+                                    Ok(Ok(next)) if is_parser_event(&next) => {
+                                        changed_paths.extend(next.paths);
+                                        deadline = std::time::Instant::now() + debounce;
+                                    }
+                                    Ok(Ok(_)) | Ok(Err(_)) => continue,
+                                    Err(mpsc::RecvTimeoutError::Timeout) => break,
+                                    Err(mpsc::RecvTimeoutError::Disconnected) => return,
+                                }
                             }
+                            tracing::info!("parser files changed: {:?}", changed_paths);
+                            on_change();
                         }
+                        Ok(_) => {}
                         Err(e) => {
                             tracing::warn!("watch error: {}", e);
                         }

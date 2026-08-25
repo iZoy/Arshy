@@ -4,7 +4,9 @@
 //! read-only API and reads event JSONL files from the store directory.
 
 use serde::Serialize;
+#[cfg(test)]
 use std::collections::HashMap;
+use std::collections::HashSet;
 
 use crate::ipc::TaskEvent;
 
@@ -13,10 +15,9 @@ use crate::ipc::TaskEvent;
 #[derive(Debug, Serialize)]
 pub struct ImpactReport {
     pub summary: SummaryMetrics,
-    pub token_efficiency: TokenEfficiency,
+    pub efficiency: crate::ipc::EfficiencyReport,
     pub information_density: InformationDensity,
     pub command_patterns: CommandPatterns,
-    pub repair_loop: RepairLoopMetrics,
     pub temporal: TemporalMetrics,
     pub generated_at: String,
 }
@@ -31,16 +32,6 @@ pub struct SummaryMetrics {
 }
 
 #[derive(Debug, Serialize)]
-pub struct TokenEfficiency {
-    pub total_raw_output_bytes: u64,
-    pub total_agent_delivered_bytes: u64,
-    pub agent_skipped_events: u64,
-    pub agent_visible_events: u64,
-    pub noise_pct: f64,
-    pub estimated_token_savings_pct: f64,
-}
-
-#[derive(Debug, Serialize)]
 pub struct InformationDensity {
     pub avg_fields_per_event: f64,
     pub events_with_location: u64,
@@ -52,11 +43,6 @@ pub struct InformationDensity {
 #[derive(Debug, Serialize)]
 pub struct CommandPatterns {
     pub unique_commands: usize,
-    pub commands_run_multiple_times: usize,
-    pub total_retry_runs: u64,
-    pub top_retried: Vec<(String, u64)>,
-    pub short_cmd_pct: f64,
-    pub long_cmd_pct: f64,
     pub carrier_distribution: CarrierDistribution,
 }
 
@@ -72,19 +58,14 @@ pub struct CarrierDistribution {
     pub unknown: u64,
 }
 
-/// Fix-loop metrics: how quickly a failed task is followed by a success in
-/// the same working directory. This is the quantified "repair loop" value
-/// proposition — the closer the metric, the faster agents go from error to fix.
-#[derive(Debug, Serialize)]
-pub struct RepairLoopMetrics {
-    /// Number of detected "error → success" loops (same cwd, real workload).
-    pub fix_loops: u64,
-    /// Average number of attempts (including the final success) per loop.
-    pub avg_retries_to_fix: f64,
-    /// Average wall-clock time from first error to first success (ms).
-    pub avg_fix_duration_ms: u64,
-    /// Fastest observed fix duration (ms) — shows the potential ceiling.
-    pub fastest_fix_ms: u64,
+// Historical-only test helper. Repair-loop inference is not production code or
+// part of the public analytics contract.
+#[cfg(test)]
+struct RepairLoopMetrics {
+    fix_loops: u64,
+    avg_retries_to_fix: f64,
+    avg_fix_duration_ms: u64,
+    fastest_fix_ms: u64,
 }
 
 #[derive(Debug, Serialize)]
@@ -117,42 +98,33 @@ impl<'a> Analytics<'a> {
 
         let summary = self.compute_summary(&tasks, &events);
 
-        let total_raw = stats.total_raw_output_bytes.unwrap_or(0);
-        let total_struct = stats.total_agent_delivered_bytes.unwrap_or(0);
-        let skipped = stats.total_agent_skipped_events.unwrap_or(0);
-        let visible = stats.total_agent_visible_events.unwrap_or(0);
-
-        let noise_pct = if skipped + visible > 0 {
-            skipped as f64 / (skipped + visible) as f64 * 100.0
-        } else {
-            0.0
-        };
-        let savings_pct = if total_raw > 0 {
-            let saved = total_raw.saturating_sub(total_struct);
-            saved as f64 / total_raw as f64 * 100.0
-        } else {
-            0.0
-        };
-
-        let token_efficiency = TokenEfficiency {
-            total_raw_output_bytes: total_raw,
-            total_agent_delivered_bytes: total_struct,
-            agent_skipped_events: skipped,
-            agent_visible_events: visible,
-            noise_pct,
-            estimated_token_savings_pct: savings_pct,
-        };
         let information_density = self.compute_information_density(&events);
         let command_patterns = self.compute_command_patterns(&tasks);
-        let repair_loop = self.compute_repair_loop(&tasks);
         let temporal = self.compute_temporal(&tasks, &summary);
 
         Ok(ImpactReport {
             summary,
-            token_efficiency,
+            efficiency: stats.efficiency.unwrap_or(crate::ipc::EfficiencyReport {
+                schema_version: "quality-v1".into(),
+                components: crate::ipc::EfficiencyComponents {
+                    content_convergence_pct: None,
+                    noise_filter_pct: None,
+                    diagnostic_completeness_pct: None,
+                    dedup_reduction_pct: None,
+                },
+                counters: crate::ipc::EfficiencyCounters {
+                    raw_output_bytes: 0,
+                    structured_output_bytes: 0,
+                    visible_events: 0,
+                    skipped_noise_events: 0,
+                    dedup_collapsed_events: 0,
+                    locations_extracted: 0,
+                    codes_extracted: 0,
+                    contexts_enriched: 0,
+                },
+            }),
             information_density,
             command_patterns,
-            repair_loop,
             temporal,
             generated_at: chrono::Utc::now().to_rfc3339(),
         })
@@ -263,15 +235,14 @@ impl<'a> Analytics<'a> {
     }
 
     fn compute_command_patterns(&self, tasks: &[crate::ipc::Task]) -> CommandPatterns {
-        // Group by first 2 words of command
-        let mut cmd_groups: HashMap<String, u64> = HashMap::new();
-        let mut short_count: u64 = 0;
-        let mut long_count: u64 = 0;
+        // Only report directly observed facts. Retry counts and short/long
+        // percentages depend on heuristics and execution mode, so they are
+        // intentionally not product metrics.
+        let mut commands = HashSet::new();
         let mut carriers = CarrierDistribution::default();
 
         for task in tasks {
-            let key = command_prefix(&task.command);
-            *cmd_groups.entry(key).or_insert(0) += 1;
+            commands.insert(task.command.clone());
             match task.carrier.as_deref().unwrap_or("unknown") {
                 "shell" => carriers.shell += 1,
                 "shell_composite" => carriers.shell_composite += 1,
@@ -279,45 +250,9 @@ impl<'a> Analytics<'a> {
                 "script_other" => carriers.script_other += 1,
                 _ => carriers.unknown += 1,
             }
-
-            // Duration-based short/long classification
-            match task.duration_ms {
-                Some(ms) if ms < 500 => short_count += 1,
-                Some(_) => long_count += 1,
-                None => {
-                    // Running tasks with no duration yet — classify by heuristic
-                    if is_short_heuristic(&task.command) {
-                        short_count += 1;
-                    } else {
-                        long_count += 1;
-                    }
-                }
-            }
         }
 
-        let total = tasks.len() as u64;
-        let unique_commands = cmd_groups.len();
-        let commands_run_multiple_times = cmd_groups.values().filter(|&&count| count > 1).count();
-        let total_retry_runs: u64 =
-            cmd_groups.values().filter(|&&count| count > 1).map(|&c| c - 1).sum();
-
-        let mut top_retried: Vec<(String, u64)> =
-            cmd_groups.into_iter().filter(|(_, count)| *count > 1).collect();
-        top_retried.sort_by(|a, b| b.1.cmp(&a.1));
-        top_retried.truncate(10);
-
-        let short_cmd_pct = if total > 0 { short_count as f64 / total as f64 * 100.0 } else { 0.0 };
-        let long_cmd_pct = if total > 0 { long_count as f64 / total as f64 * 100.0 } else { 0.0 };
-
-        CommandPatterns {
-            unique_commands,
-            commands_run_multiple_times,
-            total_retry_runs,
-            top_retried,
-            short_cmd_pct,
-            long_cmd_pct,
-            carrier_distribution: carriers,
-        }
+        CommandPatterns { unique_commands: commands.len(), carrier_distribution: carriers }
     }
 
     /// Conservative fix-loop detection.
@@ -331,6 +266,7 @@ impl<'a> Analytics<'a> {
     /// Only unlabeled tasks (real development workload) participate —
     /// purpose-tagged loads (dogfood/sample) contain deliberate failures and
     /// would pollute the metric. Scanning resumes after the closing success.
+    #[cfg(test)]
     fn compute_repair_loop(&self, tasks: &[crate::ipc::Task]) -> RepairLoopMetrics {
         const MAX_RETRIES: usize = 5;
         const MAX_WINDOW: chrono::Duration = chrono::Duration::minutes(30);
@@ -465,44 +401,6 @@ impl<'a> Analytics<'a> {
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
-
-/// Extract first 2 whitespace-delimited words from a command string.
-fn command_prefix(cmd: &str) -> String {
-    let words: Vec<&str> = cmd.split_whitespace().take(2).collect();
-    if words.is_empty() {
-        "(empty)".to_string()
-    } else {
-        words.join(" ")
-    }
-}
-
-/// Quick heuristic: short if < 80 chars and not a known build/test prefix.
-fn is_short_heuristic(cmd: &str) -> bool {
-    if cmd.len() >= 80 {
-        return false;
-    }
-    let first = cmd.split_whitespace().next().unwrap_or("");
-    let long_prefixes = [
-        "cargo",
-        "npm",
-        "yarn",
-        "pnpm",
-        "make",
-        "cmake",
-        "docker",
-        "docker-compose",
-        "gradle",
-        "mvn",
-        "sbt",
-        "mix",
-        "go",
-        "python",
-        "pytest",
-        "jest",
-        "mocha",
-    ];
-    !long_prefixes.contains(&first)
-}
 
 /// Compute span (in days) between earliest and latest task `started_at`.
 fn compute_span_days(tasks: &[crate::ipc::Task]) -> u64 {
@@ -670,24 +568,6 @@ mod tests {
     }
 
     #[test]
-    fn command_prefix_two_words() {
-        assert_eq!(command_prefix("cargo test --release"), "cargo test");
-        assert_eq!(command_prefix("ls"), "ls");
-        assert_eq!(command_prefix(""), "(empty)");
-        assert_eq!(command_prefix("  "), "(empty)");
-    }
-
-    #[test]
-    fn is_short_heuristic_basic() {
-        assert!(is_short_heuristic("ls -la"));
-        assert!(is_short_heuristic("echo hello"));
-        assert!(!is_short_heuristic("cargo build --release"));
-        assert!(!is_short_heuristic("npm test"));
-        // Long string
-        assert!(!is_short_heuristic(&"x".repeat(80)));
-    }
-
-    #[test]
     fn compute_span_days_empty() {
         assert_eq!(compute_span_days(&[]), 0);
     }
@@ -787,13 +667,7 @@ mod tests {
         ];
 
         let patterns = analytics.compute_command_patterns(&tasks);
-        // "cargo test" and "cargo build" are two unique prefixes
-        assert_eq!(patterns.unique_commands, 3); // "cargo test", "cargo build", "ls -la"
-                                                 // "cargo test" ran twice => 1 group run multiple times
-        assert_eq!(patterns.commands_run_multiple_times, 1);
-        assert_eq!(patterns.total_retry_runs, 1); // 2 runs - 1 = 1 retry
-        assert_eq!(patterns.top_retried[0].0, "cargo test");
-        assert_eq!(patterns.top_retried[0].1, 2);
+        assert_eq!(patterns.unique_commands, 4);
     }
 
     // ── Test helper ─────────────────────────────────────────────────────────

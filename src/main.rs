@@ -8,16 +8,10 @@ mod proxy;
 #[command(
     name = "arshy",
     version,
-    about = "AI Agent native shell — structured output, auto-mode intelligence, command filtering",
-    long_about = "Arshy is a structured shell execution layer for AI agents. It replaces raw Bash with typed, queryable command execution: smart sync for short commands, async structured output for long commands, and 37 built-in parsers for common build/test tools."
+    about = "Structured command execution and diagnostics for AI agents over MCP",
+    long_about = "Arshy is a local structured command-execution and diagnostics layer for AI agents. It exposes two MCP tools for running commands, querying events, and retrieving actionable build/test diagnostics."
 )]
 pub struct Cli {
-    /// Run as MCP stdio proxy (for Claude Code / Cursor integration).
-    /// The proxy connects to the arshyd daemon via Unix socket and translates
-    /// MCP JSON-RPC tool calls into arshy IPC commands.
-    #[arg(long = "from-mcp", verbatim_doc_comment)]
-    pub from_mcp: bool,
-
     /// Path to config file. If not set, defaults are used with env var overrides.
     #[arg(long = "config", verbatim_doc_comment)]
     pub config: Option<PathBuf>,
@@ -83,14 +77,6 @@ pub enum CliCommand {
         #[arg(long, default_value = "event")]
         format: String,
     },
-    /// Register as MCP server for Claude Code / Cursor
-    Install,
-    /// Remove arshy registration (all agents, or a single agent with --agent)
-    Uninstall {
-        /// Only remove arshy from this agent (zero-residue restore of its config)
-        #[arg(long)]
-        agent: Option<String>,
-    },
     /// Prune old task history
     Prune {
         #[arg(long)]
@@ -116,12 +102,8 @@ pub enum CliCommand {
         #[arg(long, default_value = "pretty")]
         format: String,
     },
-    /// Diagnose integrations and show fix suggestions
-    Doctor {
-        /// Only check this agent (codex, claude-code, cursor, vscode, antigravity, opencode, aider, workbuddy)
-        #[arg(long)]
-        agent: Option<String>,
-    },
+    /// Diagnose the local binary, daemon and generic MCP server
+    Doctor,
     /// Generate impact analysis report (used internally by dogfood --report)
     #[command(hide = true)]
     Analyze {
@@ -134,30 +116,10 @@ pub enum CliCommand {
         #[command(subcommand)]
         action: ParserAction,
     },
-    /// Manage shell integration hook
-    Hook {
+    /// Generic MCP server and configuration helpers
+    Mcp {
         #[command(subcommand)]
-        action: HookAction,
-    },
-    /// Initialize arshy in the current workspace: .arshy.toml (bash-proxy opt-in),
-    /// project .mcp.json (any MCP-capable agent picks it up), and an AGENTS.md
-    /// instruction block.
-    Init {
-        /// Undo init: remove arshy's .arshy.toml marker, .mcp.json entry and
-        /// AGENTS.md section (zero residue for the project layer).
-        #[arg(long)]
-        undo: bool,
-    },
-    /// Wire arshy into an agent environment (one command per agent)
-    Setup {
-        /// Agent id (codex, claude-code, cursor, vscode, antigravity, opencode, aider, workbuddy). Omit to wire all detected agents.
-        agent: Option<String>,
-        /// Show what would be done without making changes
-        #[arg(long)]
-        dry_run: bool,
-        /// Only print per-agent integration status (no changes)
-        #[arg(long)]
-        status: bool,
+        action: McpAction,
     },
     /// Copy the current build over the installed arshy/arshyd binaries
     SelfUpdate {
@@ -165,16 +127,18 @@ pub enum CliCommand {
         #[arg(long)]
         dest: Option<PathBuf>,
     },
-    /// Claude Code PreToolUse hook handler (reads stdin, outputs stdout)
-    ClaudeHook,
 }
 
 #[derive(clap::Subcommand, Debug)]
-pub enum HookAction {
-    /// Install the shell integration wrapper
-    Install,
-    /// Uninstall the shell integration wrapper
-    Uninstall,
+pub enum McpAction {
+    /// Run the stdio MCP server
+    Serve,
+    /// Print a client-neutral stdio server entry
+    Config {
+        /// Output format: json (default) or command
+        #[arg(long, default_value = "json")]
+        format: String,
+    },
 }
 
 #[derive(clap::Subcommand, Debug)]
@@ -208,35 +172,7 @@ pub enum ParserAction {
 }
 
 fn main() -> arshy_lib::Result<()> {
-    // Check if we should act as a shell wrapper (invoked as sh, bash, or zsh)
-    let args: Vec<String> = std::env::args().collect();
-    let mut is_shell = None;
-    let mut is_claude_hook = false;
-    if let Some(exe_path) = args.first() {
-        let exe_path_buf = std::path::Path::new(exe_path);
-        if let Some(exe_name) = exe_path_buf.file_name().and_then(|n| n.to_str()) {
-            if exe_name == "sh" || exe_name == "bash" || exe_name == "zsh" {
-                is_shell = Some(exe_name.to_string());
-            } else if exe_name == "claude-hook" {
-                is_claude_hook = true;
-            }
-        }
-    }
-
-    if is_claude_hook {
-        return cli::shell_wrapper::run_claude_hook();
-    }
-
-    if let Some(name) = is_shell {
-        return cli::shell_wrapper::run_wrapper(&name, args);
-    }
-
     let cli = Cli::parse();
-
-    if cli.from_mcp {
-        proxy::run(cli.config)
-    } else {
-        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
-        rt.block_on(cli::dispatch(cli))
-    }
+    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
+    rt.block_on(cli::dispatch(cli))
 }

@@ -49,7 +49,7 @@
 
 诚实首发的对外承诺——所有数字可由 `scripts/measure-savings.sh` 复现：
 
-- [性能声明](marketing/CLAIMS.md) — 实测 token 节省率（+45.7% 到 +79.9%）、引用守则、复现 checklist
+- [性能声明](marketing/CLAIMS.md) — 组件化质量指标、引用守则与复现 checklist
 - [常见问题](marketing/FAQ.md) — 安装、性能、集成、安全、故障排除
 - [vs RTK / Headroom](marketing/benchmarks.md) — 架构定位对比（非 head-to-head）
 

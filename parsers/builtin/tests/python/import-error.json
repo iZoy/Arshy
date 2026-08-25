@@ -12,13 +12,18 @@
     "type": "log"
   },
   {
+    "file": "app/main.py",
+    "line": 3,
+    "message": "  File \"app/main.py\", line 3, in <module>",
+    "severity": "error",
+    "type": "location"
+  },
+  {
     "message": "    from utils.helpers import process_data",
     "severity": "info",
     "type": "log"
   },
   {
-    "file": "app/main.py",
-    "line": 3,
     "message": "cannot import name 'process_data' from 'utils.helpers' (/tmp/utils/helpers.py)",
     "severity": "error",
     "type": "diagnostic"

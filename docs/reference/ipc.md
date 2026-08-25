@@ -1,6 +1,6 @@
 # Daemon IPC 参考
 
-> 本文档依据 `src/ipc/mod.rs`、`src/ipc/transport.rs`、`src/daemon/ipc_handler.rs` 核对（arshy v0.0.1）。
+> 本文档依据 `src/ipc/mod.rs`、`src/ipc/transport.rs`、`src/daemon/ipc_handler.rs` 核对（arshy v0.1.0-dev.1）。
 
 ## 传输
 
@@ -78,12 +78,12 @@
 
 ### mode 语义（`src/daemon/exec/mod.rs`）
 
-- `auto` + 短命令（`is_short_command` 且无 parse_hint）→ 零开销快路径：同步执行，返回原始输出（`short_command: true`）；
-- `auto` + 长命令 → 同步等待，60s 内未完成则降级为 async（返回 `status:"running"` 的 `RunResult`）；
+- `auto` + 原始快速路径（只读检查命令且无 parse_hint）→ 同步执行，返回原始输出（兼容字段 `short_command: true`）；
+- `auto` + 结构化路径（parser 命中或存在生命周期信号）→ 同步等待，60s 内未完成则降级为 async（返回 `status:"running"` 的 `RunResult`）；
 - `sync` → 显式同步，无限等待（由 `timeout_ms` 控制）；
 - `async` → 立即返回任务 ID，事件经通知流推送。
 
-`is_short_command` 判定：空命令为短；含 `>>`/`&&`/`||`/`&` 为非短；含 `--watch`/`-f`/`serve`/`daemon`/`start`/`dev`/`preview` 为非短；命中长输出前缀表（`cargo test`、`npm install`、`tsc`、`gcc`、`docker build` 等）为非短；命中检查工具白名单（`echo`/`cat`/`ls`/`pwd`/`git status` 等）为短；字数与字符数超限为非短。
+`is_short_command` 不再维护生态命令前缀表。parser registry 命中即选择结构化路径；只读检查工具保留原始快速返回。Rust 规则只处理 shell 组合、后台/重定向、watch/server 信号和无 parser 时的字数/长度兜底。
 
 ## RunResult（task/run 响应）
 
@@ -156,7 +156,7 @@
 
 ### StatsResponse
 
-`total_tasks`、`by_status`（`running`/`completed`/`failed`/`killed`/`timeout` 计数）、`total_events`、`total_errors`、`purpose_breakdown`（`{purpose,total,failed,failure_rate?,avg_duration_ms?}`）、`avg_duration_ms`、`p50_duration_ms`、`p99_duration_ms`、`failure_rate`、`db_size_bytes`、`parser_coverage_pct`、`context_enriched`、`dedup_collapsed`、`correlated_errors`、`per_parser_usage`（`{parser,count}`）、`total_raw_output_bytes`、`total_agent_delivered_bytes`、`total_agent_visible_events`、`total_agent_skipped_events`、`total_locations_extracted`、`total_codes_extracted`、`total_contexts_enriched`。可选字段缺省时省略（`skip_serializing_if`）。
+`total_tasks`、`by_status`、`total_events`、`total_errors`、`purpose_breakdown`、`avg_duration_ms`、`p50_duration_ms`、`p99_duration_ms`、`failure_rate`、`db_size_bytes`、`parser_coverage_pct`、`context_enriched`、`dedup_collapsed`、`correlated_errors`、`per_parser_usage`、`total_raw_output_bytes`、`total_structured_output_bytes`、`total_visible_events`、`total_skipped_noise_events`、`total_locations_extracted`、`total_codes_extracted`、`total_contexts_enriched`、`efficiency`。可选字段缺省时省略（`skip_serializing_if`）。`efficiency` 只在显式 analytics 请求中生成，使用 `quality-v1` 分项指标，不包含 token 估算。
 
 ## 通知（daemon → proxy）
 

@@ -17,6 +17,26 @@ fn starts_with_ignore_ascii_case(haystack: &str, prefix: &str) -> bool {
     haystack.as_bytes()[..prefix.len()].eq_ignore_ascii_case(prefix.as_bytes())
 }
 
+fn full_pattern_matches(command: &str, pattern: &str) -> bool {
+    starts_with_ignore_ascii_case(command, pattern)
+        && command.as_bytes().get(pattern.len()).is_none_or(|next| next.is_ascii_whitespace())
+}
+
+/// Match an executable name exactly, with one narrow exception for common
+/// version-suffixed binaries (`python3.12`, `gcc-14`). A parser asset named
+/// `npm` must not silently claim `npmx`.
+fn command_name_matches(command_name: &str, pattern: &str) -> bool {
+    if command_name.eq_ignore_ascii_case(pattern) {
+        return true;
+    }
+    let Some(suffix) = command_name.get(pattern.len()..) else {
+        return false;
+    };
+    command_name.get(..pattern.len()).is_some_and(|prefix| prefix.eq_ignore_ascii_case(pattern))
+        && ((suffix.starts_with('.') || suffix.starts_with('-'))
+            && suffix[1..].chars().next().is_some_and(|c| c.is_ascii_digit()))
+}
+
 use super::stateful::StatefulPattern;
 use super::toml::LinePattern;
 use super::toml_def;
@@ -33,6 +53,8 @@ pub struct ParserEntry {
     /// Patterns matched against the full command (for multi-word commands).
     pub detect_full_patterns: Vec<String>,
     pub parser_type: ParserType,
+    /// Route selected by parser metadata (`structured` or `fast`).
+    pub route: String,
     pub source: ParserSource,
     pub priority: u32,
     /// Compiled line patterns (for TOML parsers). Empty for stateful-only parsers.
@@ -83,6 +105,7 @@ impl ParserRegistry {
             detect_patterns: vec![],
             detect_full_patterns: vec![],
             parser_type: ParserType::Raw,
+            route: "structured".into(),
             source: ParserSource::Builtin,
             priority: 0,
             line_patterns: vec![],
@@ -121,53 +144,39 @@ impl ParserRegistry {
 
     /// Find the best parser matching a command.
     ///
-    /// Detection (checked in priority order, first match wins):
-    /// 1. `detect_full` patterns — matched against full command via `starts_with`
-    ///    (e.g. `"cargo test"` matches `"cargo test -- --test-threads=1"`)
-    /// 2. `detect` patterns — matched against first word via `starts_with`
-    ///    (e.g. `"cargo"` matches `"cargo build"`)
-    /// 3. For chained commands (`&&`, `||`, `;`) — retry with each segment's
-    ///    first word (e.g. `"echo x && cargo build"` → detects `"cargo"`)
-    ///
-    /// `starts_with` avoids false positives that `contains` had
-    /// (e.g. "pnpm" no longer matches npm's "npm" pattern).
+    /// Detection is based on quote-aware simple commands, not substring
+    /// splitting. Operators inside a search string therefore cannot activate
+    /// an unrelated parser (`rg 'x; cargo build'` stays an `rg` command), while
+    /// real chains and pipelines still inspect every executable.
     pub fn detect(&self, command: &str) -> Option<ParsedTool> {
-        let first_word = command.split_whitespace().next()?.to_lowercase();
-        // Path-style invocations (./node_modules/.bin/tsc, /usr/bin/go) must
-        // match by basename — otherwise every bin-path call misses its parser
-        // and the output degrades to raw log events without file/line/code.
-        let cmd_name = first_word.rsplit('/').next().unwrap_or(&first_word).to_string();
-        let cmd_lower = command.to_lowercase();
-
-        // Pass 1: full command + first word (standard detection)
-        if let Some(tool) = self.try_detect(&cmd_lower, &cmd_name) {
-            return Some(tool);
-        }
-
-        // Pass 2: chained command — split on &&, ||, ; and retry each segment
-        let has_chain =
-            cmd_lower.contains("&&") || cmd_lower.contains("||") || cmd_lower.contains(';');
-        if has_chain {
-            let segments: Vec<&str> = cmd_lower
-                .split("&&")
-                .flat_map(|s| s.split("||"))
-                .flat_map(|s| s.split(';'))
-                .map(|s| s.trim())
-                .filter(|s| !s.is_empty())
-                .collect();
-            for segment in segments {
-                let seg_raw = segment.split_whitespace().next()?;
-                let seg_name = seg_raw.rsplit('/').next().unwrap_or(seg_raw);
-                if seg_name == cmd_name {
-                    continue; // already tried
-                }
-                if let Some(tool) = self.try_detect(segment, seg_name) {
+        let shape = crate::shell::analyze(command);
+        let mut fast_match = None;
+        for words in &shape.commands {
+            let Some(executable) = crate::shell::executable(words) else {
+                continue;
+            };
+            let cmd_name = executable.rsplit('/').next().unwrap_or(executable).to_ascii_lowercase();
+            let start = words.iter().position(|word| word == executable).unwrap_or(0);
+            let simple_command = words[start..].join(" ").to_ascii_lowercase();
+            if let Some(tool) = self.try_detect(&simple_command, &cmd_name) {
+                if tool.route == "fast" {
+                    fast_match.get_or_insert(tool);
+                } else {
                     return Some(tool);
+                }
+            }
+            if let Some(nested) = crate::shell::nested_shell_command(words) {
+                if let Some(tool) = self.detect(nested) {
+                    if tool.route == "fast" {
+                        fast_match.get_or_insert(tool);
+                    } else {
+                        return Some(tool);
+                    }
                 }
             }
         }
 
-        None
+        fast_match
     }
 
     /// Try to match a command against all registry entries using the given
@@ -179,22 +188,24 @@ impl ParserRegistry {
             }
             // Check detect_full patterns first (matched against full command)
             for pat in &entry.detect_full_patterns {
-                if starts_with_ignore_ascii_case(cmd_lower, pat) {
+                if full_pattern_matches(cmd_lower, pat) {
                     return Some(ParsedTool {
                         tool_name: entry.tool_name.clone(),
                         parser_name: entry.name.clone(),
                         parser_type: entry.parser_type.clone(),
+                        route: entry.route.clone(),
                         version: None,
                     });
                 }
             }
             // Then check detect patterns (matched against first word)
             for pat in &entry.detect_patterns {
-                if starts_with_ignore_ascii_case(first_word, pat) {
+                if command_name_matches(first_word, pat) {
                     return Some(ParsedTool {
                         tool_name: entry.tool_name.clone(),
                         parser_name: entry.name.clone(),
                         parser_type: entry.parser_type.clone(),
+                        route: entry.route.clone(),
                         version: None,
                     });
                 }
@@ -282,6 +293,7 @@ fn def_to_entry(def: toml_def::TomlParserDef, source: ParserSource) -> ParserEnt
         detect_patterns: def.meta.detect.clone(),
         detect_full_patterns: def.meta.detect_full.clone(),
         parser_type: if is_stateful { ParserType::Stateful } else { ParserType::Toml },
+        route: def.meta.route.clone(),
         source,
         priority: def.meta.priority,
         line_patterns: if is_stateful { Vec::new() } else { def.to_line_patterns() },
@@ -331,6 +343,10 @@ mod tests {
         assert!(names.contains(&"npm"), "missing npm parser");
         assert!(names.contains(&"webpack"), "missing webpack parser");
         assert!(names.contains(&"raw"), "missing raw fallback");
+        assert_eq!(
+            registry.detect("git status").as_ref().map(|tool| tool.route.as_str()),
+            Some("fast")
+        );
     }
 
     #[test]
@@ -402,9 +418,47 @@ mod tests {
         let tool = registry.detect("ls -la; python3 -m pytest -v").unwrap();
         assert_eq!(tool.tool_name, "python");
 
-        // No parser should match non-tool commands
-        assert!(registry.detect("echo hello world").is_none());
-        assert!(registry.detect("cd /tmp && ls").is_none());
+        // Read-only commands are represented by the data-driven fast asset.
+        assert_eq!(
+            registry.detect("echo hello world").as_ref().map(|t| t.route.as_str()),
+            Some("fast")
+        );
+        assert_eq!(
+            registry.detect("cd /tmp && ls").as_ref().map(|t| t.route.as_str()),
+            Some("fast")
+        );
+    }
+
+    #[test]
+    fn detection_respects_shell_quotes_and_pipelines() {
+        let registry = ParserRegistry::load(&ParserConfig::default()).unwrap();
+
+        assert_eq!(
+            registry.detect("echo 'cargo build; npm test'").as_ref().map(|t| t.route.as_str()),
+            Some("fast")
+        );
+        assert_eq!(
+            registry.detect("rg 'curl.*\\| sh' src | head -20").as_ref().map(|t| t.route.as_str()),
+            Some("fast")
+        );
+        assert_eq!(registry.detect("cat Cargo.toml | cargo metadata").unwrap().tool_name, "cargo");
+        assert_eq!(
+            registry.detect("env RUST_LOG=debug cargo test").unwrap().tool_name,
+            "cargo-test"
+        );
+        assert_eq!(
+            registry.detect("bash -lc 'cargo test --workspace'").unwrap().tool_name,
+            "cargo-test"
+        );
+    }
+
+    #[test]
+    fn detection_requires_an_executable_name_boundary() {
+        let registry = ParserRegistry::load(&ParserConfig::default()).unwrap();
+        assert!(registry.detect("npmx test").is_none());
+        assert!(registry.detect("cargoish build").is_none());
+        assert_eq!(registry.detect("python3.12 script.py").unwrap().tool_name, "python");
+        assert_eq!(registry.detect("gcc-14 main.c").unwrap().tool_name, "cc");
     }
 
     #[test]

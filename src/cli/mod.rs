@@ -1,25 +1,22 @@
 //! CLI command dispatch — connects to daemon via UDS and executes user commands.
 
-pub mod integrate;
-pub mod render;
-pub mod shell_wrapper;
-
 mod daemon;
-mod install;
+pub mod render;
 mod tasks;
+mod update;
 
 pub(crate) use daemon::{daemon_action, daemon_stats, daemon_status, doctor};
-pub(crate) use install::{install, self_update, uninstall};
 pub(crate) use tasks::{
     connect, kill_task, list_tasks, prune, query_events, run_command, tail_task,
 };
+pub(crate) use update::self_update;
 
 use arshy_lib::config::Config;
 use arshy_lib::ipc::{self, Request, METHOD_ANALYZE};
 use arshy_lib::Result;
 use std::path::PathBuf;
 
-use crate::{Cli, CliCommand, ConfigAction, ParserAction};
+use crate::{Cli, CliCommand, ConfigAction, McpAction, ParserAction};
 
 const RESET: &str = "\x1b[0m";
 const GREEN: &str = "\x1b[32m";
@@ -57,14 +54,6 @@ pub async fn dispatch(cli: Cli) -> Result<()> {
         Some(CliCommand::Tail { task_id, lines, format }) => {
             tail_task(config_path, log_level, &task_id, lines, &format).await
         }
-        Some(CliCommand::Install) => install(),
-        Some(CliCommand::Uninstall { agent }) => {
-            if let Some(id) = agent {
-                integrate::uninstall_agent(&id, false)
-            } else {
-                uninstall()
-            }
-        }
         Some(CliCommand::Prune { keep, older_than }) => {
             prune(config_path, log_level, keep, older_than).await
         }
@@ -72,32 +61,43 @@ pub async fn dispatch(cli: Cli) -> Result<()> {
         Some(CliCommand::Status) => daemon_status(config_path, log_level).await,
         Some(CliCommand::Daemon { action }) => daemon_action(action, config_path, log_level).await,
         Some(CliCommand::Stats { format }) => daemon_stats(config_path, log_level, &format).await,
-        Some(CliCommand::Doctor { agent }) => doctor(config_path, log_level, agent.as_deref()),
+        Some(CliCommand::Doctor) => doctor(config_path, log_level, None),
         Some(CliCommand::Analyze { format }) => analyze(config_path, log_level, &format).await,
         Some(CliCommand::Parser { action }) => parser_action(action, config_path, log_level).await,
-        Some(CliCommand::Hook { action }) => match action {
-            crate::HookAction::Install => shell_wrapper::install_hook(),
-            crate::HookAction::Uninstall => shell_wrapper::uninstall_hook(),
-        },
-        Some(CliCommand::Init { undo }) => {
-            if undo {
-                shell_wrapper::init_workspace_undo()
-            } else {
-                shell_wrapper::init_workspace()
-            }
-        }
-        Some(CliCommand::Setup { agent, dry_run, status }) => {
-            if status {
-                integrate::print_agent_status()
-            } else {
-                integrate::integrate_all(agent.as_deref(), dry_run)
-            }
-        }
+        Some(CliCommand::Mcp { action }) => mcp_action(action, config_path).await,
         Some(CliCommand::SelfUpdate { dest }) => self_update(dest),
-        Some(CliCommand::ClaudeHook) => shell_wrapper::run_claude_hook(),
         None => {
             println!("Arshy — AI Agent native shell execution layer");
-            println!("Usage: arshy [--from-mcp] [OPTIONS] <COMMAND>");
+            println!("Usage: arshy [OPTIONS] <COMMAND>");
+            Ok(())
+        }
+    }
+}
+
+async fn mcp_action(action: McpAction, config_path: Option<PathBuf>) -> Result<()> {
+    match action {
+        McpAction::Serve => crate::proxy::run_async(config_path).await,
+        McpAction::Config { format } => {
+            let command = std::env::current_exe()
+                .ok()
+                .filter(|p| p.file_name().and_then(|n| n.to_str()) == Some("arshy"))
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "arshy".into());
+            match format.as_str() {
+                "json" => println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "command": command,
+                        "args": ["mcp", "serve"]
+                    }))?
+                ),
+                "command" => println!("{} mcp serve", command),
+                other => {
+                    return Err(arshy_lib::ArshyError::Other(format!(
+                        "unsupported MCP config format `{other}`; use json or command"
+                    )))
+                }
+            }
             Ok(())
         }
     }
@@ -286,12 +286,6 @@ fn run_benchmark() -> Result<()> {
             let mut diff = serde_json::json!({});
 
             if let (Some(new_val), Some(old_val)) = (
-                result.get("compression_ratio").and_then(|v| v.as_f64()),
-                baseline.get("compression_ratio").and_then(|v| v.as_f64()),
-            ) {
-                diff["compression_ratio"] = serde_json::json!(new_val - old_val);
-            }
-            if let (Some(new_val), Some(old_val)) = (
                 result.get("avg_accuracy").and_then(|v| v.as_f64()),
                 baseline.get("avg_accuracy").and_then(|v| v.as_f64()),
             ) {
@@ -378,7 +372,7 @@ async fn analyze(
 
 #[cfg(test)]
 mod tests {
-    use super::install::default_install_dir;
+    use super::update::default_install_dir;
 
     #[test]
     fn default_install_dir_dev_build_uses_local_bin() {
@@ -396,8 +390,8 @@ mod tests {
 
     #[test]
     fn default_install_dir_tmp_build_uses_own_dir() {
-        let exe = std::path::Path::new("/opt/arshy/builds/v0.0.1/arshy");
+        let exe = std::path::Path::new("/opt/arshy/builds/v0.1.0/arshy");
         let dir = default_install_dir(exe);
-        assert_eq!(dir, std::path::Path::new("/opt/arshy/builds/v0.0.1"));
+        assert_eq!(dir, std::path::Path::new("/opt/arshy/builds/v0.1.0"));
     }
 }

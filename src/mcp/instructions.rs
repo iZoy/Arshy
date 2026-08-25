@@ -4,75 +4,77 @@ use super::protocol::ToolDefinition;
 
 /// Return the default MCP instructions (plain string per MCP spec).
 pub fn default_instructions() -> String {
-    "Route every shell command through arshy_exec(action:\"run\", command:\"<cmd>\") instead of \
-     raw Bash — fall back to Bash only when arshy is unreachable.\n\n\
-     mode:\"auto\" (default) returns complete results in one call: short commands come back as \
-     instant text, long commands as structured diagnostics (file/line/code). Don't manage task IDs \
-     or poll.\n\n\
-     Session directory: arshy_exec(action:\"cd\", command:\"/absolute/path\") once; later runs \
-     inherit it (use \"cwd\" for one-off overrides)."
+    "Route shell commands through arshy_exec(command:\"<cmd>\") instead of raw Bash; fall back \
+     only when arshy is unreachable. mode:\"auto\" returns inspection output directly and parser-backed \
+     commands as structured diagnostics. Pass cwd explicitly when needed. Use arshy_query for persisted \
+     diagnostics and arshy_task only for cancellation, task listing, or original output."
         .into()
 }
 
 /// Return the complete list of MCP tool definitions.
 ///
-/// 2-tool model: `arshy_exec` (unified run/cd/kill/list/tail) + `arshy_query` (events).
-/// Reduces ~60% tool definition tokens and improves agent selection accuracy.
+/// Three single-purpose tools: execute, query diagnostics, and low-frequency
+/// task lifecycle operations. Tool count is less important than avoiding one
+/// conditional union schema whose fields change meaning by action.
 pub fn tool_definitions() -> Vec<ToolDefinition> {
     vec![
         ToolDefinition {
             name: "arshy_exec".into(),
-            description: "Run shell commands and get complete results in one call. \
-                         mode:\"auto\" (default): short commands (ls, grep) return text instantly; \
-                         long commands (cargo test, npm run build) return structured diagnostics \
-                         (file/line/code).\n\n\
-                         Actions: run (default) | cd (session dir) | kill | list | tail (event view) | \
-                         raw (original output, lines=0 for all) | subscribe.\n\n\
-                         Examples:\n\
-                         - arshy_exec(action:\"run\", command:\"cargo test\")\n\
-                         - arshy_exec(action:\"raw\", task_id:\"<id>\")"
+            description: "Execute one shell command. mode:\"auto\" (default) returns read-only \
+                         inspection output directly and parser-backed commands as structured \
+                         diagnostics with file, line, and code."
                 .into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "action": {"type":"string","enum":["run","kill","list","tail","raw","cd","subscribe"],
-                              "description":"run: execute. cd: set session directory. kill: stop a task. list: show tasks. tail: event output. raw: original output (lines=0 all). subscribe: wait for completion"},
-                    "command": {"type":"string","description":"Shell command (action=run) or directory path (action=cd)"},
-                    "cwd": {"type":"string","description":"Absolute path for working directory (one-off override; use action:cd for session-wide)"},
+                    "command": {"type":"string","description":"Shell command to execute"},
+                    "cwd": {"type":"string","description":"Absolute working directory for this command"},
                     "timeout_ms": {"type":"integer","description":"Timeout in ms"},
-                    "mode": {"type":"string","enum":["auto","sync","async"],"default":"auto",
-                             "description":"auto: smart detect short/long. sync: wait. async: return immediately"},
-                    "parse_hint": {"type":"string",
-                                  "description":"Force a parser by name (e.g. \"python\", \"cargo\", \"raw\"). JSON output is auto-detected by the pipeline; no csv/table hints exist"},
-                    "env": {"type":"object","description":"Environment variables as key-value pairs (e.g. {\"RUST_LOG\":\"debug\"})"},
-                    "task_id": {"type":"string","description":"Task ID from a previous run response (action=kill|tail|raw)"},
-                    "lines": {"type":"integer","default":50,"description":"Lines (action=tail; action=raw defaults to 200, 0 = all)"},
-                    "format": {"type":"string","enum":["event","raw"],"default":"event",
-                              "description":"Output format (action=tail)"},
-                    "status": {"type":"string","enum":["running","completed","failed","killed"],
-                              "description":"Filter by status (action=list)"},
-                    "limit": {"type":"integer","default":10,"description":"Max results (action=list)"}
+                    "mode": {"type":"string","enum":["auto","async"],"default":"auto",
+                             "description":"auto: choose the lowest-overhead safe path; async: return a task id immediately"},
+                    "env": {"type":"object","description":"Environment variables as key-value pairs"}
                 },
-                "required": ["action"]
+                "required": ["command"]
             }),
         },
         ToolDefinition {
             name: "arshy_query".into(),
-            description: "Query structured events from one task, or search across ALL tasks. \
-                         Pass task_id to inspect one task; omit it to search history (results \
-                         carry task_id). Filter by event_type, severity, code, or file."
+            description: "Search persisted structured diagnostic events. Pass task_id for one \
+                         structured task or omit it to search history. Raw log-only lines are \
+                         excluded; use arshy_task(action:\"raw\") for original output."
                 .into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "task_id": {"type":"string","description":"Task ID from arshy_exec response. Omit to search across all tasks."},
-                    "event_type": {"type":"string","description":"Filter by event type (e.g. compile_error, lint)"},
+                    "task_id": {"type":"string","description":"Persisted structured task ID; omit to search all task history"},
+                    "event_type": {"type":"string","description":"Filter by emitted event type, such as diagnostic, test_result, summary, crash, data, or log"},
                     "severity": {"type":"string","enum":["error","warning","info"],"description":"Filter by severity"},
                     "code": {"type":"string","description":"Filter by error code"},
                     "file": {"type":"string","description":"Filter by file path"},
-                    "limit": {"type":"integer","default":20,"description":"Max events to return"}
+                    "limit": {"type":"integer","default":20,"description":"Max events to return"},
+                    "offset": {"type":"integer","default":0,"description":"Pagination offset"}
                 },
                 "required": []
+            }),
+        },
+        ToolDefinition {
+            name: "arshy_task".into(),
+            description: "Low-frequency task lifecycle operations: cancel a running task, list \
+                         persisted tasks, or retrieve a task's original output."
+                .into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "action": {"type":"string","enum":["cancel","list","raw"],
+                              "description":"Operation to perform"},
+                    "task_id": {"type":"string","description":"Required for cancel and raw"},
+                    "lines": {"type":"integer","default":200,
+                              "description":"Original-output lines for raw; 0 returns all"},
+                    "status": {"type":"string","enum":["running","completed","failed","timeout","killed"],
+                              "description":"Optional list filter"},
+                    "limit": {"type":"integer","default":10,"description":"Maximum tasks for list"}
+                },
+                "required": ["action"]
             }),
         },
     ]
@@ -99,15 +101,19 @@ mod tests {
         let tools = tool_definitions();
         let exec = tools.iter().find(|t| t.name == "arshy_exec").unwrap();
         let query = tools.iter().find(|t| t.name == "arshy_query").unwrap();
-        let action_desc = exec
+        let task = tools.iter().find(|t| t.name == "arshy_task").unwrap();
+        let action_desc = task
             .input_schema
             .get("properties")
             .and_then(|p| p.get("action"))
             .and_then(|a| a.get("description"))
             .and_then(|v| v.as_str())
             .unwrap_or("");
-        let total_chars =
-            inst.len() + exec.description.len() + query.description.len() + action_desc.len();
+        let total_chars = inst.len()
+            + exec.description.len()
+            + query.description.len()
+            + task.description.len()
+            + action_desc.len();
 
         assert!(
             total_chars <= 1600,
@@ -115,19 +121,20 @@ mod tests {
             total_chars / 4
         );
 
-        // No duplicated action enumeration between instructions and the tool
-        // description: the action list belongs in exactly one place.
-        assert!(!inst.contains("subscribe"), "action list belongs in the tool description");
-        assert!(!inst.contains("kill"), "action list belongs in the tool description");
+        assert!(!exec.input_schema["properties"].as_object().unwrap().contains_key("action"));
+        let properties = exec.input_schema["properties"].as_object().unwrap();
+        assert!(!properties.contains_key("parse_hint"));
+        assert_eq!(properties["mode"]["enum"], serde_json::json!(["auto", "async"]));
     }
 
     #[test]
     fn tool_definitions_have_expected_tools() {
         let tools = tool_definitions();
-        assert_eq!(tools.len(), 2);
+        assert_eq!(tools.len(), 3);
         let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
         assert!(names.contains(&"arshy_exec"));
         assert!(names.contains(&"arshy_query"));
+        assert!(names.contains(&"arshy_task"));
         for t in &tools {
             assert!(!t.description.is_empty(), "tool {} has empty description", t.name);
             assert_eq!(

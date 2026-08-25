@@ -11,21 +11,10 @@
     "type": "progress"
   },
   {
-    "code": "a9edb18cadd1",
-    "message": "Pull complete",
+    "code": "a2abf6c4d29d",
+    "message": "Pull complete (repeated 3 times)",
     "severity": "info",
     "type": "progress"
-  },
-  {
-    "code": "589b7251471a",
-    "message": "Pull complete",
-    "severity": "info",
-    "type": "progress"
-  },
-  {
-    "message": "Digest: sha256:0d17b565c37bcbd895e9d92315a05c1c3c9a29f762b011a10c54a66cd53c9b31",
-    "severity": "info",
-    "type": "log"
   },
   {
     "message": "Status: Downloaded newer image for nginx:latest",

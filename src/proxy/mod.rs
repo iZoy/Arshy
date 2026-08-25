@@ -16,6 +16,10 @@ use std::path::PathBuf;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, BufReader, BufWriter};
 
+fn request_id_key(id: &serde_json::Value) -> String {
+    serde_json::to_string(id).unwrap_or_else(|_| "null".into())
+}
+
 /// Middleware trait for intercepting request/response/notification flows.
 ///
 /// Reserved for future use: AuditMiddleware, RateLimitMiddleware, AuthMiddleware.
@@ -55,13 +59,8 @@ pub trait Middleware: Send + Sync {
     }
 }
 
-/// Run the MCP stdio proxy. Reads JSON-RPC from stdin, forwards to daemon, writes to stdout.
-pub fn run(config_path: Option<PathBuf>) -> Result<()> {
-    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
-    rt.block_on(proxy_main(config_path))
-}
-
-async fn proxy_main(config_path: Option<PathBuf>) -> Result<()> {
+/// Run the proxy on the caller's Tokio runtime.
+pub async fn run_async(config_path: Option<PathBuf>) -> Result<()> {
     let cfg = Config::load(arshy_lib::config::CliOverrides { config_path, ..Default::default() })?;
 
     let socket_path = cfg.daemon.expanded_socket_path();
@@ -82,7 +81,10 @@ async fn proxy_main(config_path: Option<PathBuf>) -> Result<()> {
     let max_batch = cfg.notifications.max_batch_events;
     let mut pending_notifs: Vec<Notification> = Vec::with_capacity(max_batch);
     let mut batch_deadline: Option<tokio::time::Instant> = None;
-    let mut request_tasks: HashMap<u64, String> = HashMap::new();
+    let mut request_tasks: HashMap<String, String> = HashMap::new();
+    // MCP ids are scoped to one client session. This nonce makes daemon-side
+    // replay protection safe when separate proxy processes both start at id 1.
+    let proxy_session_id = uuid::Uuid::new_v4().to_string();
 
     // Shutdown signal — triggered by SIGTERM from parent process (Claude Code)
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
@@ -138,29 +140,45 @@ async fn proxy_main(config_path: Option<PathBuf>) -> Result<()> {
                             continue;
                         }
 
-                        let request: serde_json::Value = serde_json::from_str(line.trim())
-                            .map_err(|e| arshy_lib::ArshyError::Mcp(e.to_string()))?;
+                        let request: serde_json::Value = match serde_json::from_str(line.trim()) {
+                            Ok(request) => request,
+                            Err(error) => {
+                                protocol::write_json_error(
+                                    &mut stdout,
+                                    serde_json::Value::Null,
+                                    -32700,
+                                    &format!("parse error: {}", error),
+                                    false,
+                                )
+                                .await?;
+                                line.clear();
+                                continue;
+                            }
+                        };
 
                         let method = request["method"].as_str().unwrap_or("");
-                        let id = request["id"].as_u64().unwrap_or(0);
+                        // JSON-RPC ids may be strings or numbers. Preserve the
+                        // exact value so clients can correlate responses and
+                        // cancellation never aliases unrelated requests to 0.
+                        let id = request.get("id").cloned().unwrap_or(serde_json::Value::Null);
 
                         let result = match method {
-                            "initialize" => handle_initialize(&mut stdout, id, &request).await,
-                            "ping" => write_json_response(&mut stdout, id, &serde_json::json!({})).await,
-                            "tools/list" => handle_tools_list(&mut stdout, id).await,
+                            "initialize" => handle_initialize(&mut stdout, &id, &request).await,
+                            "ping" => write_json_response(&mut stdout, &id, &serde_json::json!({})).await,
+                            "tools/list" => handle_tools_list(&mut stdout, &id).await,
                             "resources/list" => {
-                                match handle_resources_list(&mut daemon, &mut stdout, id).await {
+                                match handle_resources_list(&mut daemon, &mut stdout, &id).await {
                                     Ok(()) => drain_pending(&mut notif_rx, &mut stdout, &mut pending_notifs, max_batch).await,
                                     Err(e) if is_connection_error(&e) && cfg.daemon.auto_start => {
                                         match ensure_daemon_up(&mut daemon, &mut notif_rx, &cfg, &socket_path, &mut stdout, &mut pending_notifs).await {
-                                            Ok(()) => match handle_resources_list(&mut daemon, &mut stdout, id).await {
+                                            Ok(()) => match handle_resources_list(&mut daemon, &mut stdout, &id).await {
                                                 Ok(()) => drain_pending(&mut notif_rx, &mut stdout, &mut pending_notifs, max_batch).await,
                                                 Err(e2) => Err(e2),
                                             },
                                             Err(_) => {
                                                 let msg = "arshyd daemon is not running or unreachable.\n\
                                                     Run `arshy daemon start` to start it.".to_string();
-                                                write_structured_error(&mut stdout, id, arshy_lib::ArshyError::DaemonUnreachable(msg)).await
+                                                write_structured_error(&mut stdout, &id, arshy_lib::ArshyError::DaemonUnreachable(msg)).await
                                             }
                                         }
                                     }
@@ -168,18 +186,18 @@ async fn proxy_main(config_path: Option<PathBuf>) -> Result<()> {
                                 }
                             }
                             "resources/read" => {
-                                match handle_resources_read(&mut daemon, &mut stdout, &request, id).await {
+                                match handle_resources_read(&mut daemon, &mut stdout, &request, &id).await {
                                     Ok(()) => drain_pending(&mut notif_rx, &mut stdout, &mut pending_notifs, max_batch).await,
                                     Err(e) if is_connection_error(&e) && cfg.daemon.auto_start => {
                                         match ensure_daemon_up(&mut daemon, &mut notif_rx, &cfg, &socket_path, &mut stdout, &mut pending_notifs).await {
-                                            Ok(()) => match handle_resources_read(&mut daemon, &mut stdout, &request, id).await {
+                                            Ok(()) => match handle_resources_read(&mut daemon, &mut stdout, &request, &id).await {
                                                 Ok(()) => drain_pending(&mut notif_rx, &mut stdout, &mut pending_notifs, max_batch).await,
                                                 Err(e2) => Err(e2),
                                             },
                                             Err(_) => {
                                                 let msg = "arshyd daemon is not running or unreachable.\n\
                                                     Run `arshy daemon start` to start it.".to_string();
-                                                write_structured_error(&mut stdout, id, arshy_lib::ArshyError::DaemonUnreachable(msg)).await
+                                                write_structured_error(&mut stdout, &id, arshy_lib::ArshyError::DaemonUnreachable(msg)).await
                                             }
                                         }
                                     }
@@ -187,10 +205,10 @@ async fn proxy_main(config_path: Option<PathBuf>) -> Result<()> {
                                 }
                             }
                             "tools/call" => {
-                                let result = match handle_tool_call(&mut daemon, &mut stdout, &request, id).await {
+                                let result = match handle_tool_call(&mut daemon, &mut stdout, &request, &id, &proxy_session_id).await {
                                     Ok(maybe_task_id) => {
                                         if let Some(tid) = maybe_task_id {
-                                            request_tasks.insert(id, tid);
+                                            request_tasks.insert(request_id_key(&id), tid);
                                         }
                                         drain_pending(&mut notif_rx, &mut stdout, &mut pending_notifs, max_batch).await
                                     }
@@ -198,10 +216,10 @@ async fn proxy_main(config_path: Option<PathBuf>) -> Result<()> {
                                         tracing::warn!("daemon connection lost, attempting reconnect...");
                                         match ensure_daemon_up(&mut daemon, &mut notif_rx, &cfg, &socket_path, &mut stdout, &mut pending_notifs).await {
                                             Ok(()) => {
-                                                match handle_tool_call(&mut daemon, &mut stdout, &request, id).await {
+                                                match handle_tool_call(&mut daemon, &mut stdout, &request, &id, &proxy_session_id).await {
                                                     Ok(maybe_task_id) => {
                                                         if let Some(tid) = maybe_task_id {
-                                                            request_tasks.insert(id, tid);
+                                                            request_tasks.insert(request_id_key(&id), tid);
                                                         }
                                                         drain_pending(&mut notif_rx, &mut stdout, &mut pending_notifs, max_batch).await
                                                     }
@@ -212,7 +230,7 @@ async fn proxy_main(config_path: Option<PathBuf>) -> Result<()> {
                                                 let msg = "arshyd daemon is not running or unreachable.\n\
                                                     Run `arshy daemon start` to start it.\n\
                                                     Connection failed after retries.".to_string();
-                                                write_structured_error(&mut stdout, id, arshy_lib::ArshyError::DaemonUnreachable(msg)).await
+                                                write_structured_error(&mut stdout, &id, arshy_lib::ArshyError::DaemonUnreachable(msg)).await
                                             }
                                         }
                                     }
@@ -227,7 +245,7 @@ async fn proxy_main(config_path: Option<PathBuf>) -> Result<()> {
                                             }
                                             _ => format!("daemon error: {}", e),
                                         };
-                                        write_structured_error(&mut stdout, id, arshy_lib::ArshyError::Ipc(msg)).await
+                                        write_structured_error(&mut stdout, &id, arshy_lib::ArshyError::Ipc(msg)).await
                                     }
                                 };
                                 result
@@ -235,8 +253,8 @@ async fn proxy_main(config_path: Option<PathBuf>) -> Result<()> {
                             "notifications/initialized" => Ok(()),
                             "notifications/cancelled" => {
                                 // MCP client cancelled a request — kill the associated task
-                                let request_id = request["params"]["requestId"].as_u64().unwrap_or(0);
-                                if let Some(task_id) = request_tasks.remove(&request_id) {
+                                let request_id = request["params"]["requestId"].clone();
+                                if let Some(task_id) = request_tasks.remove(&request_id_key(&request_id)) {
                                     tracing::info!("cancelling task {} (request {})", task_id, request_id);
                                     let kill_params = serde_json::json!({ "task_id": &task_id });
                                     match daemon.send_request(ipc::METHOD_KILL, kill_params).await {
@@ -256,7 +274,7 @@ async fn proxy_main(config_path: Option<PathBuf>) -> Result<()> {
                             _ => {
                                 // Only error on requests (have id), silently ignore notifications
                                 if request.get("id").is_some() {
-                                    write_structured_error(&mut stdout, id, arshy_lib::ArshyError::Ipc(
+                                    write_structured_error(&mut stdout, &id, arshy_lib::ArshyError::Ipc(
                                         format!("unknown method: {}", method))).await
                                 } else {
                                     tracing::debug!("ignoring unknown notification: {}", method);
@@ -360,7 +378,7 @@ mod tests {
     #[test]
     fn test_mcp_tool_to_ipc_method_unknown_tool_rejected() {
         let empty = serde_json::json!({});
-        // Legacy pre-2-tool names are gone — no compatibility shims.
+        // Legacy one-operation tool names are gone — no compatibility shims.
         assert!(mcp_tool_to_ipc_method("arshy_run", &empty).is_err());
         assert!(mcp_tool_to_ipc_method("arshy_list", &empty).is_err());
         assert!(mcp_tool_to_ipc_method("arshy_kill", &empty).is_err());
@@ -373,24 +391,20 @@ mod tests {
     }
 
     #[test]
-    fn test_mcp_tool_to_ipc_method_arshy_exec_by_action() {
-        let run_args = serde_json::json!({"action":"run","command":"ls"});
+    fn test_mcp_tool_to_ipc_method_single_purpose_tools() {
+        let run_args = serde_json::json!({"command":"ls"});
         assert_eq!(mcp_tool_to_ipc_method("arshy_exec", &run_args).unwrap(), ipc::METHOD_RUN);
 
-        let kill_args = serde_json::json!({"action":"kill","task_id":"abc"});
-        assert_eq!(mcp_tool_to_ipc_method("arshy_exec", &kill_args).unwrap(), ipc::METHOD_KILL);
+        let kill_args = serde_json::json!({"action":"cancel","task_id":"abc"});
+        assert_eq!(mcp_tool_to_ipc_method("arshy_task", &kill_args).unwrap(), ipc::METHOD_KILL);
 
         let list_args = serde_json::json!({"action":"list"});
-        assert_eq!(mcp_tool_to_ipc_method("arshy_exec", &list_args).unwrap(), ipc::METHOD_LIST);
+        assert_eq!(mcp_tool_to_ipc_method("arshy_task", &list_args).unwrap(), ipc::METHOD_LIST);
 
-        let tail_args = serde_json::json!({"action":"tail","task_id":"abc"});
-        assert_eq!(mcp_tool_to_ipc_method("arshy_exec", &tail_args).unwrap(), ipc::METHOD_TAIL);
         let raw_args = serde_json::json!({"action":"raw","task_id":"abc"});
-        assert_eq!(mcp_tool_to_ipc_method("arshy_exec", &raw_args).unwrap(), ipc::METHOD_TAIL);
+        assert_eq!(mcp_tool_to_ipc_method("arshy_task", &raw_args).unwrap(), ipc::METHOD_TAIL);
 
-        // Default (no action) → run
-        let default_args = serde_json::json!({"command":"ls"});
-        assert_eq!(mcp_tool_to_ipc_method("arshy_exec", &default_args).unwrap(), ipc::METHOD_RUN);
+        assert!(mcp_tool_to_ipc_method("arshy_task", &serde_json::json!({})).is_err());
     }
 
     #[test]
@@ -747,10 +761,10 @@ mod tests {
     #[test]
     fn test_tool_definitions_have_descriptions() {
         let tools = instructions::tool_definitions();
-        assert_eq!(tools.len(), 2);
+        assert_eq!(tools.len(), 3);
         assert_eq!(tools[0].name, "arshy_exec");
-        assert!(tools[0].description.contains("Examples:"));
         assert_eq!(tools[1].name, "arshy_query");
         assert!(tools[1].description.contains("task_id"));
+        assert_eq!(tools[2].name, "arshy_task");
     }
 }
