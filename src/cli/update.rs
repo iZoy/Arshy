@@ -1,8 +1,7 @@
 //! Developer self-update helper.
 //!
-//! Installation and MCP registration are intentionally handled by the generic
-//! release installer and `arshy mcp config`; this module never edits an Agent,
-//! shell profile, or workspace file.
+//! Installation remains generic; Agent onboarding is handled by the
+//! client-neutral MCP setup Prompt and never edits shell profiles or PATH entries.
 
 use arshy_lib::Result;
 use std::path::PathBuf;

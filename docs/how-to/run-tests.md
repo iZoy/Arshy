@@ -7,10 +7,10 @@ arshy 的测试体系分四层：**单元测试 → 集成测试（真实进程�
 
 ```bash
 cargo build --bin arshy --bin arshyd     # 集成测试需要真实二进制
-cargo test --lib --bin arshy --bin arshyd # 单元测试（480+66+2）
+cargo test --lib --bin arshy --bin arshyd # 单元测试（517+43+2）
 cargo test --test integration             # 集成测试（真实 daemon + MCP proxy 进程）
-cargo test --bin arshyd fixture_cargo     # 单个 parser fixture 示例
-ARSHY=./target/debug/arshy ./scripts/dogfood.sh  # 21 项 dogfood 回归
+cargo test fixture_cargo                 # 单个 parser fixture 示例（库测试）
+ARSHY=./target/debug/arshy ./scripts/dogfood.sh  # 28 项 dogfood 回归
 ```
 
 提交前完整门禁（与 CI 一致）：
@@ -59,25 +59,25 @@ kill、安全拦截、优雅关闭、MCP 协议版本协商、MCP 工具调用�
 
 ## Parser fixture 测试
 
-每个内置 parser 在 `parsers/builtin/tests/<tool>/` 下至少有一组
-`.txt`（输入）与 `.json`（期望事件）fixture。fixture 测试由
-`src/daemon/parser/mod.rs` 的 `run_parser_fixtures` 生成并强制校验字段匹配率。
+每个产生结构化事件的内置 parser 在 `parsers/builtin/tests/<tool>/` 下至少有一组
+`.txt`（输入）与 `.json`（期望事件）fixture；`inspection` 仅负责 Fast 路由，不产生事件。
+fixture 测试由 `src/daemon/parser/mod.rs` 的 `run_parser_fixtures` 生成并强制校验字段匹配率。
 
 ```bash
-cargo test --bin arshyd fixture_<tool>   # 例如 fixture_cargo / fixture_python
+cargo test fixture_<tool>               # 例如 fixture_cargo / fixture_python（库测试）
 ```
 
 **新增/更新 fixture（bless 流程）**：
 
 1. 新建或修改 `parsers/builtin/tests/<tool>/<name>.txt`（真实工具输出）；
-2. 运行 `ARSHY_BLESS=1 cargo test --bin arshyd` 自动生成期望 `.json`；
+2. 运行 `ARSHY_BLESS=1 cargo test fixture_` 自动生成期望 `.json`；
 3. 人工检查生成的 `.json` 符合预期（severity/code/file/line 字段）；
-4. 正常跑 `cargo test --bin arshyd` 确认通过（字段匹配率 ≥95%）。
+4. 正常跑 `cargo test fixture_` 确认通过（字段匹配率 ≥95%）。
 
 ## Dogfood 回归
 
 `scripts/dogfood.sh` 让 arshy 用自己跑自己：daemon 健康、短/长命令、错误提取
-（E0308 + 源码上下文）、git 关联、安全拦截、去重、stats/analyze，共 21 项。
+（E0308 + 源码上下文）、git 关联、安全拦截、去重、stats/analyze，共 28 项。
 
 ```bash
 ARSHY=./target/debug/arshy ./scripts/dogfood.sh

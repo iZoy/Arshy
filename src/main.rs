@@ -26,8 +26,8 @@ pub struct Cli {
 
 #[cfg(test)]
 mod tests {
-    use super::Cli;
-    use clap::CommandFactory;
+    use super::{Cli, CliCommand};
+    use clap::{CommandFactory, Parser};
 
     #[test]
     fn help_describes_the_three_tool_mcp_surface() {
@@ -37,6 +37,14 @@ mod tests {
         assert!(help.contains("arshy_query"));
         assert!(help.contains("arshy_task"));
         assert!(!help.contains("two MCP tools"));
+    }
+
+    #[test]
+    fn parses_prompt_config_and_rejects_unreleased_client_adapters() {
+        let cli = Cli::try_parse_from(["arshy", "mcp", "config", "--format", "prompt"]).unwrap();
+        assert!(matches!(cli.command, Some(CliCommand::Mcp { .. })));
+        assert!(Cli::try_parse_from(["arshy", "init", "codex"]).is_err());
+        assert!(Cli::try_parse_from(["arshy", "uninit", "codex"]).is_err());
     }
 }
 
@@ -119,7 +127,11 @@ pub enum CliCommand {
         format: String,
     },
     /// Diagnose the local binary, daemon and generic MCP server
-    Doctor,
+    Doctor {
+        /// Output format: text (default) or json
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
     /// Generate impact analysis report (used internally by dogfood --report)
     #[command(hide = true)]
     Analyze {
@@ -149,9 +161,9 @@ pub enum CliCommand {
 pub enum McpAction {
     /// Run the stdio MCP server
     Serve,
-    /// Print a client-neutral stdio server entry
+    /// Print a client-neutral stdio server entry or setup prompt
     Config {
-        /// Output format: json (default) or command
+        /// Output format: json (default), command, or prompt
         #[arg(long, default_value = "json")]
         format: String,
     },

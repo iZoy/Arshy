@@ -61,7 +61,7 @@ pub async fn dispatch(cli: Cli) -> Result<()> {
         Some(CliCommand::Status) => daemon_status(config_path, log_level).await,
         Some(CliCommand::Daemon { action }) => daemon_action(action, config_path, log_level).await,
         Some(CliCommand::Stats { format }) => daemon_stats(config_path, log_level, &format).await,
-        Some(CliCommand::Doctor) => doctor(config_path, log_level, None),
+        Some(CliCommand::Doctor { format }) => doctor(config_path, log_level, None, &format).await,
         Some(CliCommand::Analyze { format }) => analyze(config_path, log_level, &format).await,
         Some(CliCommand::Parser { action }) => parser_action(action, config_path, log_level).await,
         Some(CliCommand::Mcp { action }) => mcp_action(action, config_path).await,
@@ -78,11 +78,7 @@ async fn mcp_action(action: McpAction, config_path: Option<PathBuf>) -> Result<(
     match action {
         McpAction::Serve => crate::proxy::run_async(config_path).await,
         McpAction::Config { format } => {
-            let command = std::env::current_exe()
-                .ok()
-                .filter(|p| p.file_name().and_then(|n| n.to_str()) == Some("arshy"))
-                .map(|p| p.to_string_lossy().into_owned())
-                .unwrap_or_else(|| "arshy".into());
+            let command = current_arshy_command()?;
             match format.as_str() {
                 "json" => println!(
                     "{}",
@@ -92,15 +88,87 @@ async fn mcp_action(action: McpAction, config_path: Option<PathBuf>) -> Result<(
                     }))?
                 ),
                 "command" => println!("{} mcp serve", command),
+                "prompt" => print!("{}", setup_prompt(&command)),
                 other => {
                     return Err(arshy_lib::ArshyError::Other(format!(
-                        "unsupported MCP config format `{other}`; use json or command"
+                        "unsupported MCP config format `{other}`; use json, command, or prompt"
                     )))
                 }
             }
             Ok(())
         }
     }
+}
+
+fn current_arshy_command() -> Result<String> {
+    let path = std::env::current_exe().map_err(|error| {
+        arshy_lib::ArshyError::Other(format!("cannot locate arshy executable: {error}"))
+    })?;
+    let path = path.canonicalize().map_err(|error| {
+        arshy_lib::ArshyError::Other(format!("cannot resolve arshy executable path: {error}"))
+    })?;
+    if path.file_name().and_then(|name| name.to_str()) != Some("arshy") {
+        return Err(arshy_lib::ArshyError::Other(format!(
+            "mcp config must run from the arshy executable, found {}",
+            path.display()
+        )));
+    }
+    Ok(path.to_string_lossy().into_owned())
+}
+
+const SETUP_PROMPT_VERSION: &str = "Arshy setup prompt v1";
+const SETUP_PROMPT_TEMPLATE: &str = r#"<ARSHY_SETUP_PROMPT_VERSION>
+
+Configure Arshy for the current local coding-agent client.
+
+This prompt was generated on the machine where the executable below exists.
+Use it only on that same machine and in the project where configuration is intended.
+
+Authoritative server entry:
+{"command": <ARSHY_ABSOLUTE_PATH>, "args": ["mcp", "serve"]}
+
+Use the current client's native MCP management command or API. Do not guess
+undocumented configuration formats. Register one stdio MCP server named `arshy`,
+preferably at user/global scope; if this client only supports project scope, use
+that scope and report it.
+
+Before changing anything:
+1. Confirm the authoritative executable exists and invoke it with the single
+   argument `doctor` through the available shell path.
+2. Inspect the existing MCP entry named `arshy`.
+3. Check the current project's instruction hierarchy and follow its existing
+   conventions. Do not create or rewrite a project rule file for Arshy unless
+   the current project policy and user authorization call for it.
+
+Apply only the minimum change needed:
+- If an existing `arshy` entry has the exact command and args above, succeed
+  without changing it.
+- If an existing `arshy` entry differs, stop and show its current value; never overwrite it.
+- Preserve all user content in any project file you are authorized to edit and
+  report the file and change.
+
+Safety and recovery:
+- Do not modify PATH, shell profiles, hooks, unrelated MCP entries, unrelated
+  project rules, or installed software. Do not elevate privileges.
+- If a GUI, enterprise policy, missing permission, or user approval is required,
+  stop and give the exact manual action.
+- If Arshy is unavailable, use the native shell only for `arshy doctor` or
+  `arshy daemon restart`, then retry Arshy. Any other fallback must be explicit.
+
+Verification and rollback:
+- Verify the registration with the client's native list/get mechanism and run
+  `arshy doctor`.
+- Report the actual scope, files changed, and whether a restart or new task is
+  required. Do not claim the current session has loaded the tool before reload.
+- If a later step fails, revert only the MCP entry or project-file change made
+  by this run; leave pre-existing values untouched and report rollback failures.
+"#;
+
+fn setup_prompt(command: &str) -> String {
+    let command = serde_json::to_string(command).expect("a string is always JSON serializable");
+    SETUP_PROMPT_TEMPLATE
+        .replace("<ARSHY_SETUP_PROMPT_VERSION>", SETUP_PROMPT_VERSION)
+        .replace("<ARSHY_ABSOLUTE_PATH>", &command)
 }
 
 fn config(action: ConfigAction, config_path: Option<PathBuf>) -> Result<()> {
@@ -372,7 +440,7 @@ async fn analyze(
 
 #[cfg(test)]
 mod tests {
-    use super::update::default_install_dir;
+    use super::{setup_prompt, update::default_install_dir, SETUP_PROMPT_VERSION};
 
     #[test]
     fn default_install_dir_dev_build_uses_local_bin() {
@@ -393,5 +461,35 @@ mod tests {
         let exe = std::path::Path::new("/opt/arshy/builds/v0.1.0/arshy");
         let dir = default_install_dir(exe);
         assert_eq!(dir, std::path::Path::new("/opt/arshy/builds/v0.1.0"));
+    }
+
+    #[test]
+    fn setup_prompt_is_client_neutral_and_contains_safety_contract() {
+        let prompt = setup_prompt("/tmp/project with spaces/arshy");
+        assert!(prompt.starts_with(SETUP_PROMPT_VERSION));
+        assert!(prompt.contains(r#""command": "/tmp/project with spaces/arshy"#));
+        assert!(prompt.contains(r#""args": ["mcp", "serve"]"#));
+        assert!(!prompt.contains("<ARSHY_ABSOLUTE_PATH>"));
+        assert!(!prompt.contains("<ARSHY_SETUP_PROMPT_VERSION>"));
+        assert!(prompt.contains("same machine"));
+        assert!(prompt.contains("project policy"));
+        assert!(prompt.contains("never overwrite it"));
+        assert!(prompt.contains("Do not elevate privileges"));
+        assert!(prompt.contains("Verification and rollback"));
+        assert!(prompt.contains("new task"));
+        assert!(!prompt.contains("codex mcp add"));
+        assert!(!prompt.contains("claude mcp add"));
+        assert!(!prompt.contains("gemini mcp add"));
+        assert!(!prompt.contains(".cursor/mcp.json"));
+        assert!(!prompt.contains("arshy:managed:start"));
+        assert!(!prompt.contains("arshy:managed:end"));
+        assert!(!prompt.contains("```"));
+    }
+
+    #[test]
+    fn setup_prompt_json_escapes_special_executable_paths() {
+        let prompt = setup_prompt("/tmp/quoted\\path/\"arshy");
+        assert!(prompt.contains(r#"/tmp/quoted\\path/\"arshy"#));
+        assert!(prompt.contains("{\"command\": "));
     }
 }

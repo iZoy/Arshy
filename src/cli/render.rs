@@ -689,7 +689,7 @@ pub fn render_run_text(result: &serde_json::Value) -> String {
     out.trim_end_matches('\n').to_string()
 }
 
-/// One-line structured summary + root cause + changed files for a run result.
+/// One-line structured summary + primary diagnostic + changed files for a run result.
 fn one_line_summary(result: &serde_json::Value) -> String {
     let status = result["status"].as_str().unwrap_or("");
     let error_count = result.get("error_count").and_then(|v| v.as_u64()).unwrap_or(0);
@@ -712,10 +712,10 @@ fn one_line_summary(result: &serde_json::Value) -> String {
         }
     }
 
-    if let Some(rc) = result.get("root_cause") {
+    if let Some(rc) = result.get("primary_diagnostic") {
         if let Some(msg) = rc.get("message").and_then(|v| v.as_str()) {
             if !msg.is_empty() {
-                text.push_str(&format!("\nRoot cause: {}", msg));
+                text.push_str(&format!("\nPrimary diagnostic: {}", msg));
             }
         }
     }
@@ -874,7 +874,7 @@ mod tests {
             "error_count": 2,
             "warning_count": 1,
             "duration_ms": 10500,
-            "root_cause": {"message": "cannot find type `X`"},
+            "primary_diagnostic": {"message": "cannot find type `X`"},
             "project_context": {"git_diff_stat": " src/main.rs | 2 +-"},
             "events": [
                 {"type": "diagnostic", "severity": "error", "message": "cannot find type `X`",
@@ -885,7 +885,7 @@ mod tests {
             ]
         }));
         assert!(r.contains("✗ 2 errors, 10.5s (exit 1)"), "{r}");
-        assert!(r.contains("Root cause: cannot find type `X`"), "{r}");
+        assert!(r.contains("Primary diagnostic: cannot find type `X`"), "{r}");
         assert!(r.contains("src/main.rs:42: cannot find type `X`"), "{r}");
         assert!(r.contains("src/lib.rs:7: unused import"), "{r}");
         assert!(!r.contains("noise"), "info events must be filtered: {r}");

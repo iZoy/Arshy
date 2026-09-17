@@ -12,7 +12,8 @@
 
 - 删除 legacy MCP 工具名映射，只保留 3-tool 模型（`arshy_exec`、`arshy_query`、`arshy_task`）；
 - 未知工具从"静默当 run"改为返回 `METHOD_NOT_FOUND` 错误；
-- 删除 `arshy integrate`、`arshy setup` 等 agent 专用 CLI，MCP 客户端自行注册 `arshy mcp serve`。
+- 删除 legacy 的 `arshy integrate`、`arshy setup` 等厚重 agent 专用 CLI；通用 MCP
+  客户端仍可自行注册 `arshy mcp serve`。ADR-0008 记录了客户端无关的 Prompt 引导。
 
 ## 理由
 

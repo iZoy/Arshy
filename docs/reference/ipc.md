@@ -1,6 +1,6 @@
 # Daemon IPC 参考
 
-> 本文档依据 `src/ipc/mod.rs`、`src/ipc/transport.rs`、`src/daemon/ipc_handler.rs` 核对（arshy v0.1.0-dev.1）。
+> 本文档依据 `src/ipc/mod.rs`、`src/ipc/transport.rs`、`src/daemon/ipc_handler.rs` 核对（arshy v0.1.0-alpha.1）。
 
 ## 传输
 
@@ -97,7 +97,7 @@
 | `warning_count` | u64 | warning 事件数 |
 | `raw_output` | string | 原始输出：仅短命令快路径返回（`short_command=true`）；长命令同步结果为 `None`（原始输出只持久化到 `raw/<task_id>.txt`，可用 `task/tail` 的 `format: "raw"` 读取） |
 | `short_command` | bool | 是否走了零开销快路径 |
-| `root_cause` | value | 首个 error 级诊断事件 |
+| `primary_diagnostic` | value | 从完整错误事件集合选择的代表诊断，不宣称因果 |
 | `project_context` | value | 项目上下文（git diff stat 等） |
 | `events` | TaskEvent[] | 内联事件：失败 ≤20 条 error、成功 ≤5 条 warning/info（daemon 追加） |
 | `event_count` | u64 | 该任务事件总数（daemon 追加） |

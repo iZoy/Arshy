@@ -36,6 +36,18 @@ pub fn tool_definitions() -> Vec<ToolDefinition> {
                 },
                 "required": ["command"]
             }),
+            output_schema: Some(serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "task_id": {"type": "string"},
+                    "status": {"type": "string"},
+                    "exit_code": {"type": ["integer", "null"]},
+                    "duration_ms": {"type": ["integer", "null"]},
+                    "primary_diagnostic": {"type": ["object", "null"]},
+                    "raw_output": {"type": ["string", "null"]}
+                },
+                "required": ["task_id", "status", "exit_code"]
+            })),
         },
         ToolDefinition {
             name: "arshy_query".into(),
@@ -56,6 +68,16 @@ pub fn tool_definitions() -> Vec<ToolDefinition> {
                 },
                 "required": []
             }),
+            output_schema: Some(serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "events": {"type": "array", "items": {"type": "object"}},
+                    "total": {"type": "integer"},
+                    "limit": {"type": "integer"},
+                    "offset": {"type": "integer"}
+                },
+                "required": ["events", "total", "limit", "offset"]
+            })),
         },
         ToolDefinition {
             name: "arshy_task".into(),
@@ -76,6 +98,10 @@ pub fn tool_definitions() -> Vec<ToolDefinition> {
                 },
                 "required": ["action"]
             }),
+            output_schema: Some(serde_json::json!({
+                "type": "object",
+                "additionalProperties": true
+            })),
         },
     ]
 }

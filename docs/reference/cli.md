@@ -2,18 +2,23 @@
 
 ## MCP
 
-`arshy mcp serve` starts the stdio MCP server. `arshy mcp config` prints a
-portable configuration snippet; use it in any MCP-compatible client.
+`arshy mcp serve` starts the stdio MCP server.
+
+`arshy mcp config --format json` prints a client-neutral JSON entry with the
+current absolute executable path. `--format command` prints the equivalent
+shell-style entry. `--format prompt` prints the versioned, copyable Agent
+setup procedure; stdout contains only that Prompt.
 
 ## Execution and daemon
 
-```text
+```bash
 arshy run <command> [--cwd <path>] [--format pretty|json] [--errors-only]
-arshy daemon start|stop|status|stats|restart
+arshy status
+arshy daemon start|stop|restart
 arshy stats [--format pretty|json]
 arshy analyze [--format pretty|json]
 arshy benchmark
-arshy doctor
+arshy doctor [--format text|json]
 arshy parser list|reload
 arshy config get <key>
 arshy self-update [--dest <dir>]
@@ -24,9 +29,12 @@ counters; it never includes quality analytics. `stats`, `analyze`, and
 `benchmark` are explicit analytics surfaces and may return component-only
 `quality-v1` measurements.
 
-There are no `setup`, `install --agent`, `uninstall --agent`, `hook`, or
-agent-specific commands. Installation and MCP registration are intentionally
-separate: the installer places binaries, while the client owns its MCP config.
+`doctor --format json` reports only version, OS/architecture, daemon and MCP
+protocol status, and parser count. It runs locally and does not upload data.
+
+The installer still does not edit client configuration, install hooks, or
+change PATH. Client configuration and lifecycle remain owned by the client;
+the setup Prompt stops on conflicts and reports any manual or restart step.
 
 ## Exit status
 

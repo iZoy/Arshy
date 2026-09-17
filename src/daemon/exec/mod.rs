@@ -22,7 +22,8 @@ pub(crate) use cwd::prepare_cwd;
 #[allow(unused_imports)]
 pub(crate) use decision::{classify_carrier, is_short_command, is_short_command_with_route};
 pub(crate) use enrich::{
-    compute_enhanced_project_context, enrich_events, extract_root_cause, filter_events_errors_only,
+    compute_enhanced_project_context, enrich_events, filter_events_errors_only,
+    select_primary_diagnostic,
 };
 
 use crate::ipc::{Task, TaskStatus};
@@ -52,9 +53,9 @@ pub struct Executor {
     /// Registry of running tasks' kill signal senders.
     kill_registry: Arc<TokioMutex<HashMap<String, tokio::sync::mpsc::Sender<()>>>>,
     rate_limiter: Arc<TokioMutex<RateLimiter>>,
-    /// Bound on concurrent structured tasks (`daemon.max_concurrent_tasks`).
-    /// Raw fast-path commands are not limited — they are already bounded by
-    /// the rate limiter and must stay zero-overhead.
+    /// Bound on concurrent task processes (`daemon.max_concurrent_tasks`).
+    /// The permit is held for both fast and structured paths so disabling the
+    /// rate limiter cannot create an unbounded number of child processes.
     task_semaphore: Arc<Semaphore>,
     /// Short-lived cache of run results keyed by the proxy-injected
     /// `dedup_key` (MCP request id). Prevents a replayed `tools/call` after a
@@ -383,10 +384,10 @@ impl Executor {
             },
         );
 
-        // `max_concurrent_tasks` is a daemon-wide resource bound, not a
-        // parser-only bound. Fast-path commands are cheaper, but leaving them
-        // unlimited lets concurrent MCP clients create an unbounded number of
-        // processes when the rate limiter is disabled (the default).
+        // `max_concurrent_tasks` is a daemon-wide process bound, not a
+        // parser-only bound. Fast-path commands are cheaper, but they still
+        // consume a permit so concurrent MCP clients cannot create an
+        // unbounded number of child processes when rate limiting is disabled.
         let task_permit = self.task_semaphore.clone().try_acquire_owned().map_err(|_| {
             ArshyError::Ipc(format!(
                 "too many concurrent tasks: limit {} reached (max_concurrent_tasks)",
@@ -436,7 +437,7 @@ impl Executor {
             carrier: Some(carrier.as_str().to_string()),
         };
         self.store.insert_task(&task)?;
-        // Auto + non-short → sync (wait for completion, with 30s timeout)
+        // Auto + non-short → sync (wait for completion, with a 60s handoff timeout)
         // Explicit sync/async → as-is
         let is_sync = is_explicit_sync || (is_auto && !is_short);
 
@@ -532,7 +533,7 @@ impl Executor {
                 event_count: None,
                 raw_output: None,
                 short_command: false,
-                root_cause: None,
+                primary_diagnostic: None,
                 project_context: None,
                 raw_output_bytes: None,
             });
@@ -562,7 +563,7 @@ impl Executor {
                                 event_count: None,
                                 raw_output: None,
                                 short_command: false,
-                                root_cause: None,
+                                primary_diagnostic: None,
                                 project_context: None,
                                 raw_output_bytes: None,
                             });
@@ -574,7 +575,7 @@ impl Executor {
 
                 match completion {
                     Ok(info) => {
-                        // Query events from store — only used for summary/root_cause computation.
+                        // Query a bounded page for counts and project context.
                         // The full events array is NOT sent to the agent; use arshy_query for detail.
                         let (events_json, mut event_summary): (
                             Option<Vec<serde_json::Value>>,
@@ -626,6 +627,33 @@ impl Executor {
                         // the same persisted representation as later queries.
                         let enriched_events = events_json.clone();
 
+                        // Diagnostic selection must inspect the complete error set. The output
+                        // capture limit bounds the event file, while this query avoids making the
+                        // representative diagnostic depend on pagination order.
+                        let primary_diagnostic = {
+                            let params = crate::ipc::QueryParams {
+                                task_id: Some(task_id.clone()),
+                                event_type: None,
+                                severity: Some("error".into()),
+                                code: None,
+                                file: None,
+                                limit: usize::MAX,
+                                offset: 0,
+                                include_logs: false,
+                            };
+                            self.store.query_events(&params).ok().and_then(|(events, _)| {
+                                let values = Some(
+                                    events
+                                        .into_iter()
+                                        .map(|event| {
+                                            serde_json::to_value(event).unwrap_or_default()
+                                        })
+                                        .collect(),
+                                );
+                                select_primary_diagnostic(&values)
+                            })
+                        };
+
                         let project_context = {
                             let status_clone = info.status.clone();
                             let cwd_path_clone = cwd.map(std::path::PathBuf::from);
@@ -652,7 +680,7 @@ impl Executor {
                             event_count: Some(response_event_count),
                             raw_output: None,
                             short_command: false,
-                            root_cause: extract_root_cause(&enriched_events),
+                            primary_diagnostic,
                             project_context,
                             raw_output_bytes: Some(raw_len),
                         })
@@ -667,7 +695,7 @@ impl Executor {
                         event_count: None,
                         raw_output: None,
                         short_command: false,
-                        root_cause: None,
+                        primary_diagnostic: None,
                         project_context: None,
                         raw_output_bytes: None,
                     }),
@@ -776,7 +804,7 @@ impl Executor {
             event_count: None,
             raw_output: Some(raw_output),
             short_command: true,
-            root_cause: None,
+            primary_diagnostic: None,
             project_context: None,
             raw_output_bytes: Some(total_bytes),
         })

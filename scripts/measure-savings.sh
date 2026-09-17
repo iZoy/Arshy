@@ -28,7 +28,9 @@ WORKLOADS="$WORK/workloads"
 : > "$WORKLOADS"
 command -v python3 >/dev/null 2>&1 && printf 'python\tpython3 %s/probe.py\n' "$WORK" >> "$WORKLOADS"
 command -v rustc >/dev/null 2>&1 && printf 'rustc\trustc %s/probe.rs -o %s/probe-bin\n' "$WORK" "$WORK" >> "$WORKLOADS"
-command -v node >/dev/null 2>&1 && printf 'node\tnode %s/probe.js\n' "$WORK" >> "$WORKLOADS"
+# Pad the Node invocation so the auto router exercises the structured path;
+# a two-word `node probe.js` command is intentionally a Fast Path inspection.
+command -v node >/dev/null 2>&1 && printf 'node\tnode %s/probe.js arg1 arg2 arg3 arg4 arg5\n' "$WORK" >> "$WORKLOADS"
 if command -v go >/dev/null 2>&1; then
     cat > "$WORK/probe.go" <<'GO'
 package main
@@ -76,17 +78,29 @@ done < "$WORKLOADS"
 
 stats="$WORK/stats.json"
 "$ARSHY" stats --format json > "$stats" 2>/dev/null || echo '{}' > "$stats"
-python3 - "$JSON" "$ROWS" "$stats" <<'PY'
+platform="$(uname -s)-$(uname -m)"
+python3 - "$JSON" "$ROWS" "$stats" "$platform" <<'PY'
 import json, sys
-as_json, rows_json, stats_path = sys.argv[1:]
+as_json, rows_json, stats_path, platform = sys.argv[1:]
 rows = json.loads(rows_json)
 try: stats = json.load(open(stats_path))
 except Exception: stats = {}
 eff = stats.get("efficiency") or {}
+metadata = {
+    "corpus": "synthetic cross-ecosystem probe commands",
+    "platform": platform,
+    "sample_size": len(rows),
+    "exclusions": [
+        "token estimates",
+        "typed-tool calls that never reach arshy",
+        "production repair-loop inference",
+    ],
+}
 report = {"schema_version": eff.get("schema_version", "quality-v1"),
+          "metadata": metadata,
           "components": eff.get("components", {}), "counters": eff.get("counters", {})}
 if as_json == "1":
-    print(json.dumps({"per_ecosystem": rows, "efficiency": report}, indent=2))
+    print(json.dumps({"metadata": metadata, "per_ecosystem": rows, "efficiency": report}, indent=2))
 else:
     print("\n=== Arshy Quality Components ===")
     print("schema: {}".format(report["schema_version"]))

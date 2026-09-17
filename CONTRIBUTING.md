@@ -20,6 +20,17 @@ cargo test
 
 The CI workflow enforces all of these on every PR.
 
+## Before Opening a Pull Request
+
+Use the matching Issue form for a general bug, parser error, or real-task
+experience. Review every command, output sample, and doctor report before
+making it public. Arshy does not need source code, environment variables,
+credentials, usernames, or absolute local paths to triage most reports.
+
+Maintainers prioritize duplicate execution, uncontrolled processes, and data
+problems first; installation, MCP connection, and missing diagnostics second.
+New parsers are ranked by observed use.
+
 ## Project Conventions
 
 ### Shell Execution (Dog Fooding)
@@ -28,10 +39,10 @@ Arshy's own development must use arshy for ALL shell commands. See `AGENTS.md` f
 ### Documentation Anti-Drift
 Docs are **generated from source facts**, not prose memory. Before any PR that changes runtime behaviour, update the matching doc:
 
-- **Storage changed** → `reference/config-schema.md` + `explanation/architecture.md`. The store is **JSONL**: `tasks.jsonl` / `events/<id>.jsonl` / `raw/<id>.txt` / `versions.json`. **Never** document SQLite, `arshy.db`, `wal_mode`, `db_path`, or `backend` — those are removed.
-- **Parser changed** → `reference/parser-toml-format.md` + `explanation/parser-pipeline.md` (6-tier: JSON → Stateful → TOML → Crash → Heuristic → Raw; 37 builtin parsers).
-- **IPC / MCP changed** → `reference/ipc-protocol.md` / `reference/mcp-protocol.md`.
-- **Config keys / env vars changed** → `reference/config-schema.md`. Env vars are `ARSHY_<SECTION>_<KEY>`; the settable CLI keys live in `VALID_KEYS` in `src/cli/mod.rs`. Note `security.*` is **not** CLI-settable.
+- **Storage changed** → `docs/reference/config.md` + `docs/explanation/architecture.md`. The store is **JSONL**: `tasks.jsonl` / `events/<id>.jsonl` / `raw/<id>.txt` / `versions.json`. **Never** document SQLite, `arshy.db`, `wal_mode`, `db_path`, or `backend` — those are removed.
+- **Parser changed** → `docs/reference/parsers.md` + `docs/explanation/parser-pipeline.md` (6-tier: JSON → Stateful → TOML → Crash → Heuristic → Raw; 37 builtin parsers).
+- **IPC / MCP changed** → `docs/reference/ipc.md` / `docs/reference/mcp.md`.
+- **Config keys / env vars changed** → `docs/reference/config.md`. Env vars are `ARSHY_<SECTION>_<KEY>`; the settable CLI keys live in `VALID_KEYS` in `src/cli/mod.rs`. Note `security.*` is **not** CLI-settable.
 - The `TaskEvent.hint` / `EventHint` field is a **null wire-compat placeholder only** — do not document it as a feature; HintDb is removed.
 - Run `cargo doc --no-deps` (enforced in CI) so doc cross-links stay valid.
 
@@ -41,6 +52,7 @@ When adding a new builtin parser:
 2. Create `parsers/builtin/tests/<tool>/` with `.txt` input and `.json` expected output
 3. Run `ARSHY_BLESS=1 cargo test --bin arshyd` to auto-generate the expected JSON
 4. Verify fixture tests pass with ≥95% field accuracy
+5. Keep the fixture to the smallest reviewed output that reproduces the issue
 
 ### Commit Style
 - `feat:` — new feature

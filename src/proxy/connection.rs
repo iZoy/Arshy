@@ -12,24 +12,26 @@ use tokio::sync::mpsc;
 use super::protocol::{notification_to_json, write_mcp_notification};
 
 pub(crate) async fn ensure_daemon_up(
-    daemon: &mut DaemonConnection,
-    notif_rx: &mut mpsc::Receiver<Notification>,
+    daemon: &mut Option<DaemonConnection>,
+    notif_rx: &mut Option<mpsc::Receiver<Notification>>,
     cfg: &Config,
     socket_path: &std::path::Path,
     stdout: &mut BufWriter<tokio::io::Stdout>,
     pending_notifs: &mut Vec<Notification>,
 ) -> Result<()> {
     // Drain remaining notifications from the stale channel before replacing it.
-    while let Ok(n) = notif_rx.try_recv() {
-        pending_notifs.push(n);
+    if let Some(rx) = notif_rx.as_mut() {
+        while let Ok(n) = rx.try_recv() {
+            pending_notifs.push(n);
+        }
     }
     if !pending_notifs.is_empty() {
         flush_batch(stdout, pending_notifs).await?;
     }
     match connect_with_retry(cfg, socket_path, 3, &[500, 1000, 2000], false).await {
         Ok((new_conn, new_notif_rx)) => {
-            *daemon = new_conn;
-            *notif_rx = new_notif_rx;
+            *daemon = Some(new_conn);
+            *notif_rx = Some(new_notif_rx);
             tracing::info!("spawned/recovered daemon on demand");
             Ok(())
         }
@@ -268,11 +270,14 @@ fn record_daemon_crash() {
 pub(crate) fn is_connection_error(e: &arshy_lib::ArshyError) -> bool {
     let msg = format!("{}", e);
     msg.contains("connection closed")
-        || msg.contains("timed out")
         || msg.contains("response channel dropped")
         || msg.contains("broken pipe")
         || msg.contains("Connection refused")
         || msg.contains("No such file")
+}
+
+pub(crate) fn is_request_timeout(e: &arshy_lib::ArshyError) -> bool {
+    format!("{}", e).contains("request '") && format!("{}", e).contains("timed out")
 }
 
 /// Connect to daemon with retry and optional auto-cd validation.

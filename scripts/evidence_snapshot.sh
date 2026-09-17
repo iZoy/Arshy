@@ -22,11 +22,13 @@ GIT_DIRTY="$(git status --porcelain 2>/dev/null | wc -l | tr -d ' ')"
 VERSION="$("$ARSHY" --version 2>/dev/null | head -1)"
 STATS="$("$ARSHY" stats --format json 2>/dev/null || echo '{}')"
 ANALYZE="$("$ARSHY" analyze 2>/dev/null || echo '{}')"
+PLATFORM="$(uname -s)-$(uname -m)"
 
-python3 - "$OUT" "$DATE" "$STAMP" "$VERSION" "$GIT_COMMIT" "$GIT_DIRTY" "$STATS" "$ANALYZE" <<'PY'
+python3 - "$OUT" "$DATE" "$STAMP" "$VERSION" "$GIT_COMMIT" "$GIT_DIRTY" "$STATS" "$ANALYZE" "$PLATFORM" <<'PY'
 import json, sys
 
-out, date, stamp, version, commit, dirty, stats, analyze = sys.argv[1:9]
+out, date, stamp, version, commit, dirty, stats, analyze, platform = sys.argv[1:10]
+stats_data = json.loads(stats)
 snapshot = {
     "snapshot": {
         "date": date,
@@ -34,8 +36,16 @@ snapshot = {
         "arshy_version": version,
         "git_commit": commit,
         "git_dirty_files": dirty,
+        "corpus": "local daemon store at snapshot time; not a controlled benchmark corpus",
+        "platform": platform,
+        "sample_size": stats_data.get("total_tasks", 0),
+        "exclusions": [
+            "token estimates",
+            "typed-tool calls that never reach arshy",
+            "repair-loop inference",
+        ],
     },
-    "stats": json.loads(stats),
+    "stats": stats_data,
     "analyze": json.loads(analyze),
 }
 with open(out, "w", encoding="utf-8") as f:

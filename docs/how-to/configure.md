@@ -20,7 +20,7 @@ allowed_cwds = ["~/projects"]
 permissive; non-empty means fail-closed containment checks for command cwd.
 Restart the daemon after changing daemon or security settings:
 
-```sh
+```bash
 arshy daemon restart
 arshy doctor
 ```

@@ -4,9 +4,14 @@
 use crate::Result;
 use std::collections::HashMap;
 use std::sync::OnceLock;
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::process::Child;
 use tokio::sync::mpsc;
+
+/// A short-lived process burst can make the OS return EINTR/EAGAIN while
+/// creating a child. Retry those transient errors without hiding permanent
+/// spawn failures from the executor.
+const SPAWN_RETRIES: usize = 3;
 
 /// Handle to a spawned process — provides output receiver and lifecycle control.
 pub struct ProcessHandle {
@@ -17,6 +22,65 @@ pub struct ProcessHandle {
     pub output_rx: mpsc::Receiver<(String, String)>,
     /// The child process handle (kept for kill/wait).
     child: Option<Child>,
+}
+
+/// Bound memory before UTF-8 decoding and line splitting. Commands may emit a
+/// single line of arbitrary size; retaining it until a newline would bypass
+/// the executor's output limit and could exhaust the daemon.
+const MAX_LINE_BYTES: usize = 64 * 1024;
+
+fn render_line(bytes: &[u8], truncated: bool) -> String {
+    let invalid_utf8 = std::str::from_utf8(bytes).is_err();
+    let mut text = String::from_utf8_lossy(bytes).into_owned();
+    if text.ends_with('\r') {
+        text.pop();
+    }
+    if invalid_utf8 {
+        text.push_str(" [invalid UTF-8 replaced]");
+    }
+    if truncated {
+        text.push_str(&format!(" [line truncated at {MAX_LINE_BYTES} bytes]"));
+    }
+    text
+}
+
+async fn stream_output<R>(mut reader: R, source: &'static str, tx: mpsc::Sender<(String, String)>)
+where
+    R: AsyncRead + Unpin + Send + 'static,
+{
+    let mut chunk = [0u8; 8192];
+    let mut line = Vec::with_capacity(8192);
+    let mut truncated = false;
+
+    loop {
+        let read = match reader.read(&mut chunk).await {
+            Ok(0) => break,
+            Ok(read) => read,
+            Err(error) => {
+                let _ = tx.send((source.into(), format!("[output read error: {error}]"))).await;
+                return;
+            }
+        };
+
+        for byte in &chunk[..read] {
+            if *byte == b'\n' {
+                let text = render_line(&line, truncated);
+                if tx.send((source.into(), text)).await.is_err() {
+                    return;
+                }
+                line.clear();
+                truncated = false;
+            } else if line.len() < MAX_LINE_BYTES {
+                line.push(*byte);
+            } else {
+                truncated = true;
+            }
+        }
+    }
+
+    if !line.is_empty() || truncated {
+        let _ = tx.send((source.into(), render_line(&line, truncated))).await;
+    }
 }
 
 impl ProcessHandle {
@@ -187,9 +251,31 @@ pub async fn spawn_command(
     // Ensure child processes die when the parent dies
     cmd.kill_on_drop(true);
 
-    let mut child = cmd
-        .spawn()
-        .map_err(|e| crate::ArshyError::Exec(format!("failed to spawn command: {}", e)))?;
+    let mut child = {
+        let mut attempt = 0;
+        loop {
+            match cmd.spawn() {
+                Ok(child) => break child,
+                Err(error)
+                    if attempt < SPAWN_RETRIES
+                        && matches!(
+                            error.kind(),
+                            std::io::ErrorKind::Interrupted | std::io::ErrorKind::WouldBlock
+                        ) =>
+                {
+                    let delay_ms = 10_u64 << attempt;
+                    attempt += 1;
+                    tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                }
+                Err(error) => {
+                    return Err(crate::ArshyError::Exec(format!(
+                        "failed to spawn command: {}",
+                        error
+                    )));
+                }
+            }
+        }
+    };
 
     let pid =
         child.id().ok_or_else(|| crate::ArshyError::Exec("child process has no PID".into()))?;
@@ -199,29 +285,13 @@ pub async fn spawn_command(
     // Spawn stdout reader task
     if let Some(stdout) = child.stdout.take() {
         let tx = tx.clone();
-        tokio::spawn(async move {
-            let reader = BufReader::new(stdout);
-            let mut lines = reader.lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                if tx.send(("stdout".into(), line)).await.is_err() {
-                    break; // receiver dropped
-                }
-            }
-        });
+        tokio::spawn(stream_output(stdout, "stdout", tx));
     }
 
     // Spawn stderr reader task
     if let Some(stderr) = child.stderr.take() {
         let tx = tx.clone();
-        tokio::spawn(async move {
-            let reader = BufReader::new(stderr);
-            let mut lines = reader.lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                if tx.send(("stderr".into(), line)).await.is_err() {
-                    break;
-                }
-            }
-        });
+        tokio::spawn(stream_output(stderr, "stderr", tx));
     }
 
     // Drop the sender clones so rx closes when both readers finish
@@ -233,6 +303,7 @@ pub async fn spawn_command(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::io::AsyncWriteExt;
 
     #[tokio::test]
     async fn test_spawn_echo() {
@@ -370,5 +441,36 @@ mod tests {
         assert_eq!(stdout_lines, vec!["ok"]);
         assert_eq!(stderr_lines, vec!["error"]);
         handle.wait().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn stream_replaces_invalid_utf8_and_keeps_following_output() {
+        let (mut writer, reader) = tokio::io::duplex(64);
+        let (tx, mut rx) = mpsc::channel(8);
+        let task = tokio::spawn(stream_output(reader, "stdout", tx));
+        writer.write_all(b"before\xffafter\nnext\n").await.unwrap();
+        drop(writer);
+
+        let first = rx.recv().await.unwrap().1;
+        let second = rx.recv().await.unwrap().1;
+        task.await.unwrap();
+        assert!(first.contains('\u{fffd}'));
+        assert!(first.contains("[invalid UTF-8 replaced]"));
+        assert_eq!(second, "next");
+    }
+
+    #[tokio::test]
+    async fn stream_bounds_a_line_before_a_newline_arrives() {
+        let size = MAX_LINE_BYTES + 1024;
+        let (mut writer, reader) = tokio::io::duplex(size + 1);
+        let (tx, mut rx) = mpsc::channel(8);
+        let task = tokio::spawn(stream_output(reader, "stdout", tx));
+        writer.write_all(&vec![b'x'; size]).await.unwrap();
+        drop(writer);
+
+        let line = rx.recv().await.unwrap().1;
+        task.await.unwrap();
+        assert!(line.starts_with(&"x".repeat(MAX_LINE_BYTES)));
+        assert!(line.ends_with(&format!("[line truncated at {MAX_LINE_BYTES} bytes]")));
     }
 }

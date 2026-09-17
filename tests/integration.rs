@@ -14,6 +14,7 @@ use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
+use libc::{kill, SIGTERM};
 use serial_test::serial;
 use tempfile::TempDir;
 
@@ -84,6 +85,20 @@ impl TestDaemon {
                 panic!("arshyd did not create socket {} within 10s", self.socket.display());
             }
             std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+
+    fn wait_for_exit(&mut self) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            match self.child.try_wait() {
+                Ok(Some(_)) => return,
+                Ok(None) if Instant::now() > deadline => {
+                    panic!("arshyd did not exit within 5s")
+                }
+                Ok(None) => std::thread::sleep(Duration::from_millis(20)),
+                Err(error) => panic!("failed waiting for arshyd: {error}"),
+            }
         }
     }
 
@@ -161,6 +176,27 @@ fn daemon_health_responds() {
     let resp = daemon.rpc(1, "daemon/health", serde_json::json!({}));
     assert_eq!(resp["id"], 1);
     assert!(resp["result"].is_object(), "health should return a result object");
+}
+
+#[test]
+#[serial]
+fn doctor_json_is_minimal_and_checks_the_real_mcp_entrypoint() {
+    let daemon = TestDaemon::spawn();
+    let output = Command::new(arshy_binary())
+        .args(["doctor", "--format", "json"])
+        .env("ARSHY_DAEMON_SOCKET_PATH", &daemon.socket)
+        .env("ARSHY_DAEMON_LOG_LEVEL", "error")
+        .output()
+        .expect("run doctor");
+    assert!(output.status.success(), "doctor failed: {}", String::from_utf8_lossy(&output.stderr));
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).expect("doctor JSON");
+    assert_eq!(report["version"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(report["daemon"]["status"], "ok");
+    assert_eq!(report["protocol"]["status"], "ok");
+    assert!(report["parser_count"].as_u64().unwrap_or(0) > 0);
+    for forbidden in ["command", "cwd", "environment", "username", "store_path"] {
+        assert!(report.get(forbidden).is_none(), "doctor leaked {forbidden}");
+    }
 }
 
 #[test]
@@ -384,7 +420,8 @@ fn mcp_proxy_task_raw_returns_original_output_and_zero_event_hint() {
             }
         }),
     );
-    let task_id = run["result"]["task_id"].as_str().expect("task_id").to_string();
+    let task_id =
+        run["result"]["structuredContent"]["task_id"].as_str().expect("task_id").to_string();
     let content = run["result"]["content"][0]["text"].as_str().unwrap_or("");
     assert!(
         content.contains("0 structured events") && content.contains("raw"),
@@ -411,7 +448,7 @@ fn mcp_proxy_task_raw_returns_original_output_and_zero_event_hint() {
         raw_text.contains("raw-output-marker-line"),
         "arshy_task raw must return the original output, got: {raw_text}"
     );
-    assert_eq!(raw["result"]["task_id"], task_id);
+    assert_eq!(raw["result"]["structuredContent"]["task_id"], task_id);
 
     let _ = child.kill();
     let _ = child.wait();
@@ -566,6 +603,7 @@ fn spawn_proxy(daemon: &TestDaemon) -> (Child, BufReader<std::process::ChildStdo
         .env("ARSHY_DAEMON_SOCKET_PATH", &daemon.socket)
         .env("ARSHY_STORE_STORE_DIR", daemon._tmp.path().join("store"))
         .env("ARSHY_DAEMON_LOG_LEVEL", "error")
+        .env("ARSHY_TEST_NO_LIFECYCLE", "1")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -670,6 +708,161 @@ fn mcp_proxy_preserves_string_request_ids() {
 
 #[test]
 #[serial]
+fn mcp_proxy_recovers_same_stdio_session_after_daemon_disconnect() {
+    let mut daemon = TestDaemon::spawn();
+    let (mut child, mut reader) = spawn_proxy(&daemon);
+    let mut writer = ProxyWriter(child.stdin.take().expect("proxy stdin"));
+
+    send_mcp(
+        &mut reader,
+        &mut writer,
+        1,
+        serde_json::json!({
+            "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": { "capabilities": {} }
+        }),
+    );
+
+    let shutdown = daemon.rpc(10, "daemon/shutdown", serde_json::json!({}));
+    assert!(shutdown["result"].is_object() || shutdown["result"].is_null());
+    daemon.wait_for_exit();
+
+    // The proxy must keep its stdio session alive and restart the daemon on
+    // demand when the next daemon-backed request arrives.
+    let query = send_mcp(
+        &mut reader,
+        &mut writer,
+        2,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": { "name": "arshy_query", "arguments": { "limit": 1 } }
+        }),
+    );
+    assert!(query["result"].get("isError").is_none());
+    assert!(query["result"]["structuredContent"].is_object(), "recovered query response: {query}");
+
+    // Shut down the auto-started replacement before dropping the test guard.
+    let replacement_shutdown = daemon.rpc(11, "daemon/shutdown", serde_json::json!({}));
+    assert!(replacement_shutdown["result"].is_object() || replacement_shutdown["result"].is_null());
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+#[test]
+#[serial]
+fn mcp_proxy_sigterm_does_not_shutdown_shared_daemon() {
+    let mut daemon = TestDaemon::spawn();
+    let (mut first, mut first_reader) = spawn_proxy(&daemon);
+    let mut first_writer = ProxyWriter(first.stdin.take().expect("first proxy stdin"));
+    send_mcp(
+        &mut first_reader,
+        &mut first_writer,
+        1,
+        serde_json::json!({
+            "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": { "capabilities": {} }
+        }),
+    );
+
+    let (mut second, mut second_reader) = spawn_proxy(&daemon);
+    let mut second_writer = ProxyWriter(second.stdin.take().expect("second proxy stdin"));
+    send_mcp(
+        &mut second_reader,
+        &mut second_writer,
+        1,
+        serde_json::json!({
+            "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": { "capabilities": {} }
+        }),
+    );
+
+    assert_eq!(unsafe { kill(first.id() as i32, SIGTERM) }, 0);
+    drop(first_writer);
+    drop(first_reader);
+    let _ = first.wait();
+
+    let response = send_mcp(
+        &mut second_reader,
+        &mut second_writer,
+        2,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": { "name": "arshy_exec", "arguments": { "command": "echo shared-daemon-alive" } }
+        }),
+    );
+    assert_eq!(response["result"]["content"][0]["text"], "shared-daemon-alive");
+    assert!(daemon.child.try_wait().expect("daemon status").is_none());
+
+    let _ = second.kill();
+    let _ = second.wait();
+}
+
+#[test]
+#[serial]
+fn mcp_proxy_high_output_response_is_not_blocked_by_notifications() {
+    let daemon = TestDaemon::spawn();
+    let (mut child, mut reader) = spawn_proxy(&daemon);
+    let mut writer = ProxyWriter(child.stdin.take().expect("proxy stdin"));
+
+    send_mcp(
+        &mut reader,
+        &mut writer,
+        1,
+        serde_json::json!({
+            "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": { "capabilities": {} }
+        }),
+    );
+
+    let run = send_mcp(
+        &mut reader,
+        &mut writer,
+        2,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {
+                "name": "arshy_exec",
+                "arguments": {
+                    "command": "for i in $(seq 1 400); do echo \"error: synthetic diagnostic $i\"; done"
+                }
+            }
+        }),
+    );
+    assert_eq!(run["result"]["structuredContent"]["status"], "completed");
+    assert_eq!(run["result"]["structuredContent"]["exit_code"], 0);
+    let task_id = run["result"]["structuredContent"]["task_id"]
+        .as_str()
+        .expect("high-output run should return a task id")
+        .to_string();
+    let event_count = run["result"]["structuredContent"]["event_count"]
+        .as_u64()
+        .expect("high-output run should report event count");
+    assert!(event_count > 256, "expected a notification burst, got {event_count} events");
+
+    let query = send_mcp(
+        &mut reader,
+        &mut writer,
+        3,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": {
+                "name": "arshy_query",
+                "arguments": { "task_id": task_id, "limit": 1000 }
+            }
+        }),
+    );
+    assert_eq!(query["result"]["structuredContent"]["total"], event_count);
+
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+#[test]
+#[serial]
 fn mcp_proxy_survives_a_malformed_json_line() {
     let daemon = TestDaemon::spawn();
     let (mut child, mut reader) = spawn_proxy(&daemon);
@@ -709,7 +902,7 @@ fn mcp_proxy_tool_calls_run_and_query() {
         }),
     );
 
-    // arshy_exec run (long/structured path) → content + task_id.
+    // arshy_exec run (long/structured path) → content + standard structuredContent.
     let run = send_mcp(
         &mut reader,
         &mut writer,
@@ -727,7 +920,16 @@ fn mcp_proxy_tool_calls_run_and_query() {
             }
         }),
     );
-    assert!(run["result"]["task_id"].is_string(), "run must return a task_id");
+    assert!(
+        run["result"]["structuredContent"]["task_id"].is_string(),
+        "run must return a task_id in structuredContent"
+    );
+    assert_eq!(run["result"]["structuredContent"]["status"], "failed");
+    assert_eq!(run["result"]["structuredContent"]["exit_code"], 1);
+    let run_text = run["result"]["content"][0]["text"].as_str().unwrap_or("");
+    let run_task_id = run["result"]["structuredContent"]["task_id"].as_str().unwrap();
+    assert!(run_text.contains(run_task_id), "text clients must receive the task id");
+    assert!(run_text.contains("arshy_query"), "text clients must receive the pagination path");
 
     // arshy_query without task_id → cross-task search, events carry task_id.
     let query = send_mcp(
@@ -741,13 +943,18 @@ fn mcp_proxy_tool_calls_run_and_query() {
             "params": { "name": "arshy_query", "arguments": { "limit": 10 } }
         }),
     );
-    let events = query["result"]["events"].as_array().cloned().unwrap_or_default();
+    let events =
+        query["result"]["structuredContent"]["events"].as_array().cloned().unwrap_or_default();
     assert!(!events.is_empty(), "cross-task query through the proxy must find events");
     assert!(
         events.iter().all(|e| e.get("task_id").is_some()),
         "cross-task events must carry task_id"
     );
-    assert!(query["result"]["total"].as_u64().unwrap_or(0) >= 1);
+    assert!(query["result"]["structuredContent"]["total"].as_u64().unwrap_or(0) >= 1);
+    assert!(
+        query["result"]["content"][0]["text"].as_str().unwrap_or("").contains("proxy-e2e"),
+        "text-only clients must receive the diagnostic page"
+    );
 
     // Low-frequency lifecycle operations use the separate arshy_task tool.
     let list = send_mcp(
@@ -764,11 +971,61 @@ fn mcp_proxy_tool_calls_run_and_query() {
             }
         }),
     );
-    let tasks = list["result"]["tasks"].as_array().cloned().unwrap_or_default();
-    assert!(tasks.iter().any(|task| task["task_id"] == run["result"]["task_id"]));
+    let tasks =
+        list["result"]["structuredContent"]["tasks"].as_array().cloned().unwrap_or_default();
+    assert!(tasks
+        .iter()
+        .any(|task| { task["task_id"] == run["result"]["structuredContent"]["task_id"] }));
 
     let _ = child.kill();
     let _ = child.wait();
+}
+
+#[test]
+#[serial]
+fn mcp_short_exit_one_exposes_state_without_transport_error() {
+    let daemon = TestDaemon::spawn();
+    let (mut child, mut reader) = spawn_proxy(&daemon);
+    let mut writer = ProxyWriter(child.stdin.take().expect("proxy stdin"));
+    send_mcp(
+        &mut reader,
+        &mut writer,
+        1,
+        serde_json::json!({
+            "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": { "capabilities": {} }
+        }),
+    );
+    let run = send_mcp(
+        &mut reader,
+        &mut writer,
+        2,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {"name": "arshy_exec", "arguments": {"command": "false"}}
+        }),
+    );
+    assert_eq!(run["result"]["structuredContent"]["status"], "failed");
+    assert_eq!(run["result"]["structuredContent"]["exit_code"], 1);
+    assert!(run["result"].get("isError").is_none());
+    assert!(run["result"]["content"][1]["text"].as_str().unwrap_or("").contains("exit_code: 1"));
+    let _ = child.kill();
+}
+
+#[test]
+#[serial]
+fn primary_diagnostic_is_not_limited_to_first_event_page() {
+    let daemon = TestDaemon::spawn();
+    let response = daemon.rpc(
+        1,
+        "task/run",
+        serde_json::json!({
+            "command": "i=0; while [ $i -lt 250 ]; do echo \"warning: page filler $i\" >&2; i=$((i+1)); done; echo 'error: late-primary' >&2; exit 1",
+            "mode": "sync"
+        }),
+    );
+    assert_eq!(response["result"]["primary_diagnostic"]["message"], "error: late-primary");
 }
 
 #[test]

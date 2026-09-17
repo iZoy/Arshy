@@ -35,6 +35,8 @@ pub struct ToolDefinition {
     pub description: String,
     #[serde(rename = "inputSchema")]
     pub input_schema: serde_json::Value,
+    #[serde(rename = "outputSchema", skip_serializing_if = "Option::is_none")]
+    pub output_schema: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -46,6 +48,8 @@ pub struct ToolCallParams {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolCallResponse {
     pub content: Vec<ContentItem>,
+    #[serde(rename = "structuredContent", default, skip_serializing_if = "Option::is_none")]
+    pub structured_content: Option<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub is_error: Option<bool>,
 }
@@ -116,6 +120,19 @@ mod tests {
     }
 
     #[test]
+    fn tool_call_response_round_trips_structured_content() {
+        let response = ToolCallResponse {
+            content: vec![ContentItem::Text { text: "ok".into() }],
+            structured_content: Some(json!({"status": "completed", "exit_code": 0})),
+            is_error: None,
+        };
+        let value = serde_json::to_value(&response).unwrap();
+        assert_eq!(value["structuredContent"]["exit_code"], 0);
+        let back: ToolCallResponse = serde_json::from_value(value).unwrap();
+        assert_eq!(back.structured_content.unwrap()["status"], "completed");
+    }
+
+    #[test]
     fn log_level_uses_lowercase_rename() {
         let cases = [
             (LogLevel::Debug, "\"debug\""),
@@ -148,11 +165,13 @@ mod tests {
             name: "arshy_exec".into(),
             description: "run".into(),
             input_schema: json!({"type": "object"}),
+            output_schema: Some(json!({"type": "object"})),
         };
         let s = serde_json::to_string(&td).unwrap();
         let back: ToolDefinition = serde_json::from_str(&s).unwrap();
         assert_eq!(back.name, "arshy_exec");
         assert_eq!(back.input_schema, json!({"type": "object"}));
+        assert_eq!(back.output_schema, Some(json!({"type": "object"})));
     }
 
     #[test]

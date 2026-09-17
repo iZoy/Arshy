@@ -35,7 +35,6 @@ enum Outbound {
 pub struct RunResult {
     pub task_id: String,
     pub status: crate::ipc::TaskStatus,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub exit_code: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub duration_ms: Option<u64>,
@@ -50,10 +49,10 @@ pub struct RunResult {
     pub raw_output: Option<String>,
     #[serde(default)]
     pub short_command: bool,
-    /// The first error-level diagnostic event (if any).
-    /// Agent can use this to immediately identify the root cause of failure.
+    /// A representative error-level diagnostic event (if any).
+    /// This is evidence selected for the agent, not a claim about causality.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub root_cause: Option<serde_json::Value>,
+    pub primary_diagnostic: Option<serde_json::Value>,
     /// Project context: recent git changes, related files, etc.
     /// Helps agent understand what changed before the command ran.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -414,6 +413,7 @@ async fn dispatch(
             let running = store.list_tasks(Some("running"), 10_000)?.len();
             let db_size = store.get_stats().ok().and_then(|s| s.db_size_bytes);
             Ok(serde_json::json!({
+                "version": env!("CARGO_PKG_VERSION"),
                 "uptime_secs": daemon_uptime_secs(),
                 "tasks_running": running,
                 "tasks_total": all.len(),

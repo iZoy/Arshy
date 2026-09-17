@@ -43,8 +43,8 @@ pub(crate) fn filter_events_errors_only(
     })
 }
 
-/// Extract the first error-level event as the root cause of failure.
-pub(crate) fn extract_root_cause(
+/// Select a representative error-level diagnostic from the complete event set.
+pub(crate) fn select_primary_diagnostic(
     events: &Option<Vec<serde_json::Value>>,
 ) -> Option<serde_json::Value> {
     let evts = events.as_ref()?;
@@ -106,8 +106,12 @@ pub(crate) fn compute_enhanced_project_context(
                 let mut diff_stat = String::from_utf8_lossy(&output.stdout).trim().to_string();
                 if diff_stat.len() > GIT_DIFF_STAT_MAX_BYTES {
                     // Truncate at the last newline to avoid mid-line cuts.
-                    let cut = &diff_stat[..GIT_DIFF_STAT_MAX_BYTES];
-                    let pos = cut.rfind('\n').unwrap_or(GIT_DIFF_STAT_MAX_BYTES);
+                    let mut boundary = GIT_DIFF_STAT_MAX_BYTES.min(diff_stat.len());
+                    while boundary > 0 && !diff_stat.is_char_boundary(boundary) {
+                        boundary -= 1;
+                    }
+                    let cut = &diff_stat[..boundary];
+                    let pos = cut.rfind('\n').unwrap_or(boundary);
                     diff_stat = format!("{}\n... [truncated]", &diff_stat[..pos]);
                 }
                 if !diff_stat.is_empty() {

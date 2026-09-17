@@ -42,6 +42,11 @@ jobs:
       - name: Doc
         run: cargo doc --no-deps --document-private-items
 
+      - name: Installer syntax and dry run
+        run: |
+          bash -n install/install.sh
+          bash install/install.sh --version v0.1.0-alpha.1 --dry-run
+
       - name: Integration tests (real daemon + MCP proxy processes)
         run: |
           cargo build --bin arshy --bin arshyd

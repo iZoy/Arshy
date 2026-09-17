@@ -1,32 +1,30 @@
-# v0.1.0-dev.1 internal candidate checklist
+# v0.1.0-alpha.1 public-preview checklist
 
-## Before tagging
+## Required before the tag
 
-- [ ] `Cargo.toml` and `Cargo.lock` report `0.1.0-dev.1`.
-- [ ] README and English/Chinese docs describe generic MCP only.
-- [ ] No `setup`, `hook`, `--agent`, or shell-injection path remains in the
-      public CLI or installer.
-- [ ] quality-v1 documentation lists component definitions and sample size;
-      no aggregate score or token-saving claim remains.
-- [ ] `security.allowed_cwds` is documented as a cwd guard, not a sandbox.
-- [ ] `cargo fmt --all -- --check` passes.
-- [ ] `cargo clippy --all-targets -- -D warnings` passes.
-- [ ] `cargo test` and integration tests pass.
-- [ ] Coverage is collected in CI: whole repository and critical paths ≥75%
-      for the internal candidate; raise this gate after process-level proxy
-      and daemon entry-point tests are expanded.
-- [ ] `cargo package --allow-dirty --no-verify` is inspected locally; publish
-      only from a clean tagged checkout.
+- [ ] Version and public docs consistently name v0.1.0-alpha.1.
+- [ ] Format, clippy, all tests, docs, coverage, and package inspection pass.
+- [ ] Text and structured MCP clients complete execute, query, and raw retrieval.
+- [ ] Codex and Claude Code each register in a new session and execute a real command.
+- [ ] Exit 1, late errors, invalid UTF-8, long lines, large output, timeout, and cancel pass.
+- [ ] All four release targets are run-tested; cross-compilation alone does not count.
+- [ ] A clean environment completes the documented installation and MCP setup.
+- [ ] Package contents and public Git history contain no private logs or credentials.
+- [ ] SECURITY, known issues, rollback, retained data, and feedback links are current.
 
-## Tag and publish
+## Publish
 
-1. Merge the internal candidate to `main`; do not create a public release tag.
-2. Only after explicit release approval should the version be changed to
-   `0.1.0`, tagged as `v0.1.0`, and sent through the release workflow.
-3. Verify every archive/checksum and the installer's `--dry-run` output.
-4. Create the GitHub release only after the public-release approval gate.
-5. From the clean tag, run `cargo publish --dry-run`, then publish to crates.io
-   manually after reviewing the package contents.
+1. Create and push the v0.1.0-alpha.1 tag from a reviewed clean commit.
+2. Let every platform job build, test, attest, and upload its artifact.
+3. Let the final job verify all four archives and checksums.
+4. Review the generated draft release and attached assets.
+5. Publish it manually as a prerelease.
 
-Homebrew is intentionally deferred until the first release has stable install
-telemetry and a maintained formula.
+Do not publish to crates.io or Homebrew for this preview.
+
+## After publication
+
+- Complete one installation from the public release URL.
+- Post the English and Chinese launch copy.
+- Triage twice per week and publish at most one routine alpha per week.
+- Withdraw recommendation of a release affected by a P0 issue.

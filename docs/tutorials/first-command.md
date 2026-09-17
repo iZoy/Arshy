@@ -104,7 +104,7 @@ arshy run 'python3 -c "import definitely_missing_module_xyz" | cat'
     }
   ],
   "exit_code": 0,
-  "root_cause": {
+  "primary_diagnostic": {
     "message": "No module named 'definitely_missing_module_xyz'",
     "seq": 3,
     "severity": "error",
@@ -117,7 +117,7 @@ arshy run 'python3 -c "import definitely_missing_module_xyz" | cat'
 }
 ```
 
-注意：`root_cause` 给出了最可能的根因事件；`location.file` 与 `location.line` 让 agent 能直接定位到出错位置，不需要正则去翻原始日志。
+注意：`primary_diagnostic` 给出一条代表性诊断证据，不对根因作额外推断；`location.file` 与 `location.line` 让 agent 能直接定位到出错位置。
 
 ## 第 5 步：只返回错误事件
 
@@ -226,9 +226,10 @@ arshy run "cargo test" --purpose dogfood
 你现在已经掌握：
 
 - 短命令即时返回、长命令结构化解析的区别（`short_command` 字段）。
-- 如何解读 `events`、`root_cause`、`error_count` 与 `warning_count`。
+- 如何解读 `events`、`primary_diagnostic`、`error_count` 与 `warning_count`。
 - `--format pretty/json`、`--errors-only`、`--timeout-ms` 的用法。
 - 用 `list` / `query` / `tail` / `kill` 管理任务。
 - 用 `stats` 与 `analyze` 观察执行效果。
 
-下一步：把 arshy 接入你的 AI agent（如 Codex），让 agent 直接通过 `arshy_exec` / `arshy_query` 执行命令——见[把 Codex 接入 arshy](setup-agent.md)。
+下一步：把 arshy 接入你的 AI agent，让 agent 直接通过 `arshy_exec` /
+`arshy_query` 执行命令——见[Agent 接入教程](setup-agent.md)。

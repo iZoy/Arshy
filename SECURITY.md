@@ -16,16 +16,18 @@ We aim to respond within 48 hours and resolve confirmed issues within 7 days.
 
 ## Security Model
 
-Arshy executes shell commands on the host system. Its security model includes:
+Arshy executes shell commands with the current user's privileges. It is not an
+OS or container sandbox. Its security controls include:
 
 1. **Command Filtering** — Blocked regex patterns prevent known-dangerous commands (`rm -rf /`, `dd if=`, etc.)
-2. **Sandbox Paths** — Restrict filesystem access to whitelisted directories
+2. **Working-directory Guard** — Optionally require the command cwd to be under an allowed root
 3. **Audit Logging** — All command execution is logged with timestamps, exit codes, and cwd
 4. **Read-only Mode** — `access_level = "read-only"` prevents any command execution
 
 ### Known Limitations
 
-- Sandbox mode `"process"` and `"container"` are reserved but not yet implemented. Only path-level restrictions are active.
+- `security.allowed_cwds` validates only the starting working directory. It
+  does not prevent a command from reading or writing other paths.
 - The command filter uses regex patterns; sophisticated obfuscation may bypass it. Defense in depth is recommended.
 - The daemon runs with the user's privileges. Do not expose the socket to untrusted processes.
 
@@ -33,6 +35,7 @@ Arshy executes shell commands on the host system. Its security model includes:
 
 - Run arshy with the least-privileged user account
 - Enable audit logging for production deployments
-- Use `sandbox_paths` to restrict filesystem access
+- Use `security.allowed_cwds` as a cwd policy and an OS/container sandbox
+  when filesystem isolation is required
 - Keep the blocked patterns list updated
 - Review audit logs regularly for suspicious activity

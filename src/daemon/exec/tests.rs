@@ -521,8 +521,8 @@ async fn auto_long_uses_smart_sync() {
     assert_eq!(result.status, TaskStatus::Failed, "invalid path should fail");
     assert!(result.exit_code.is_some(), "should have exit code");
     assert!(
-        result.root_cause.is_some() || result.project_context.is_some(),
-        "smart sync attaches root_cause or project_context for failed builds"
+        result.primary_diagnostic.is_some() || result.project_context.is_some(),
+        "smart sync attaches a primary diagnostic or project context for failed builds"
     );
 }
 
@@ -1041,18 +1041,18 @@ fn enrich_events_no_tool_no_hints() {
     assert!(enriched[0]["hint"].is_null());
 }
 #[test]
-fn extract_root_cause_first_error_for_normal_stream() {
+fn select_primary_diagnostic_first_error_for_normal_stream() {
     let events = Some(vec![
         serde_json::json!({"type": "log", "severity": "info", "message": "noise"}),
         serde_json::json!({"type": "diagnostic", "severity": "error", "message": "cannot find type `X`", "seq": 1}),
         serde_json::json!({"type": "location", "severity": "error", "message": "  --> src/main.rs:42", "seq": 2}),
     ]);
-    let rc = extract_root_cause(&events).unwrap();
+    let rc = select_primary_diagnostic(&events).unwrap();
     assert_eq!(rc["message"], "cannot find type `X`");
 }
 
 #[test]
-fn extract_root_cause_traceback_picks_exception() {
+fn select_primary_diagnostic_traceback_picks_exception() {
     // A python traceback: the first error is the banner; the real root
     // cause is the final exception line (last diagnostic error).
     let events = Some(vec![
@@ -1061,7 +1061,7 @@ fn extract_root_cause_traceback_picks_exception() {
         serde_json::json!({"type": "log", "severity": "warning", "message": "    f()", "seq": 3}),
         serde_json::json!({"type": "diagnostic", "severity": "error", "message": "ZeroDivisionError: division by zero", "seq": 4}),
     ]);
-    let rc = extract_root_cause(&events).unwrap();
+    let rc = select_primary_diagnostic(&events).unwrap();
     assert_eq!(rc["message"], "ZeroDivisionError: division by zero");
     assert_eq!(rc["seq"], 4);
 }

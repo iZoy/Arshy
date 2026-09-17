@@ -29,6 +29,7 @@ pub const NOTIF_TASK_UPDATE: &str = "task/update";
 pub const NOTIF_TASK_COMPLETE: &str = "task/complete";
 pub const NOTIF_DIAGNOSTIC: &str = "diagnostic";
 pub const NOTIF_DAEMON_SHUTDOWN: &str = "daemon/shutdown";
+pub const NOTIF_NOTIFICATION_OVERFLOW: &str = "notification/overflow";
 
 // ── JSON-RPC error codes ────────────────────────────────────────────────────
 

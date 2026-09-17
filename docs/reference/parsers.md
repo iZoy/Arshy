@@ -1,6 +1,6 @@
 # Parser 参考
 
-> 本文档依据 `parsers/builtin/*.toml`（38 个）、`src/daemon/parser/toml_def.rs`、`src/daemon/parser/registry.rs`、`src/daemon/parser/mod.rs` 核对（arshy v0.1.0-dev.1）。内置 parser 经 `rust-embed` 编译进二进制，另有 `raw` fallback，因此运行时默认显示 39 个条目。
+> 本文档依据 `parsers/builtin/*.toml`（38 个）、`src/daemon/parser/toml_def.rs`、`src/daemon/parser/registry.rs`、`src/daemon/parser/mod.rs` 核对（arshy v0.1.0-alpha.1）。内置 parser 经 `rust-embed` 编译进二进制，另有 `raw` fallback，因此运行时默认显示 39 个条目。
 
 ## 内置 Parser 清单
 
@@ -90,7 +90,7 @@ fields = { file = 1, line = 2, column = 3, code = 4, message = 5 }
 | `min_version` | string | 无 | 工具最低版本（semver，含）；经 `detect::version_satisfies` 判断 |
 | `max_version` | string | 无 | 工具最高版本（semver，含） |
 | `schema_version` | string | `"1.0"` | 该 parser 编写时依据的 schema 版本（默认 `"1.0"`；`aws`/`docker`/`kubectl` 显式写 `"1.0"`，其余文件省略） |
-| `since_version` | string | 无 | 首次加入时的版本（当前 37 个文件均未使用） |
+| `since_version` | string | 无 | 首次加入时的版本（当前 38 个文件均未使用） |
 | `deprecated` | bool | `false` | 整个 parser 弃用标记；加载时打印 warning |
 | `replaced_by` | string | 无 | 弃用后的替代 parser/方案名 |
 
@@ -195,8 +195,8 @@ stateful 模式（`to_stateful_pattern`）只使用 `message`/`file`/`line` 捕�
 
 - 目录：`parsers/builtin/tests/<tool>/`（目录名对应 TOML 文件名：`docker.toml` → `tests/docker/`）；
 - 每 fixture 一对文件：`<name>.txt`（输入）与 `<name>.json`（期望输出，TaskEvent 数组）；
-- 当前共 **49 对 fixture**，38 个 parser 中有结构化输出的 parser 每者至少 1 对（如 `cargo` 4 对、`python` 3 对、`curl`/`eslint`/`kubectl`/`aws`/`git`/`cargo-test` 各 2 对，其余如 `docker`/`tsc`/`npm` 等各 1 对）；`inspection` 是纯路由资产，不产生 parser 事件，因此不设 fixture；
-- 生成/校验：`ARSHY_BLESS=1 cargo test --bin arshyd` 自动生成期望 JSON；fixture 测试验证 ≥95% 字段准确率（type、severity、code、file、line）；
+- 当前共 **60 对 fixture**，38 个 parser 中有结构化输出的 parser 每者至少 1 对；`inspection` 是纯路由资产，不产生 parser 事件，因此不设 fixture；
+- 生成/校验：`ARSHY_BLESS=1 cargo test fixture_` 自动生成期望 JSON；fixture 测试验证 ≥95% 字段准确率（type、severity、code、file、line）；
 - 添加 parser 流程：新建 `parsers/builtin/<tool>.toml` → 建 fixture 目录与 `.txt` 输入 → bless 生成 `.json` → 验证测试通过。
 
 ## 与直觉不符的事实（代码核对）

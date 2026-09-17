@@ -9,7 +9,9 @@ arshy is our own product. Route ALL shell commands through `arshy_exec` — this
 
 **Python scripts:** All `python script.py` / `python -c "..."` executions also route through `arshy_exec` — arshy's traceback parser structures failures (file:line + exception + source context) for faster LLM repair.
 
-**Fallback:** If `arshy_exec` returns `DaemonUnreachable`, run `scripts/restart.sh`. Only if that fails, use Bash as last resort.
+**Fallback:** If `arshy_exec` returns `DaemonUnreachable`, use the native
+shell only for `arshy daemon restart`, then retry Arshy. Any broader fallback
+must be explicit.
 
 **Commit Policy:**
 - Run `cargo test` through `arshy_exec` before every commit
@@ -48,8 +50,6 @@ arshy parser list                  # list loaded parsers
 arshy mcp config                   # print generic MCP client configuration
 arshy doctor                       # verify the local daemon and MCP endpoint
 ```
-
-**Bash interception (decision 3):** `ARSHY_NO_INTERCEPT=1` disables ALL bash interception globally (stronger than the per-command `ARSHY_BYPASS`); every agent-relevant interception decision is audited to `~/.arshy/intercept.jsonl` (who, what, why).
 
 ## Architecture
 

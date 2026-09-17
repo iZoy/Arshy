@@ -1,18 +1,27 @@
 # Integrate an MCP client
 
-Arshy has one integration surface: the standard MCP stdio server.
+Use the client-neutral setup flow:
 
-```sh
-arshy mcp config
+```bash
+arshy mcp config --format prompt
 ```
 
-Copy the JSON output into the MCP client's configuration. The entry is always:
+Copy the complete output to the Agent running in the target project. This is
+the only guided setup action Arshy asks the user to perform. The Agent owns
+client configuration, chooses the native scope, and decides whether existing
+project rules need an update.
 
-```json
-{ "command": "arshy", "args": ["mcp", "serve"] }
+The Prompt requires exact command/argument matching, conflict detection,
+minimal changes, verification, explicit fallback reporting, and a restart/new
+task notice. It does not force a particular client, configuration file,
+project-rule filename, or Arshy-specific marker.
+
+For manual setup, use:
+
+```bash
+arshy mcp config --format json
 ```
 
-The client owns its configuration and lifecycle. Arshy does not inspect agent
-names, write hooks, edit `AGENTS.md`, install shell shims, or provide agent
-specific uninstall behavior. To remove the integration, delete this one MCP
-entry in the client.
+The client owns the MCP registration and lifecycle. Arshy does not install
+hooks, shell shims, or PATH changes. The complete canonical Prompt is kept in
+the [README](../../README.md).

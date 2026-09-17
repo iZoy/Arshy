@@ -22,13 +22,14 @@ arshy 的测试体系回答四个不同的问题，每一层都有明确的"测�
   事件"的翻译器，fixture 固定翻译结果（`ARSHY_BLESS=1` 生成期望、≥95% 字段
   匹配率门禁），并强制每个内置 parser 至少有一组 fixture——覆盖率不是口号。
 - **Dogfood** 是哲学级的回归：arshy 声称"Agent 跑命令拿结构化结果"，那就用
-  arshy 自己跑开发命令验证这条路径每天可用，同时积累真实指标（token 节省、
-  解析覆盖率、修正闭环）。
+  arshy 自己跑开发命令验证这条路径每天可用，同时积累真实的 quality-v1
+  分项指标、解析覆盖率和可复现的失败证据；不推导 token 节省率。
 
 ## 覆盖率口径
 
-- **Parser**：37 个内置 parser 全部有 fixture（49 组）；`run_parser_fixtures`
-  在无 fixture 时直接断言失败，防止新增 parser 不带测试。
+- **Parser**：38 个内置 TOML 资产中，37 个结构化 parser 由 harness 覆盖 60 组
+  fixture；`inspection` 是纯路由资产，不产生 parser 事件，因此没有 fixture。
+  `run_parser_fixtures` 在声明了 fixture 的 parser 缺失输入时直接断言失败。
 - **进程链路**：集成测试覆盖 daemon health、短/长命令、查询（含跨任务搜索）、
   list/tail、kill、安全拦截、优雅关闭、MCP 协议协商与工具调用。
 - **CI**：fmt、clippy、单元、doc、集成、dogfood 六道门禁，缺一不可。

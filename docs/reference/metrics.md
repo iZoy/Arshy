@@ -38,7 +38,7 @@ version, workload, platform, sample size, and raw counters together.
 
 ## Reproducible quality workload
 
-```sh
+```bash
 ARSHY=./target/release/arshy JSON=1 scripts/measure-savings.sh \
   > docs/evidence/quality-v1.json
 ```

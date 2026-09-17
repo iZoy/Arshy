@@ -4,7 +4,10 @@ use super::{Notification, Request, Response};
 use crate::Result;
 use serde::Serialize;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicBool, AtomicU64, Ordering},
+    Arc,
+};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
 use tokio::net::UnixStream;
 use tokio::sync::{mpsc, oneshot, Mutex};
@@ -77,6 +80,8 @@ type PendingMap = Arc<Mutex<HashMap<u64, oneshot::Sender<Response>>>>;
 pub struct DaemonConnection {
     write_tx: mpsc::Sender<serde_json::Value>,
     pending: PendingMap,
+    closed: Arc<AtomicBool>,
+    notification_drops: Arc<AtomicU64>,
     next_id: u64,
 }
 
@@ -90,22 +95,45 @@ impl DaemonConnection {
         let writer = BufWriter::new(writer_half);
 
         let pending: PendingMap = Arc::new(Mutex::new(HashMap::new()));
+        let closed = Arc::new(AtomicBool::new(false));
+        let notification_drops = Arc::new(AtomicU64::new(0));
         let (write_tx, write_rx) = mpsc::channel::<serde_json::Value>(64);
         let (notif_tx, notif_rx) = mpsc::channel::<Notification>(256);
 
         // Writer task
         let mut write_rx = write_rx;
+        let writer_closed = closed.clone();
         tokio::spawn(async move {
-            Self::writer_task(writer, &mut write_rx).await;
+            Self::writer_task(writer, &mut write_rx, writer_closed).await;
         });
 
         // Reader task
         let pending_clone = pending.clone();
+        let reader_closed = closed.clone();
+        let reader_notification_drops = notification_drops.clone();
         tokio::spawn(async move {
-            Self::reader_task(reader, pending_clone, notif_tx).await;
+            Self::reader_task(
+                reader,
+                pending_clone,
+                notif_tx,
+                reader_closed,
+                reader_notification_drops,
+            )
+            .await;
         });
 
-        (Self { write_tx, pending, next_id: 1 }, notif_rx)
+        (Self { write_tx, pending, closed, notification_drops, next_id: 1 }, notif_rx)
+    }
+
+    /// Return and reset the number of live notifications dropped because the
+    /// consumer was temporarily unable to keep up. Structured events remain
+    /// available through `task/query`.
+    pub fn take_notification_drops(&self) -> u64 {
+        self.notification_drops.swap(0, Ordering::AcqRel)
+    }
+
+    pub fn notification_drops_handle(&self) -> Arc<AtomicU64> {
+        self.notification_drops.clone()
     }
 
     /// Send a JSON-RPC request and wait for the response.
@@ -126,6 +154,10 @@ impl DaemonConnection {
         params: serde_json::Value,
         timeout: std::time::Duration,
     ) -> Result<Response> {
+        if self.closed.load(Ordering::Acquire) {
+            return Err(crate::ArshyError::Ipc("daemon connection closed".into()));
+        }
+
         let id = self.next_id;
         self.next_id += 1;
 
@@ -164,6 +196,7 @@ impl DaemonConnection {
     async fn writer_task(
         mut writer: BufWriter<tokio::net::unix::OwnedWriteHalf>,
         rx: &mut mpsc::Receiver<serde_json::Value>,
+        closed: Arc<AtomicBool>,
     ) {
         while let Some(json) = rx.recv().await {
             match serde_json::to_vec(&json) {
@@ -177,12 +210,15 @@ impl DaemonConnection {
                 Err(_) => continue,
             }
         }
+        closed.store(true, Ordering::Release);
     }
 
     async fn reader_task(
         mut reader: BufReader<tokio::net::unix::OwnedReadHalf>,
         pending: PendingMap,
         notif_tx: mpsc::Sender<Notification>,
+        closed: Arc<AtomicBool>,
+        notification_drops: Arc<AtomicU64>,
     ) {
         let mut line = String::new();
         loop {
@@ -217,16 +253,22 @@ impl DaemonConnection {
                 }
             } else if has_method {
                 // Notification — deliver to notification channel.
-                // Blocking send provides backpressure: if the proxy can't consume
-                // notifications fast enough, the daemon slows down rather than
-                // silently dropping events.
                 if let Ok(notif) = serde_json::from_value::<Notification>(val) {
-                    if notif_tx.send(notif).await.is_err() {
-                        break; // proxy disconnected, stop reader
+                    // Never block response parsing on live notification delivery.
+                    // Structured events are persisted by the daemon and remain
+                    // queryable even when a burst exceeds the live queue.
+                    match notif_tx.try_send(notif) {
+                        Ok(()) => {}
+                        Err(mpsc::error::TrySendError::Full(_)) => {
+                            notification_drops.fetch_add(1, Ordering::Relaxed);
+                        }
+                        Err(mpsc::error::TrySendError::Closed(_)) => break,
                     }
                 }
             }
         }
+        closed.store(true, Ordering::Release);
+        pending.lock().await.clear();
     }
 }
 
@@ -340,6 +382,7 @@ mod tests {
             let mut reader = BufReader::new(&mut sr);
             let mut line = String::new();
             let _ = reader.read_line(&mut line).await;
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         });
 
         let result = conn
@@ -354,6 +397,90 @@ mod tests {
         let err = result.unwrap_err().to_string();
         assert!(err.contains("timed out"), "expected timeout error, got: {}", err);
         handle.abort();
+    }
+
+    #[tokio::test]
+    async fn test_daemon_connection_peer_close_drops_pending_request() {
+        let (client, server) = pair();
+        let (mut conn, _notif_rx) = DaemonConnection::new(client);
+
+        let handle = tokio::spawn(async move {
+            let (mut sr, _sw) = server.into_split();
+            let mut reader = BufReader::new(&mut sr);
+            let mut line = String::new();
+            let _ = reader.read_line(&mut line).await;
+            // Simulate arshyd exiting after accepting the request without
+            // returning a response.
+        });
+
+        let result = tokio::time::timeout(
+            std::time::Duration::from_millis(500),
+            conn.send_request_with_timeout(
+                "task/run",
+                serde_json::json!({}),
+                std::time::Duration::from_secs(2),
+            ),
+        )
+        .await
+        .expect("peer close should wake the pending request");
+
+        assert!(result.is_err());
+        assert!(
+            !result.unwrap_err().to_string().contains("timed out"),
+            "peer close must not wait for the request timeout"
+        );
+        handle.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_daemon_connection_notification_burst_does_not_block_response() {
+        let (client, server) = pair();
+        let (mut conn, _notif_rx) = DaemonConnection::new(client);
+
+        let handle = tokio::spawn(async move {
+            let (mut sr, mut sw) = server.into_split();
+            let mut reader = BufReader::new(&mut sr);
+            let mut line = String::new();
+            reader.read_line(&mut line).await.unwrap();
+            let request: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
+
+            for seq in 0..300 {
+                write_line(
+                    &mut sw,
+                    &serde_json::json!({
+                        "jsonrpc": "2.0",
+                        "method": "diagnostic",
+                        "params": {"seq": seq}
+                    }),
+                )
+                .await;
+            }
+            write_line(
+                &mut sw,
+                &serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": request["id"],
+                    "result": {"ok": true}
+                }),
+            )
+            .await;
+        });
+
+        let response = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            conn.send_request_with_timeout(
+                "task/run",
+                serde_json::json!({}),
+                std::time::Duration::from_secs(5),
+            ),
+        )
+        .await
+        .expect("notification burst must not delay the response")
+        .unwrap();
+
+        assert_eq!(response.result["ok"], true);
+        assert!(conn.take_notification_drops() > 0);
+        handle.await.unwrap();
     }
 
     #[tokio::test]

@@ -1,0 +1,42 @@
+name: Real-task experience
+description: Share whether Arshy helped an Agent complete a real task
+title: "[Experience] "
+body:
+  - type: dropdown
+    id: setup
+    attributes:
+      label: Did MCP setup succeed?
+      options:
+        - "Yes"
+        - "No"
+    validations:
+      required: true
+  - type: textarea
+    id: task
+    attributes:
+      label: Task category and outcome
+      description: Describe the category without private project details.
+    validations:
+      required: true
+  - type: input
+    id: calls
+    attributes:
+      label: Arshy tool calls
+      description: Include extra queries or repeated executions.
+  - type: textarea
+    id: visibility
+    attributes:
+      label: Diagnostic visibility
+      description: What evidence did the Agent see, and what was missing?
+    validations:
+      required: true
+  - type: dropdown
+    id: reuse
+    attributes:
+      label: Would you use Arshy again?
+      options:
+        - "Yes"
+        - "Unsure"
+        - "No"
+    validations:
+      required: true

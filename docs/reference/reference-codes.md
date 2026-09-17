@@ -48,4 +48,4 @@ source = "https://docs.docker.com/reference/cli/docker/container/run/#exit-statu
 
 ## 测试
 
-`cargo test --bin arshyd reference` 验证内置表加载、按 code 查找、跨工具同码区分。
+`cargo test reference` 验证内置表加载与未知 code 的查找语义（reference 模块测试位于 library target）。

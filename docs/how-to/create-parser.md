@@ -2,7 +2,7 @@
 
 本文解决以下任务：为某个 CLI 工具编写 TOML parser（普通/stateful 两种 pattern 类型）、处理 deprecated/replaced_by 生命周期、用 fixture 测试与 `ARSHY_BLESS` 验证、用 `parser reload` 热加载验证。
 
-parser 定义是 TOML 文件：37 个 builtin 定义在 `parsers/builtin/*.toml`（编译时嵌入，`src/daemon/parser/toml_def.rs` 的 `BuiltinAssets`），用户定义放在 `parser.dirs` 配置的目录（默认 `~/.arshy/parsers`）。加载/匹配逻辑见 `src/daemon/parser/`（`registry.rs`、`toml.rs`、`stateful.rs`、`mod.rs`）。
+parser 定义是 TOML 文件：38 个 builtin 定义在 `parsers/builtin/*.toml`（编译时嵌入，`src/daemon/parser/toml_def.rs` 的 `BuiltinAssets`），用户定义放在 `parser.dirs` 配置的目录（默认 `~/.arshy/parsers`）。加载/匹配逻辑见 `src/daemon/parser/`（`registry.rs`、`toml.rs`、`stateful.rs`、`mod.rs`）。
 
 ## 1. 决定 parser 文件放哪里
 
@@ -279,7 +279,7 @@ fields = { message = 1 }
 
 ## 7. 用 fixture 测试验证（贡献 builtin parser 时）
 
-每个 builtin parser 在 `parsers/builtin/tests/<tool>/` 下有 `.txt`（输入）与 `.json`（期望事件）成对文件（当前 49 对）。测试驱动逻辑在 `src/daemon/parser/mod.rs` 的 `harness_tests::run_parser_fixtures`。
+每个 builtin parser 在 `parsers/builtin/tests/<tool>/` 下有 `.txt`（输入）与 `.json`（期望事件）成对文件（当前 60 对）。测试驱动逻辑在 `src/daemon/parser/mod.rs` 的 `harness_tests::run_parser_fixtures`。
 
 ### 7.1 创建 fixture
 

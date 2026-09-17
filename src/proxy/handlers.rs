@@ -3,6 +3,7 @@
 use arshy_lib::ipc::{self, DaemonConnection};
 use arshy_lib::mcp::{instructions, protocol};
 use arshy_lib::Result;
+use std::time::Duration;
 use tokio::io::{AsyncWriteExt, BufWriter};
 
 use super::protocol::{
@@ -44,18 +45,30 @@ pub(crate) async fn handle_tools_list<I: serde::Serialize>(
     write_json_response(stdout, id, &serde_json::json!({ "tools": tools })).await
 }
 
-/// Shape an `arshy_query` daemon response for the MCP client: a concise
-/// content line plus the structured `events` and `total` fields. Works for
-/// both per-task queries and cross-task searches (events carry `task_id`).
-pub(crate) fn build_query_result(result: &serde_json::Value) -> serde_json::Value {
-    let events = result.get("events").and_then(|v| v.as_array()).cloned().unwrap_or_default();
-    let total = result.get("total").and_then(|v| v.as_u64()).unwrap_or(events.len() as u64);
-    let text = format!("{} event{}", total, if total == 1 { "" } else { "s" });
+fn tool_result(text: String, structured: serde_json::Value) -> serde_json::Value {
     serde_json::json!({
         "content": [{"type": "text", "text": text}],
+        "structuredContent": structured,
+    })
+}
+
+/// Shape an `arshy_query` response using the standard structuredContent field
+/// while keeping the complete page visible to text-only MCP clients.
+pub(crate) fn build_query_result(
+    result: &serde_json::Value,
+    args: &serde_json::Value,
+) -> serde_json::Value {
+    let events = result.get("events").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+    let total = result.get("total").and_then(|v| v.as_u64()).unwrap_or(events.len() as u64);
+    let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(20).min(1000);
+    let offset = args.get("offset").and_then(|v| v.as_u64()).unwrap_or(0);
+    let structured = serde_json::json!({
         "events": events,
         "total": total,
-    })
+        "limit": limit,
+        "offset": offset,
+    });
+    tool_result(serde_json::to_string(&structured).unwrap_or_default(), structured)
 }
 
 /// Shape a `task/tail` daemon response for the MCP client: the content text
@@ -65,32 +78,34 @@ pub(crate) fn build_tail_result(result: &serde_json::Value) -> serde_json::Value
     let lines = result.get("lines").and_then(|v| v.as_array()).cloned().unwrap_or_default();
     let text: String = lines.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>().join("\n");
     let task_id = result.get("task_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-    serde_json::json!({
-        "content": [{"type": "text", "text": text}],
+    let structured = serde_json::json!({
         "task_id": task_id,
         "lines": lines,
-    })
+    });
+    tool_result(text, structured)
 }
 
 fn build_task_list_result(result: &serde_json::Value) -> serde_json::Value {
     let tasks = result.as_array().cloned().unwrap_or_default();
-    serde_json::json!({
-        "content": [{"type": "text", "text": format!("{} task{}", tasks.len(), if tasks.len() == 1 { "" } else { "s" })}],
+    let structured = serde_json::json!({
         "tasks": tasks,
-    })
+        "total": tasks.len(),
+    });
+    tool_result(serde_json::to_string(&structured).unwrap_or_default(), structured)
 }
 
 fn build_task_cancel_result(result: &serde_json::Value) -> serde_json::Value {
     let task_id = result.get("task_id").and_then(|v| v.as_str()).unwrap_or("");
-    serde_json::json!({
-        "content": [{"type": "text", "text": format!("cancellation requested for task {}", task_id)}],
+    let structured = serde_json::json!({
         "task_id": task_id,
         "status": "cancelling",
-    })
+    });
+    tool_result(format!("cancellation requested for task {task_id}"), structured)
 }
 
 pub(crate) async fn handle_tool_call(
     daemon: &mut DaemonConnection,
+    pump: &mut super::NotificationPump<'_>,
     stdout: &mut BufWriter<tokio::io::Stdout>,
     request: &serde_json::Value,
     id: &serde_json::Value,
@@ -149,7 +164,15 @@ pub(crate) async fn handle_tool_call(
         }
     }
 
-    let response = daemon.send_request(ipc_method, args).await?;
+    let response = pump
+        .send_request(
+            daemon,
+            stdout,
+            ipc_method,
+            args.clone(),
+            super::daemon_request_timeout(ipc_method, &args),
+        )
+        .await?;
     let result = &response.result;
 
     // Check for IPC-level error
@@ -166,7 +189,7 @@ pub(crate) async fn handle_tool_call(
     // `events` + `total` as structured fields (total was previously dropped
     // by the generic run-response path).
     if ipc_method == ipc::METHOD_QUERY {
-        write_json_response(stdout, id, &build_query_result(result)).await?;
+        write_json_response(stdout, id, &build_query_result(result, &args)).await?;
         return Ok(None);
     }
 
@@ -203,12 +226,21 @@ pub(crate) async fn handle_tool_call(
         } else {
             raw.to_string()
         };
-        serde_json::json!([{"type": "text", "text": text}])
+        let exit = result.get("exit_code").and_then(|value| value.as_i64());
+        let task = result.get("task_id").and_then(|value| value.as_str()).unwrap_or("");
+        let state = format!(
+            "status: {status}, exit_code: {}, task_id: {task}",
+            exit.map_or_else(|| "null".into(), |code| code.to_string())
+        );
+        serde_json::json!([
+            {"type": "text", "text": text},
+            {"type": "text", "text": state}
+        ])
     } else {
         // Long command → concise structured summary.
-        // Agent gets: status icon, duration, error count, root cause on failure.
+        // Agent gets: status icon, duration, error count, and a primary diagnostic.
         // Full events are available via arshy_query — not included here.
-        let root_cause = result.get("root_cause");
+        let primary_diagnostic = result.get("primary_diagnostic");
         let error_count = result.get("error_count").and_then(|v| v.as_u64()).unwrap_or(0);
         let exit_code = result.get("exit_code").and_then(|v| v.as_i64());
         let duration_ms = result.get("duration_ms").and_then(|v| v.as_u64());
@@ -240,11 +272,11 @@ pub(crate) async fn handle_tool_call(
             }
         }
 
-        // Attach root cause for failures (most useful single-line for the agent)
-        if let Some(rc) = root_cause {
+        // Attach the representative diagnostic for failures.
+        if let Some(rc) = primary_diagnostic {
             if let Some(msg) = rc.get("message").and_then(|v| v.as_str()) {
                 if !msg.is_empty() {
-                    text.push_str(&format!("\nRoot cause: {}", msg));
+                    text.push_str(&format!("\nPrimary diagnostic: {}", msg));
                 }
             }
         }
@@ -265,12 +297,24 @@ pub(crate) async fn handle_tool_call(
         // blind (token restraint: hint only, no raw text inlined).
         let event_count = result.get("event_count").and_then(|v| v.as_u64()).unwrap_or(0);
         if event_count == 0 && status != "running" {
-            if let Some(tid) = result.get("task_id").and_then(|v| v.as_str()) {
-                if !tid.is_empty() {
+            text.push_str(
+                "\n(0 structured events — fetch the original output with \
+                 arshy_task(action:\"raw\"))",
+            );
+        }
+
+        // Text-only MCP clients cannot inspect structuredContent. Always give
+        // them the lifecycle contract, then point them at the paginated query
+        // path when the inline event sample is incomplete or needs detail.
+        if let Some(tid) = result.get("task_id").and_then(|v| v.as_str()) {
+            if !tid.is_empty() {
+                let exit = exit_code.map_or_else(|| "null".into(), |code| code.to_string());
+                text.push_str(&format!("\nstatus: {status}, exit_code: {exit}, task_id: {tid}"));
+                if event_count > 0 {
                     text.push_str(&format!(
-                        "\n(0 structured events — fetch the original output with \
-                         arshy_task(action:\"raw\", task_id:\"{}\"))",
-                        tid
+                        "\n{} structured events available; page with \
+                         arshy_query(task_id:\"{}\", limit:20, offset:0)",
+                        event_count, tid
                     ));
                 }
             }
@@ -287,39 +331,36 @@ pub(crate) async fn handle_tool_call(
     let exit_code = result.get("exit_code").and_then(|v| v.as_i64());
     let is_error = should_mark_tool_error(status, exit_code, has_errors);
 
-    let mut result_obj = serde_json::json!({ "content": content });
+    let mut structured = serde_json::Map::new();
+    for key in &[
+        "task_id",
+        "status",
+        "exit_code",
+        "duration_ms",
+        "error_count",
+        "warning_count",
+        "event_count",
+        "events",
+        "events_truncated",
+        "events_hint",
+        "raw_output",
+        "short_command",
+        "primary_diagnostic",
+        "project_context",
+        "raw_output_bytes",
+    ] {
+        if let Some(val) = result.get(*key) {
+            structured.insert((*key).to_string(), val.clone());
+        }
+    }
+    // Exit state is part of every execution contract, including running tasks.
+    structured.entry("exit_code".to_string()).or_insert(serde_json::Value::Null);
+    let mut result_obj = serde_json::json!({
+        "content": content,
+        "structuredContent": serde_json::Value::Object(structured),
+    });
     if is_error {
         result_obj["isError"] = serde_json::json!(true);
-    }
-
-    // Include full result metadata so agents (and scripts) can access structured data.
-    // The MCP content[] has the human-readable summary; these fields give machines
-    // programmatic access without a second round-trip to arshy_query.
-    if !is_short {
-        for key in &[
-            "task_id",
-            "status",
-            "exit_code",
-            "duration_ms",
-            "error_count",
-            "warning_count",
-            "root_cause",
-            "project_context",
-        ] {
-            if let Some(val) = result.get(*key) {
-                result_obj[*key] = val.clone();
-            }
-        }
-        // Include raw_output for agents that need the full command output
-        if let Some(raw) = result.get("raw_output") {
-            result_obj["raw_output"] = raw.clone();
-        }
-        // Forward events and event_count from the daemon's run response
-        for key in &["events", "event_count"] {
-            if let Some(val) = result.get(*key) {
-                result_obj[*key] = val.clone();
-            }
-        }
     }
 
     let mcp_response = serde_json::json!({
@@ -344,10 +385,19 @@ fn should_mark_tool_error(status: &str, exit_code: Option<i64>, has_errors: bool
 
 pub(crate) async fn handle_resources_list(
     daemon: &mut DaemonConnection,
+    pump: &mut super::NotificationPump<'_>,
     stdout: &mut BufWriter<tokio::io::Stdout>,
     id: &serde_json::Value,
 ) -> Result<()> {
-    let response = daemon.send_request(ipc::METHOD_LIST, serde_json::json!({"limit": 50})).await?;
+    let response = pump
+        .send_request(
+            daemon,
+            stdout,
+            ipc::METHOD_LIST,
+            serde_json::json!({"limit": 50}),
+            Duration::from_secs(60),
+        )
+        .await?;
     if let Some(error) = response.result.get("error") {
         let code = error["code"].as_i64().unwrap_or(ipc::error_code::INTERNAL_ERROR);
         let message = error["message"].as_str().unwrap_or("daemon error");
@@ -376,6 +426,7 @@ pub(crate) async fn handle_resources_list(
 
 pub(crate) async fn handle_resources_read(
     daemon: &mut DaemonConnection,
+    pump: &mut super::NotificationPump<'_>,
     stdout: &mut BufWriter<tokio::io::Stdout>,
     request: &serde_json::Value,
     id: &serde_json::Value,
@@ -396,13 +447,16 @@ pub(crate) async fn handle_resources_read(
     }
 
     // Get task details via list (with task_id filter not available, query directly)
-    let query_resp = daemon
+    let query_resp = pump
         .send_request(
+            daemon,
+            stdout,
             ipc::METHOD_QUERY,
             serde_json::json!({
                 "task_id": task_id,
                 "limit": 200,
             }),
+            Duration::from_secs(60),
         )
         .await?;
 
@@ -471,7 +525,7 @@ pub(crate) fn mcp_tool_to_ipc_method(
 
 #[cfg(test)]
 mod tests {
-    use super::should_mark_tool_error;
+    use super::{build_query_result, should_mark_tool_error};
 
     #[test]
     fn exit_one_without_diagnostics_is_not_an_mcp_transport_error() {
@@ -480,5 +534,19 @@ mod tests {
         assert!(should_mark_tool_error("failed", Some(2), false));
         assert!(should_mark_tool_error("failed", Some(-1), false));
         assert!(should_mark_tool_error("timeout", Some(1), false));
+    }
+
+    #[test]
+    fn query_result_is_visible_to_structured_and_text_clients() {
+        let result = serde_json::json!({
+            "events": [{"type": "diagnostic", "message": "visible failure"}],
+            "total": 3
+        });
+        let shaped = build_query_result(&result, &serde_json::json!({"limit": 1, "offset": 2}));
+        assert_eq!(shaped["structuredContent"]["total"], 3);
+        assert_eq!(shaped["structuredContent"]["limit"], 1);
+        assert_eq!(shaped["structuredContent"]["offset"], 2);
+        assert!(shaped["content"][0]["text"].as_str().unwrap().contains("visible failure"));
+        assert!(shaped.get("events").is_none());
     }
 }

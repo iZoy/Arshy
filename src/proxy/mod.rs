@@ -9,15 +9,25 @@
 //! - Middleware chain: extensible request/response/notification hooks (currently empty)
 
 use arshy_lib::config::Config;
-use arshy_lib::ipc::{self, Notification};
+use arshy_lib::ipc::{self, DaemonConnection, Notification, Response};
 use arshy_lib::Result;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, BufReader, BufWriter};
+use tokio::sync::mpsc;
 
 fn request_id_key(id: &serde_json::Value) -> String {
     serde_json::to_string(id).unwrap_or_else(|_| "null".into())
+}
+
+async fn recv_notification(
+    notif_rx: &mut Option<mpsc::Receiver<Notification>>,
+) -> Option<Notification> {
+    match notif_rx.as_mut() {
+        Some(rx) => rx.recv().await,
+        None => std::future::pending().await,
+    }
 }
 
 /// Middleware trait for intercepting request/response/notification flows.
@@ -31,7 +41,7 @@ mod protocol;
 
 pub(crate) use connection::{
     connect_or_start, connect_with_retry, drain_pending, ensure_daemon_up, flush_batch,
-    is_connection_error, start_daemon,
+    is_connection_error, is_request_timeout, start_daemon,
 };
 pub(crate) use handlers::{
     handle_initialize, handle_resources_list, handle_resources_read, handle_tool_call,
@@ -59,6 +69,197 @@ pub trait Middleware: Send + Sync {
     }
 }
 
+async fn ensure_daemon_ready(
+    daemon: &mut Option<arshy_lib::ipc::DaemonConnection>,
+    notif_rx: &mut Option<mpsc::Receiver<Notification>>,
+    cfg: &Config,
+    socket_path: &std::path::Path,
+    stdout: &mut BufWriter<tokio::io::Stdout>,
+    pending_notifs: &mut Vec<Notification>,
+) -> Result<()> {
+    if daemon.is_some() && notif_rx.is_some() {
+        return Ok(());
+    }
+
+    ensure_daemon_up(daemon, notif_rx, cfg, socket_path, stdout, pending_notifs).await
+}
+
+fn append_notification_overflow_notice(
+    daemon: Option<&DaemonConnection>,
+    pending_notifs: &mut Vec<Notification>,
+) {
+    let Some(daemon) = daemon else { return };
+    append_notification_overflow_count(&daemon.notification_drops_handle(), pending_notifs);
+}
+
+fn append_notification_overflow_count(
+    notification_drops: &std::sync::atomic::AtomicU64,
+    pending_notifs: &mut Vec<Notification>,
+) {
+    let dropped = notification_drops.swap(0, std::sync::atomic::Ordering::AcqRel);
+    if dropped > 0 {
+        pending_notifs.push(Notification {
+            jsonrpc: "2.0".into(),
+            method: ipc::NOTIF_NOTIFICATION_OVERFLOW.into(),
+            params: serde_json::json!({ "dropped": dropped }),
+        });
+    }
+}
+
+pub(crate) struct NotificationPump<'a> {
+    notif_rx: &'a mut mpsc::Receiver<Notification>,
+    pending_notifs: &'a mut Vec<Notification>,
+    batch_deadline: &'a mut Option<tokio::time::Instant>,
+    batch_interval: Duration,
+    max_batch: usize,
+}
+
+impl<'a> NotificationPump<'a> {
+    pub(crate) fn new(
+        notif_rx: &'a mut mpsc::Receiver<Notification>,
+        pending_notifs: &'a mut Vec<Notification>,
+        batch_deadline: &'a mut Option<tokio::time::Instant>,
+        batch_interval: Duration,
+        max_batch: usize,
+    ) -> Self {
+        Self { notif_rx, pending_notifs, batch_deadline, batch_interval, max_batch }
+    }
+
+    /// Await one daemon response while continuing to drain live notifications.
+    /// This keeps a burst of parser events from blocking the response behind the
+    /// bounded notification queue.
+    pub(crate) async fn send_request(
+        &mut self,
+        daemon: &mut DaemonConnection,
+        stdout: &mut BufWriter<tokio::io::Stdout>,
+        method: &str,
+        params: serde_json::Value,
+        timeout: Duration,
+    ) -> Result<Response> {
+        let notification_drops = daemon.notification_drops_handle();
+        let mut response = Box::pin(daemon.send_request_with_timeout(method, params, timeout));
+        let mut notifications_open = true;
+
+        loop {
+            if !notifications_open {
+                let result = response.await;
+                self.finish_request(stdout, &notification_drops).await?;
+                return result;
+            }
+
+            if let Some(deadline) = *self.batch_deadline {
+                tokio::select! {
+                    biased;
+                    result = &mut response => {
+                        self.finish_request(stdout, &notification_drops).await?;
+                        return result;
+                    }
+                    notification = self.notif_rx.recv() => {
+                        match notification {
+                            Some(notification) => {
+                                self.pending_notifs.push(notification);
+                                if self.pending_notifs.len() >= self.max_batch {
+                                    flush_batch(stdout, self.pending_notifs).await?;
+                                    *self.batch_deadline = None;
+                                } else {
+                                    *self.batch_deadline = Some(tokio::time::Instant::now() + self.batch_interval);
+                                }
+                            }
+                            None => notifications_open = false,
+                        }
+                    }
+                    _ = tokio::time::sleep_until(deadline) => {
+                        flush_batch(stdout, self.pending_notifs).await?;
+                        *self.batch_deadline = None;
+                    }
+                }
+            } else {
+                tokio::select! {
+                    biased;
+                    result = &mut response => {
+                        self.finish_request(stdout, &notification_drops).await?;
+                        return result;
+                    }
+                    notification = self.notif_rx.recv() => {
+                        match notification {
+                            Some(notification) => {
+                                self.pending_notifs.push(notification);
+                                if self.pending_notifs.len() >= self.max_batch {
+                                    flush_batch(stdout, self.pending_notifs).await?;
+                                } else {
+                                    *self.batch_deadline = Some(tokio::time::Instant::now() + self.batch_interval);
+                                }
+                            }
+                            None => notifications_open = false,
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    async fn finish_request(
+        &mut self,
+        stdout: &mut BufWriter<tokio::io::Stdout>,
+        notification_drops: &std::sync::atomic::AtomicU64,
+    ) -> Result<()> {
+        append_notification_overflow_count(notification_drops, self.pending_notifs);
+        if !self.pending_notifs.is_empty() {
+            flush_batch(stdout, self.pending_notifs).await?;
+            *self.batch_deadline = None;
+        }
+        Ok(())
+    }
+}
+
+pub(crate) fn daemon_request_timeout(method: &str, params: &serde_json::Value) -> Duration {
+    if method == ipc::METHOD_RUN && params["mode"].as_str().unwrap_or("auto") == "auto" {
+        Duration::from_secs(75)
+    } else {
+        Duration::from_secs(60)
+    }
+}
+
+fn retryable_tool_call(request: &serde_json::Value) -> bool {
+    match request["params"]["name"].as_str() {
+        Some("arshy_query") => true,
+        Some("arshy_task") => {
+            matches!(request["params"]["arguments"]["action"].as_str(), Some("list" | "raw"))
+        }
+        _ => false,
+    }
+}
+
+async fn write_uncertain_tool_error(
+    stdout: &mut BufWriter<tokio::io::Stdout>,
+    id: &serde_json::Value,
+    request: &serde_json::Value,
+) -> Result<()> {
+    let tool = request["params"]["name"].as_str().unwrap_or("tool call");
+    let message = if tool == "arshy_exec" {
+        "arshyd connection lost while running arshy_exec; the command result is unknown and was not retried. Inspect task history before rerunning it."
+    } else {
+        "arshyd connection lost while processing the request; the operation result is unknown and was not retried."
+    };
+    write_structured_error(stdout, id, arshy_lib::ArshyError::Ipc(message.into())).await
+}
+
+async fn write_request_timeout_error(
+    stdout: &mut BufWriter<tokio::io::Stdout>,
+    id: &serde_json::Value,
+    error: &arshy_lib::ArshyError,
+) -> Result<()> {
+    write_structured_error(
+        stdout,
+        id,
+        arshy_lib::ArshyError::Ipc(format!(
+            "arshyd request timed out: {}; the operation result may be unknown and was not retried.",
+            error
+        )),
+    )
+    .await
+}
+
 /// Run the proxy on the caller's Tokio runtime.
 pub async fn run_async(config_path: Option<PathBuf>) -> Result<()> {
     let cfg = Config::load(arshy_lib::config::CliOverrides { config_path, ..Default::default() })?;
@@ -67,10 +268,12 @@ pub async fn run_async(config_path: Option<PathBuf>) -> Result<()> {
 
     // Retry connection on startup — daemon may be restarting (launchd KeepAlive).
     // 5 attempts with auto-cd validation ensures the connection is alive.
-    let (mut daemon, mut notif_rx) =
+    let (initial_daemon, initial_notif_rx) =
         connect_with_retry(&cfg, &socket_path, 5, &[500, 500, 500, 500], true)
             .await
             .map_err(|e| format_daemon_error(e, &cfg))?;
+    let mut daemon = Some(initial_daemon);
+    let mut notif_rx = Some(initial_notif_rx);
 
     let mut stdin = BufReader::new(tokio::io::stdin());
     let mut stdout = BufWriter::new(tokio::io::stdout());
@@ -99,22 +302,31 @@ pub async fn run_async(config_path: Option<PathBuf>) -> Result<()> {
     });
 
     loop {
+        append_notification_overflow_notice(daemon.as_ref(), &mut pending_notifs);
+        if !pending_notifs.is_empty() && batch_deadline.is_none() {
+            batch_deadline = Some(tokio::time::Instant::now() + batch_interval);
+        }
+
         // Build the notification future for select!
         let notif_fut = if pending_notifs.len() >= max_batch {
             // Batch full — flush immediately, then recv
             flush_batch(&mut stdout, &mut pending_notifs).await?;
             batch_deadline = None;
-            notif_rx.recv()
+            recv_notification(&mut notif_rx)
         } else if let Some(deadline) = batch_deadline {
             // Have pending notifications — wait for batch interval or more
             tokio::select! {
-                n = notif_rx.recv() => {
+                n = recv_notification(&mut notif_rx) => {
                     match n {
                         Some(notif) => {
                             pending_notifs.push(notif);
                             batch_deadline = Some(tokio::time::Instant::now() + batch_interval);
                         }
-                        None => break, // daemon disconnected
+                        None => {
+                            daemon = None;
+                            notif_rx = None;
+                            batch_deadline = None;
+                        }
                     }
                     continue;
                 }
@@ -125,7 +337,7 @@ pub async fn run_async(config_path: Option<PathBuf>) -> Result<()> {
                 }
             }
         } else {
-            notif_rx.recv()
+            recv_notification(&mut notif_rx)
         };
 
         // Main select: stdin vs notifications
@@ -167,14 +379,65 @@ pub async fn run_async(config_path: Option<PathBuf>) -> Result<()> {
                             "ping" => write_json_response(&mut stdout, &id, &serde_json::json!({})).await,
                             "tools/list" => handle_tools_list(&mut stdout, &id).await,
                             "resources/list" => {
-                                match handle_resources_list(&mut daemon, &mut stdout, &id).await {
-                                    Ok(()) => drain_pending(&mut notif_rx, &mut stdout, &mut pending_notifs, max_batch).await,
+                                if let Err(e) = ensure_daemon_ready(
+                                    &mut daemon,
+                                    &mut notif_rx,
+                                    &cfg,
+                                    &socket_path,
+                                    &mut stdout,
+                                    &mut pending_notifs,
+                                )
+                                .await
+                                {
+                                    write_structured_error(&mut stdout, &id, e).await
+                                } else {
+                                    let result = {
+                                        let mut pump = NotificationPump::new(
+                                            notif_rx.as_mut().expect("receiver ready"),
+                                            &mut pending_notifs,
+                                            &mut batch_deadline,
+                                            batch_interval,
+                                            max_batch,
+                                        );
+                                        let result = handle_resources_list(
+                                            daemon.as_mut().expect("daemon ready"),
+                                            &mut pump,
+                                            &mut stdout,
+                                            &id,
+                                        )
+                                        .await;
+                                        result
+                                    };
+                                    match result
+                                    {
+                                    Ok(()) => drain_pending(notif_rx.as_mut().expect("receiver ready"), &mut stdout, &mut pending_notifs, max_batch).await,
                                     Err(e) if is_connection_error(&e) && cfg.daemon.auto_start => {
+                                        daemon = None;
+                                        notif_rx = None;
                                         match ensure_daemon_up(&mut daemon, &mut notif_rx, &cfg, &socket_path, &mut stdout, &mut pending_notifs).await {
-                                            Ok(()) => match handle_resources_list(&mut daemon, &mut stdout, &id).await {
-                                                Ok(()) => drain_pending(&mut notif_rx, &mut stdout, &mut pending_notifs, max_batch).await,
+                                            Ok(()) => {
+                                                let result = {
+                                                    let mut pump = NotificationPump::new(
+                                                        notif_rx.as_mut().expect("receiver ready"),
+                                                        &mut pending_notifs,
+                                                        &mut batch_deadline,
+                                                        batch_interval,
+                                                        max_batch,
+                                                    );
+                                                    let result = handle_resources_list(
+                                                        daemon.as_mut().expect("daemon ready"),
+                                                        &mut pump,
+                                                        &mut stdout,
+                                                        &id,
+                                                    )
+                                                    .await;
+                                                    result
+                                                };
+                                                match result {
+                                                Ok(()) => drain_pending(notif_rx.as_mut().expect("receiver ready"), &mut stdout, &mut pending_notifs, max_batch).await,
                                                 Err(e2) => Err(e2),
-                                            },
+                                                }
+                                            }
                                             Err(_) => {
                                                 let msg = "arshyd daemon is not running or unreachable.\n\
                                                     Run `arshy daemon start` to start it.".to_string();
@@ -183,17 +446,71 @@ pub async fn run_async(config_path: Option<PathBuf>) -> Result<()> {
                                         }
                                     }
                                     Err(e) => Err(e),
+                                    }
                                 }
                             }
                             "resources/read" => {
-                                match handle_resources_read(&mut daemon, &mut stdout, &request, &id).await {
-                                    Ok(()) => drain_pending(&mut notif_rx, &mut stdout, &mut pending_notifs, max_batch).await,
+                                if let Err(e) = ensure_daemon_ready(
+                                    &mut daemon,
+                                    &mut notif_rx,
+                                    &cfg,
+                                    &socket_path,
+                                    &mut stdout,
+                                    &mut pending_notifs,
+                                )
+                                .await
+                                {
+                                    write_structured_error(&mut stdout, &id, e).await
+                                } else {
+                                    let result = {
+                                        let mut pump = NotificationPump::new(
+                                            notif_rx.as_mut().expect("receiver ready"),
+                                            &mut pending_notifs,
+                                            &mut batch_deadline,
+                                            batch_interval,
+                                            max_batch,
+                                        );
+                                        let result = handle_resources_read(
+                                            daemon.as_mut().expect("daemon ready"),
+                                            &mut pump,
+                                            &mut stdout,
+                                            &request,
+                                            &id,
+                                        )
+                                        .await;
+                                        result
+                                    };
+                                    match result
+                                    {
+                                    Ok(()) => drain_pending(notif_rx.as_mut().expect("receiver ready"), &mut stdout, &mut pending_notifs, max_batch).await,
                                     Err(e) if is_connection_error(&e) && cfg.daemon.auto_start => {
+                                        daemon = None;
+                                        notif_rx = None;
                                         match ensure_daemon_up(&mut daemon, &mut notif_rx, &cfg, &socket_path, &mut stdout, &mut pending_notifs).await {
-                                            Ok(()) => match handle_resources_read(&mut daemon, &mut stdout, &request, &id).await {
-                                                Ok(()) => drain_pending(&mut notif_rx, &mut stdout, &mut pending_notifs, max_batch).await,
+                                            Ok(()) => {
+                                                let result = {
+                                                    let mut pump = NotificationPump::new(
+                                                        notif_rx.as_mut().expect("receiver ready"),
+                                                        &mut pending_notifs,
+                                                        &mut batch_deadline,
+                                                        batch_interval,
+                                                        max_batch,
+                                                    );
+                                                    let result = handle_resources_read(
+                                                        daemon.as_mut().expect("daemon ready"),
+                                                        &mut pump,
+                                                        &mut stdout,
+                                                        &request,
+                                                        &id,
+                                                    )
+                                                    .await;
+                                                    result
+                                                };
+                                                match result {
+                                                Ok(()) => drain_pending(notif_rx.as_mut().expect("receiver ready"), &mut stdout, &mut pending_notifs, max_batch).await,
                                                 Err(e2) => Err(e2),
-                                            },
+                                                }
+                                            }
                                             Err(_) => {
                                                 let msg = "arshyd daemon is not running or unreachable.\n\
                                                     Run `arshy daemon start` to start it.".to_string();
@@ -202,26 +519,83 @@ pub async fn run_async(config_path: Option<PathBuf>) -> Result<()> {
                                         }
                                     }
                                     Err(e) => Err(e),
+                                    }
                                 }
                             }
                             "tools/call" => {
-                                let result = match handle_tool_call(&mut daemon, &mut stdout, &request, &id, &proxy_session_id).await {
+                                let result = if let Err(e) = ensure_daemon_ready(
+                                    &mut daemon,
+                                    &mut notif_rx,
+                                    &cfg,
+                                    &socket_path,
+                                    &mut stdout,
+                                    &mut pending_notifs,
+                                )
+                                .await
+                                {
+                                    write_structured_error(&mut stdout, &id, e).await
+                                } else {
+                                let result = {
+                                    let mut pump = NotificationPump::new(
+                                        notif_rx.as_mut().expect("receiver ready"),
+                                        &mut pending_notifs,
+                                        &mut batch_deadline,
+                                        batch_interval,
+                                        max_batch,
+                                    );
+                                    let result = handle_tool_call(
+                                        daemon.as_mut().expect("daemon ready"),
+                                        &mut pump,
+                                        &mut stdout,
+                                        &request,
+                                        &id,
+                                        &proxy_session_id,
+                                    )
+                                    .await;
+                                    result
+                                };
+                                match result {
                                     Ok(maybe_task_id) => {
                                         if let Some(tid) = maybe_task_id {
                                             request_tasks.insert(request_id_key(&id), tid);
                                         }
-                                        drain_pending(&mut notif_rx, &mut stdout, &mut pending_notifs, max_batch).await
+                                        drain_pending(notif_rx.as_mut().expect("receiver ready"), &mut stdout, &mut pending_notifs, max_batch).await
+                                    }
+                                    Err(e) if is_request_timeout(&e) => {
+                                        write_request_timeout_error(&mut stdout, &id, &e).await
                                     }
                                     Err(e) if is_connection_error(&e) && cfg.daemon.auto_start => {
                                         tracing::warn!("daemon connection lost, attempting reconnect...");
+                                        daemon = None;
+                                        notif_rx = None;
+                                        if retryable_tool_call(&request) {
                                         match ensure_daemon_up(&mut daemon, &mut notif_rx, &cfg, &socket_path, &mut stdout, &mut pending_notifs).await {
                                             Ok(()) => {
-                                                match handle_tool_call(&mut daemon, &mut stdout, &request, &id, &proxy_session_id).await {
+                                                let result = {
+                                                    let mut pump = NotificationPump::new(
+                                                        notif_rx.as_mut().expect("receiver ready"),
+                                                        &mut pending_notifs,
+                                                        &mut batch_deadline,
+                                                        batch_interval,
+                                                        max_batch,
+                                                    );
+                                                    let result = handle_tool_call(
+                                                        daemon.as_mut().expect("daemon ready"),
+                                                        &mut pump,
+                                                        &mut stdout,
+                                                        &request,
+                                                        &id,
+                                                        &proxy_session_id,
+                                                    )
+                                                    .await;
+                                                    result
+                                                };
+                                                match result {
                                                     Ok(maybe_task_id) => {
                                                         if let Some(tid) = maybe_task_id {
                                                             request_tasks.insert(request_id_key(&id), tid);
                                                         }
-                                                        drain_pending(&mut notif_rx, &mut stdout, &mut pending_notifs, max_batch).await
+                                                        drain_pending(notif_rx.as_mut().expect("receiver ready"), &mut stdout, &mut pending_notifs, max_batch).await
                                                     }
                                                     Err(e2) => Err(e2),
                                                 }
@@ -232,6 +606,10 @@ pub async fn run_async(config_path: Option<PathBuf>) -> Result<()> {
                                                     Connection failed after retries.".to_string();
                                                 write_structured_error(&mut stdout, &id, arshy_lib::ArshyError::DaemonUnreachable(msg)).await
                                             }
+                                        }
+                                        } else {
+                                            let _ = ensure_daemon_up(&mut daemon, &mut notif_rx, &cfg, &socket_path, &mut stdout, &mut pending_notifs).await;
+                                            write_uncertain_tool_error(&mut stdout, &id, &request).await
                                         }
                                     }
                                     Err(e) => {
@@ -247,6 +625,7 @@ pub async fn run_async(config_path: Option<PathBuf>) -> Result<()> {
                                         };
                                         write_structured_error(&mut stdout, &id, arshy_lib::ArshyError::Ipc(msg)).await
                                     }
+                                }
                                 };
                                 result
                             }
@@ -257,14 +636,40 @@ pub async fn run_async(config_path: Option<PathBuf>) -> Result<()> {
                                 if let Some(task_id) = request_tasks.remove(&request_id_key(&request_id)) {
                                     tracing::info!("cancelling task {} (request {})", task_id, request_id);
                                     let kill_params = serde_json::json!({ "task_id": &task_id });
-                                    match daemon.send_request(ipc::METHOD_KILL, kill_params).await {
+                                    if ensure_daemon_ready(&mut daemon, &mut notif_rx, &cfg, &socket_path, &mut stdout, &mut pending_notifs).await.is_err() {
+                                        tracing::warn!("cancellation result unknown: daemon is unavailable");
+                                        Ok(())
+                                    } else {
+                                    let result = {
+                                        let mut pump = NotificationPump::new(
+                                            notif_rx.as_mut().expect("receiver ready"),
+                                            &mut pending_notifs,
+                                            &mut batch_deadline,
+                                            batch_interval,
+                                            max_batch,
+                                        );
+                                        let result = pump
+                                            .send_request(
+                                                daemon.as_mut().expect("daemon ready"),
+                                                &mut stdout,
+                                                ipc::METHOD_KILL,
+                                                kill_params,
+                                                Duration::from_secs(60),
+                                            )
+                                            .await;
+                                        result
+                                    };
+                                    match result {
                                         Ok(_) => {
-                                            drain_pending(&mut notif_rx, &mut stdout, &mut pending_notifs, max_batch).await
+                                            drain_pending(notif_rx.as_mut().expect("receiver ready"), &mut stdout, &mut pending_notifs, max_batch).await
                                         }
                                         Err(e) => {
+                                            daemon = None;
+                                            notif_rx = None;
                                             tracing::error!("kill task {} failed: {}", task_id, e);
                                             Ok(())
                                         }
+                                    }
                                     }
                                 } else {
                                     tracing::debug!("cancelled unknown request {}", request_id);
@@ -308,20 +713,18 @@ pub async fn run_async(config_path: Option<PathBuf>) -> Result<()> {
                             batch_deadline = Some(tokio::time::Instant::now() + batch_interval);
                         }
                     }
-                    None => break, // daemon channel closed
+                    None => {
+                        daemon = None;
+                        notif_rx = None;
+                        batch_deadline = None;
+                    }
                 }
             }
 
             // ── Shutdown signal branch ──────────────────────────────────
             // SIGTERM from parent process triggers graceful daemon shutdown
             _ = shutdown_rx.changed() => {
-                tracing::info!("shutting down proxy, forwarding to daemon...");
-                // Best-effort: tell daemon to shut down
-                let _ = daemon.send_request_with_timeout(
-                    ipc::METHOD_SHUTDOWN,
-                    serde_json::json!({}),
-                    Duration::from_secs(2),
-                ).await;
+                tracing::info!("shutting down proxy without stopping the shared daemon");
                 break;
             }
         }
@@ -350,6 +753,35 @@ mod tests {
         assert_eq!(format_duration(Some(59999)), "60.0s");
         assert_eq!(format_duration(Some(60000)), "1.0m");
         assert_eq!(format_duration(Some(125000)), "2.1m");
+    }
+
+    #[test]
+    fn non_idempotent_tool_calls_are_not_retryable() {
+        assert!(!retryable_tool_call(&serde_json::json!({
+            "params": { "name": "arshy_exec", "arguments": { "command": "echo once" } }
+        })));
+        assert!(!retryable_tool_call(&serde_json::json!({
+            "params": { "name": "arshy_task", "arguments": { "action": "cancel" } }
+        })));
+        assert!(retryable_tool_call(&serde_json::json!({
+            "params": { "name": "arshy_query", "arguments": {} }
+        })));
+        assert!(retryable_tool_call(&serde_json::json!({
+            "params": { "name": "arshy_task", "arguments": { "action": "raw" } }
+        })));
+    }
+
+    #[test]
+    fn notification_overflow_is_exposed_as_a_query_hint() {
+        let dropped = std::sync::atomic::AtomicU64::new(7);
+        let mut pending = Vec::new();
+
+        append_notification_overflow_count(&dropped, &mut pending);
+
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].method, ipc::NOTIF_NOTIFICATION_OVERFLOW);
+        assert_eq!(pending[0].params["dropped"], 7);
+        assert_eq!(dropped.load(std::sync::atomic::Ordering::Acquire), 0);
     }
 
     #[test]
@@ -411,8 +843,13 @@ mod tests {
     fn test_is_connection_error() {
         // Connection closed
         assert!(is_connection_error(&arshy_lib::ArshyError::Ipc("connection closed".into())));
-        // Timed out
-        assert!(is_connection_error(&arshy_lib::ArshyError::Ipc("request timed out".into())));
+        // Request timeouts are distinct from a closed daemon connection.
+        assert!(!is_connection_error(&arshy_lib::ArshyError::Ipc(
+            "request 'task/run' timed out after 75s".into()
+        )));
+        assert!(is_request_timeout(&arshy_lib::ArshyError::Ipc(
+            "request 'task/run' timed out after 75s".into()
+        )));
         // Channel dropped
         assert!(is_connection_error(&arshy_lib::ArshyError::Ipc(
             "response channel dropped".into()
@@ -699,12 +1136,13 @@ mod tests {
             ],
             "total": 17
         });
-        let shaped = build_query_result(&daemon_result);
-        assert_eq!(shaped["content"][0]["text"], "17 events");
-        assert_eq!(shaped["total"], 17);
-        assert_eq!(shaped["events"].as_array().unwrap().len(), 2);
-        assert_eq!(shaped["events"][0]["task_id"], "abc-1");
-        assert_eq!(shaped["events"][1]["task_id"], "abc-2");
+        let shaped =
+            build_query_result(&daemon_result, &serde_json::json!({"limit": 2, "offset": 0}));
+        assert!(shaped["content"][0]["text"].as_str().unwrap().contains("\"total\":17"));
+        assert_eq!(shaped["structuredContent"]["total"], 17);
+        assert_eq!(shaped["structuredContent"]["events"].as_array().unwrap().len(), 2);
+        assert_eq!(shaped["structuredContent"]["events"][0]["task_id"], "abc-1");
+        assert_eq!(shaped["structuredContent"]["events"][1]["task_id"], "abc-2");
     }
 
     #[test]
@@ -715,16 +1153,15 @@ mod tests {
         });
         let shaped = build_tail_result(&daemon_result);
         assert_eq!(shaped["content"][0]["text"], "line one\nline two");
-        assert_eq!(shaped["task_id"], "t-42");
-        assert_eq!(shaped["lines"].as_array().unwrap().len(), 2);
+        assert_eq!(shaped["structuredContent"]["task_id"], "t-42");
+        assert_eq!(shaped["structuredContent"]["lines"].as_array().unwrap().len(), 2);
     }
 
     #[test]
     fn test_build_query_result_robust_to_missing_fields() {
-        let shaped = build_query_result(&serde_json::json!({}));
-        assert_eq!(shaped["content"][0]["text"], "0 events");
-        assert_eq!(shaped["total"], 0);
-        assert_eq!(shaped["events"].as_array().unwrap().len(), 0);
+        let shaped = build_query_result(&serde_json::json!({}), &serde_json::json!({}));
+        assert_eq!(shaped["structuredContent"]["total"], 0);
+        assert_eq!(shaped["structuredContent"]["events"].as_array().unwrap().len(), 0);
     }
 
     #[tokio::test]

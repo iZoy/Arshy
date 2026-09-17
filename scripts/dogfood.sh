@@ -4,7 +4,7 @@
 # Exit codes: 0 = all pass, 1 = some failures
 #
 # Usage:
-#   ./scripts/dogfood.sh                        run the 21-check suite
+#   ./scripts/dogfood.sh                        run the dogfood suite
 #   ./scripts/dogfood.sh --report               ... plus a metrics snapshot
 #   ./scripts/dogfood.sh --report-json <path>   ... plus a JSON metrics file
 #   ./scripts/dogfood.sh --report --report-json out.json   both
@@ -327,18 +327,52 @@ OUTPUT=$($ARSHY run --purpose dogfood "echo \"\$(rm -rf /)\"" --format json $CWD
 IS_BLOCKED=$(echo "$OUTPUT" | python3 -c "import json,sys; d=json.load(sys.stdin); print('yes' if d.get('status') == 'failed' or 'blocked' in str(d).lower() else 'no')" 2>/dev/null || echo "no")
 [ "$IS_BLOCKED" = "yes" ] && check "command substitution remains blocked" "pass" || check "command substitution bypassed guardrail" "fail"
 
-# ── 11. Doctor in development build ──────────────────────────────────
-echo "11. Doctor development build"
-DOCTOR_OUTPUT=$($ARSHY doctor 2>&1)
+# ── 11. Doctor JSON contract ──────────────────────────────────────────
+echo "11. Doctor JSON contract"
+DOCTOR_OUTPUT=$($ARSHY doctor --format json 2>&1)
 DOCTOR_STATUS=$?
-if [ "$DOCTOR_STATUS" -eq 0 ] && echo "$DOCTOR_OUTPUT" | grep -q "warnings"; then
-    check "doctor accepts development build with warnings" "pass"
+if [ "$DOCTOR_STATUS" -eq 0 ] \
+    && echo "$DOCTOR_OUTPUT" | grep -q '"version"' \
+    && echo "$DOCTOR_OUTPUT" | grep -q '"daemon"' \
+    && echo "$DOCTOR_OUTPUT" | grep -q '"protocol"'; then
+    check "doctor reports minimal local JSON" "pass"
 else
-    check "doctor rejects development build" "fail"
+    check "doctor JSON contract" "fail"
 fi
 
-# ── 12. Dedup (structural) ────────────────────────────────────────────
-echo "12. Dedup (structural)"
+# ── 12. Prompt contract ─────────────────────────────────────────────
+echo "12. Prompt contract"
+PROMPT_OUTPUT="$("$ARSHY" mcp config --format prompt 2>&1)"
+if printf '%s' "$PROMPT_OUTPUT" | grep -q "Arshy setup prompt v1" \
+    && printf '%s' "$PROMPT_OUTPUT" | grep -q '"args": \["mcp", "serve"\]' \
+    && printf '%s' "$PROMPT_OUTPUT" | grep -q "same machine" \
+    && printf '%s' "$PROMPT_OUTPUT" | grep -q "never overwrite it" \
+    && printf '%s' "$PROMPT_OUTPUT" | grep -q "project policy"; then
+    check "prompt contains MCP, scope, and conflict contract" "pass"
+else
+    check "prompt contract" "fail"
+fi
+if ! printf '%s' "$PROMPT_OUTPUT" | grep -qi "codex mcp add\|claude mcp add\|gemini mcp add"; then
+    check "prompt remains client-neutral" "pass"
+else
+    check "prompt leaked client-specific command" "fail"
+fi
+if ! printf '%s' "$PROMPT_OUTPUT" | grep -q "arshy:managed:start\|arshy:managed:end"; then
+    check "prompt does not force Arshy project markers" "pass"
+else
+    check "prompt still forces Arshy project markers" "fail"
+fi
+if grep -q "arshy mcp config --format prompt" README.md \
+    && grep -q "structuredContent" README.md \
+    && grep -q "arshy_task" README.md \
+    && ! grep -q "init codex\|uninit codex\|arshy:managed:start" README.md; then
+    check "README points to the generated neutral Prompt" "pass"
+else
+    check "README Prompt reference drifted" "fail"
+fi
+
+# ── 13. Dedup (structural) ────────────────────────────────────────────
+echo "13. Dedup (structural)"
 OUTPUT=$($ARSHY run --purpose dogfood "cargo test --lib --bin arshyd heuristic 2>&1 | tail -15" --format json $CWD_FLAG 2>&1)
 # Check that repeated test lines are deduplicated (hard to verify without specific input)
 # Just verify the pipeline works without crashing

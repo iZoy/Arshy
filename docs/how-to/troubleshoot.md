@@ -2,9 +2,9 @@
 
 ## Check the installation
 
-```sh
+```bash
 arshy doctor
-arshy daemon status
+arshy status
 ```
 
 Confirm both binaries are on `PATH`, the data directory is writable, and the
@@ -12,9 +12,11 @@ Unix socket exists. `arshy daemon restart` is safe when configuration changes.
 
 ## MCP client cannot start the server
 
-Run `arshy mcp config` and copy the exact JSON entry into the client's MCP
-configuration. The command must be `arshy` with args `mcp serve`; Arshy does
-not edit client files for you.
+Run `arshy mcp config --format prompt` and send the complete output to the
+Agent. It must inspect the client's native MCP configuration, stop on a
+conflict, and verify the exact command `arshy` with args `mcp serve`. For manual
+setup, copy `arshy mcp config --format json`. Arshy does not force edits to
+client files or project-rule files.
 
 ## A command is rejected
 
@@ -31,6 +33,6 @@ response reports exclusions explicitly.
 
 ## Collect a reproducible report
 
-```sh
+```bash
 ARSHY=./target/release/arshy JSON=1 scripts/measure-savings.sh
 ```

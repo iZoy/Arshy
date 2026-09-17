@@ -4,7 +4,7 @@ set -euo pipefail
 # Generic Arshy installer. It installs only the two release binaries and never
 # edits an Agent config, shell profile, GUI PATH, or workspace file.
 
-VERSION="v0.1.0-dev.1"
+VERSION="v0.1.0-alpha.1"
 INSTALL_DIR="${HOME}/.local/bin"
 DRY_RUN=0
 
@@ -14,7 +14,9 @@ Usage: install.sh [--version TAG] [--install-dir DIR] [--dry-run]
 
 Downloads a verified Arshy release for the current OS and architecture.
 After installation, configure any MCP-capable client with:
-  arshy mcp config
+  arshy mcp config --format prompt
+For manual setup, use:
+  arshy mcp config --format json
 EOF
 }
 
@@ -134,5 +136,7 @@ trap - ERR
 echo "Installed arshy and arshyd in ${INSTALL_DIR}."
 echo "If needed, add this directory to PATH:"
 echo "  export PATH=\"${INSTALL_DIR}:\$PATH\""
-echo "Generic MCP configuration:"
-"$INSTALL_DIR/arshy" mcp config
+echo "Agent-guided MCP setup (copy the output to your Agent):"
+"$INSTALL_DIR/arshy" mcp config --format prompt
+echo "Manual MCP configuration:"
+"$INSTALL_DIR/arshy" mcp config --format json

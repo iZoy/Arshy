@@ -2,8 +2,10 @@
 
 ### Does Arshy support my agent?
 
-If the client supports MCP stdio, add `arshy mcp serve` to its MCP servers.
-There is no agent allowlist or custom adapter.
+If the client supports MCP stdio, run `arshy mcp config --format prompt` and
+send the complete output to the Agent in the current project. It uses the
+client's native MCP configuration, detects conflicts, and reports any manual
+step. For a manual fallback, use `arshy mcp config --format json`.
 
 ### Does it save tokens?
 
@@ -17,5 +19,7 @@ OS/container sandbox when stronger isolation is required.
 
 ### How do I uninstall it?
 
-Remove the `arshy` MCP entry from your client and delete the two binaries from
-the install directory. Arshy does not leave hooks or generated project files.
+Remove the `arshy` MCP entry from your client, remove only any project-rule
+change the Agent explicitly made for this setup, then delete the two binaries
+from the install directory. The setup Prompt never creates hooks or shell
+shims.

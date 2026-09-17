@@ -9,7 +9,7 @@ The controls are:
 1. command filtering for dangerous command forms;
 2. optional `security.allowed_cwds` validation on every request;
 3. Unix-socket peer checks;
-4. an append-only audit log for interception and execution decisions.
+4. an append-only audit log for command filtering and execution decisions.
 
 Example:
 

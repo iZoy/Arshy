@@ -1,23 +1,22 @@
-# Install the internal v0.1.0-dev.1 candidate
+# Install v0.1.0-alpha.1
 
-Supported release targets are macOS arm64/x86_64 and Linux x86_64/aarch64.
-The installer downloads the tagged archive, verifies its SHA-256 checksum, and
-places `arshy` and `arshyd` in `~/.local/bin` by default.
+Arshy supports macOS and Linux. The installer requires Bash and a checksum
+tool, and installs only the two release binaries.
 
-```sh
-curl -fsSL https://raw.githubusercontent.com/iZoy/Arshy/main/install/install.sh \
-  | sh -s -- --version v0.1.0-dev.1
-```
+~~~bash
+curl -fsSL https://raw.githubusercontent.com/iZoy/Arshy/v0.1.0-alpha.1/install/install.sh \
+  | bash -s -- --version v0.1.0-alpha.1
+arshy doctor
+~~~
 
-Options:
+Use --dry-run to inspect the target and URL, or --install-dir to select a
+different binary directory. The installer stages both binaries and restores
+the previous pair if replacement fails.
 
-```text
---version <tag>       release tag (default v0.1.0-dev.1)
---install-dir <path>  destination (default ~/.local/bin)
---dry-run             print the resolved download without changing files
-```
+After installation, run arshy mcp config --format prompt in the intended
+project and give its complete output to the Agent. Verify the registered entry,
+then restart the client or create a new session before checking for the tools.
 
-The script never compiles the caller's current directory and never modifies
-agent configuration, shell startup files, hooks, or project files. After
-installing, add `arshy mcp serve` to the MCP client's own configuration and
-run `arshy doctor`.
+To roll back, rerun the installer with a previous release tag. To uninstall,
+remove the MCP entry and both binaries. Task history remains in the configured
+store directory and must be reviewed and removed separately if desired.

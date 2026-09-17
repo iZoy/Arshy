@@ -94,6 +94,15 @@ pub(crate) async fn write_mcp_notification<W: tokio::io::AsyncWriteExt + Unpin>(
                 "reason": notif.params["reason"].as_str().unwrap_or(""),
             }),
         ),
+        "notification/overflow" => (
+            protocol::LogLevel::Warning,
+            "arshy.transport",
+            serde_json::json!({
+                "event": "notification_overflow",
+                "dropped": notif.params["dropped"].as_u64().unwrap_or(0),
+                "hint": "Live updates were dropped; query persisted events with arshy_query.",
+            }),
+        ),
         _ => return Ok(()), // Unknown notification, skip
     };
 
@@ -280,6 +289,11 @@ pub(crate) fn notification_to_json(notif: &Notification) -> Option<serde_json::V
         "daemon/shutdown" => Some(serde_json::json!({
             "event": "shutdown",
             "reason": notif.params["reason"].as_str().unwrap_or(""),
+        })),
+        "notification/overflow" => Some(serde_json::json!({
+            "event": "notification_overflow",
+            "dropped": notif.params["dropped"].as_u64().unwrap_or(0),
+            "hint": "Live updates were dropped; query persisted events with arshy_query.",
         })),
         _ => None,
     }

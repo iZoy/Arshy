@@ -11,9 +11,11 @@ MCP client ──stdio JSON-RPC──> arshy mcp serve ──UDS──> arshyd
                                                      └─ JSONL store / events
 ```
 
-The installer places binaries only. The MCP client owns registration and
-removal. This keeps the surface thin and makes support ecosystem-independent:
-any client that can launch an MCP stdio server can use Arshy.
+The installer places binaries only. Any MCP client can use the generic
+`arshy mcp serve` entry. `arshy mcp config --format prompt` provides a
+client-neutral procedure that asks the current Agent to use its native
+registration and, when supported, make only the project-rule changes allowed by
+the current project policy. It does not introduce hooks or shell shims.
 
 The execution path returns structured events and exact byte counters. The
 analytics path (`stats`, `analyze`, `benchmark`) is separate and opt-in, so a

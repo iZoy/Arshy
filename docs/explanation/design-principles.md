@@ -39,7 +39,7 @@ arshy **不合成 cause/fix/retry 提示**。曾经存在的 HintDb（错误码 
 
 响应里的每一个增强字段都来自"命令输出 + 本地仓库状态"，不掺任何外部知识：
 
-- `root_cause` 来自输出事件本身（第一条 error 事件，traceback 场景取最后一条诊断错误）；
+- `primary_diagnostic` 来自完整错误事件集合（traceback 场景取最后一条诊断错误），不宣称因果；
 - `project_context` 来自本地 `git diff --stat HEAD~1` 与错误文件关联（`correlated_errors`）；
 - ±3 行源码上下文来自本地文件读取。
 
@@ -55,7 +55,7 @@ arshy **不合成 cause/fix/retry 提示**。曾经存在的 HintDb（错误码 
 
 ## 原则三：深度 > 广度
 
-解析器数量（37 个）是结果，不是目标。真正的投入在每个解析器的深度上：
+解析器数量（当前 38 个）是结果，不是目标。真正的投入在每个解析器的深度上：
 
 - **状态机**：npm、webpack 这类跨行块状输出有 `state_condition`/`state_transition` 的状态机，而不是一叠互不相关的正则；
 - **后处理**：rustc 上下文行吸收、diagnostic+location 配对合并——这些是为"单个错误在数据里是一个事件"服务的深度机制；
@@ -86,7 +86,7 @@ arshy **不合成 cause/fix/retry 提示**。曾经存在的 HintDb（错误码 
 
 设计判断要被量化验证，而不是靠口头辩论：
 
-- 49 组 fixture（每个解析器的 `.txt` 输入 + `.json` 期望输出）锁死解析行为，`ARSHY_BLESS=1` 可重新生成期望；
+- 60 组 fixture（每个解析器的 `.txt` 输入 + `.json` 期望输出）锁死解析行为，`ARSHY_BLESS=1` 可重新生成期望；
 - 内置 benchmark 报告压缩比、字段密度、错误定位速度（结构化事件是否比人工在原始输出里找更快）、未解析错误行数；
 - 去重折叠数、配对合并数、git 关联错误数记入任务计数器，管线质量是运行时观测值。
 
@@ -97,9 +97,9 @@ arshy **不合成 cause/fix/retry 提示**。曾经存在的 HintDb（错误码 
 | 不做 | 为什么 |
 |---|---|
 | **ML 压缩输出** | 用模型压缩输出是在结构化层引入不确定性与额外延迟；结构化提取是确定性的，可验证、可测试、可 benchmark |
-| **把 bash 变成 API** | 不发明"命令对象"或强制参数化——命令就是字符串，通过 `sh -c` 执行。透明 bash 代理（见 integration-model）说明 arshy 甚至不要求调用方改变行为 |
+| **把 bash 变成 API** | 不发明"命令对象"或强制参数化——命令就是字符串，通过 `sh -c` 执行。MCP 客户端只需调用 `arshy_exec`，不需要改写命令语义 |
 | **人用 shell** | CLI 默认输出 JSON（agent-first），renderer 模块自我声明"只用于人类观察工具：stats、benchmark、analyze"。`arshy run --format pretty` 只服务显式的人类观察场景 |
-| **强制接管** | 拦截只在满足条件时发生：工作区显式 opt-in（`.arshy.toml`）、或父进程是白名单内的 agent、且无 TTY 冲突、且非递归调用。未知进程、人类终端、`ARSHY_BYPASS=1` 一律透明放行（见 integration-model） |
+| **强制接管** | Arshy 不透明劫持 Bash；命令是否经过 `arshy_exec` 由 MCP 客户端和项目规范决定，恢复场景才允许明确的原生 shell fallback |
 | **合成 cause/fix 建议** | 见准则 2：建议是 LLM 的职责，静态 hint 表会被移出（也确实被移出了） |
 
 ## 原则如何协作：一个失败构建的例子

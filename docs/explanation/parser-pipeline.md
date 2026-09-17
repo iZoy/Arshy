@@ -48,7 +48,7 @@ flowchart LR
 
 ### 第 3 层：TOML 正则（主战场）
 
-37 个内置解析器（`parsers/builtin/*.toml`）各自是一组正则模式：每个 `[[pattern]]` 声明 `regex`、`event_type`、`severity` 和 `fields`（字段 → 捕获组编号的映射，支持 `file`/`line`/`column`/`code`/`message`，甚至 `severity` 也可以从捕获组动态取值）。模式按声明顺序匹配，**第一个命中的赢**。
+38 个内置解析器（`parsers/builtin/*.toml`）各自是一组正则模式：每个 `[[pattern]]` 声明 `regex`、`event_type`、`severity` 和 `fields`（字段 → 捕获组编号的映射，支持 `file`/`line`/`column`/`code`/`message`，甚至 `severity` 也可以从捕获组动态取值）。模式按声明顺序匹配，**第一个命中的赢**。
 
 这一层之所以是主战场，是因为它数据驱动：添加一个工具的输出格式不需要改 Rust 代码，写一个 TOML 文件即可（见 design-principles 的"可扩展 > 硬编码"）。解析器选择由工具检测决定：`[meta]` 里的 `detect`/`detect_full` 模式匹配命令文本，`min_version`/`max_version` 约束工具版本，`priority` 排序，同名用户解析器覆盖内置解析器。
 
@@ -123,7 +123,7 @@ cargo 和 Python traceback 常把"错误消息"和"位置行"分成两个相邻�
 
 - **±3 行源码上下文**：对带 location 的 error/warning 事件，异步读取源文件，取错误行前后各最多 3 行组成 `context.before`/`context.after`/`context.line`。文件读取带缓存（同一文件多个错误只读一次），越界或读不到文件静默跳过——增强失败不影响事件本身。
 - **git 变更关联**：`git diff --name-only HEAD~1` 得到"最近一次提交以来变更的文件"；`correlated_errors` 标记每个错误事件的文件是否在变更集内，`git diff --stat HEAD~1` 进入失败任务的 `project_context`。这回答了一个 agent 最常问的问题："这个错误是不是我刚改出来的？"
-- **root cause 提取**：失败时取第一个 error 事件作为根因；但 Python traceback 的第一个 error 事件是 `Traceback (most recent call last):` 横幅，真正的根因在末尾——所以 traceback 场景改为取最后一个 diagnostic error。
+- **primary diagnostic 选择**：失败时从完整 error 事件集合选择一条代表证据；Python traceback 的横幅不是有用诊断，因此该场景取最后一个 diagnostic error。这个字段不宣称因果。
 
 增强结果通过 `merge_enriched_events` 回写 store（保留原有 log 事件），随后 agent 无论从内联事件还是 `arshy_query` 拿到的都是增强后的版本。
 
@@ -141,8 +141,8 @@ cargo 和 Python traceback 常把"错误消息"和"位置行"分成两个相邻�
 
 - **TOML schema 自校验**：解析器定义加载时，正则先过 ReDoS 静态检查（拒绝嵌套量词、重叠分支+重复等灾难性回溯模式），危险正则根本进不了运行时；
 - **热重载**：文件监听器（notify）在解析器文件变更时重载 registry 并输出 diff，无需重启守护进程；
-- **Fixture 测试**：每个内置解析器配 `.txt` 输入与 `.json` 期望输出（49 组 fixture），`ARSHY_BLESS=1` 可重新生成期望；
-- **Benchmark**：内置基准在 fixture 上度量压缩比（raw token / 结构化 token）、字段密度、错误定位是否比人工看输出更快、未解析错误行数——"解析得好不好"有数字，而不是靠感觉。
+- **Fixture 测试**：每个内置解析器配 `.txt` 输入与 `.json` 期望输出（60 组 fixture），`ARSHY_BLESS=1` 可重新生成期望；
+- **Benchmark**：内置基准在 fixture 上度量结构化事件质量、字段密度和未解析错误行数；它不估算 token，也不产出通用的节省率。
 
 ## 权衡总结
 

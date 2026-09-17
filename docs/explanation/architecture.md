@@ -17,7 +17,7 @@ Cargo.toml 声明了两个二进制目标（`[[bin]]`）：
 
 `arshyd` 是"引擎"：它拥有 PTY 子进程、解析管线、JSONL 存储、事件总线与安全策略。它是唯一真正 `spawn` 命令的进程。
 
-把两者分开的收益是**生命周期解耦**：代理进程的生命周期与客户端绑定（客户端退出它就退出），守护进程的生命周期与"有没有活干"绑定。这样同一个守护进程可以被多个客户端、CLI 调用和 bash 代理共享，任务历史也不会因为代理退出而丢失。
+把两者分开的收益是**生命周期解耦**：代理进程的生命周期与客户端绑定（客户端退出它就退出），守护进程的生命周期与"有没有活干"绑定。这样同一个守护进程可以被多个 MCP 客户端和 CLI 调用，任务历史也不会因为代理退出而丢失。
 
 ## 通信拓扑：两段协议，一个消息模型
 
@@ -107,11 +107,11 @@ flowchart LR
 
 parser-backed 或生命周期敏感命令走完整链路：
 
-1. 工具检测：`parser.detect(command)` 从 37 个内置 TOML 解析器 + 用户解析器中选出工具（`parse_hint` 可强制指定）；
+1. 工具检测：`parser.detect(command)` 从 38 个内置 TOML 解析器 + 用户解析器中选出工具（`parse_hint` 可强制指定）；
 2. 创建 task（uuid task_id，写入 store，状态 running），spawn 后台执行任务；
 3. 输出逐行进入 6 层解析管线（见 parser-pipeline），事件去重、合并、存入 JSONL、发布到 EventBus；
 4. **auto 的同步耐心窗口是 60 秒**：命令在 60 秒内结束，则同步返回完整结构化结果；超过 60 秒，降级为 async——返回 `task_id` 和 `running` 状态，任务继续在守护进程里跑，agent 可以 `arshy_query`、`arshy kill` 或订阅；
-5. 完成后计算 root cause（第一个 error 事件，traceback 场景取最后一个诊断错误）、project context（`git diff --stat HEAD~1` + 错误文件与最近变更文件的关联）、±3 行源码上下文并回写 store；
+5. 完成后从完整错误事件集合选择 `primary_diagnostic`（traceback 场景取最后一个诊断错误）、计算 project context（`git diff --stat HEAD~1` + 错误文件与最近变更文件的关联）、提取 ±3 行源码上下文并回写 store；
 6. 响应里内联事件按结果裁剪：失败最多 20 条 error 事件，成功最多 5 条 warning/info 事件，超出部分用 `events_truncated` + `events_hint` 告诉 agent "去 `arshy_query` 取全量"。
 
 显式 `sync` 模式没有 60 秒耐心窗口（调用者选择了阻塞）；显式 `async` 立即返回。任何 `parse_hint` 都会强制走结构化路径——调用方声明了期望格式，就按结构化兑现。

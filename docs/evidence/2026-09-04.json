@@ -1,0 +1,169 @@
+{
+  "snapshot": {
+    "date": "2026-09-04",
+    "stamp": "20260904-084734",
+    "arshy_version": "arshy 0.1.0-dev.1",
+    "git_commit": "6dfbd4b",
+    "git_dirty_files": "42",
+    "corpus": "local daemon store at snapshot time; not a controlled benchmark corpus",
+    "platform": "Darwin-arm64",
+    "sample_size": 507,
+    "exclusions": [
+      "token estimates",
+      "typed-tool calls that never reach arshy",
+      "repair-loop inference"
+    ]
+  },
+  "stats": {
+    "avg_duration_ms": 4106.676528599605,
+    "by_status": {
+      "completed": 338,
+      "failed": 161,
+      "killed": 8,
+      "running": 0,
+      "timeout": 0
+    },
+    "context_enriched": 161,
+    "correlated_errors": 0,
+    "db_size_bytes": 5179938,
+    "dedup_collapsed": 1486,
+    "efficiency": {
+      "components": {
+        "content_convergence_pct": 0.0,
+        "dedup_reduction_pct": 5.035069291498662,
+        "diagnostic_completeness_pct": 38.92914319596798,
+        "noise_filter_pct": 39.82588218503586
+      },
+      "counters": {
+        "codes_extracted": 193,
+        "contexts_enriched": 161,
+        "dedup_collapsed_events": 1486,
+        "locations_extracted": 16152,
+        "raw_output_bytes": 1750247,
+        "skipped_noise_events": 11162,
+        "structured_output_bytes": 4809553,
+        "visible_events": 16865
+      },
+      "schema_version": "quality-v1"
+    },
+    "failure_rate": 0.3175542406311637,
+    "p50_duration_ms": 222,
+    "p99_duration_ms": 50574,
+    "parser_coverage_pct": 60.10763418632832,
+    "per_parser_usage": [
+      {
+        "count": 207,
+        "parser": "cargo"
+      },
+      {
+        "count": 132,
+        "parser": "cargo-test"
+      },
+      {
+        "count": 61,
+        "parser": "inspection"
+      },
+      {
+        "count": 20,
+        "parser": "git"
+      },
+      {
+        "count": 5,
+        "parser": "ssh"
+      },
+      {
+        "count": 4,
+        "parser": "python"
+      },
+      {
+        "count": 4,
+        "parser": "go"
+      },
+      {
+        "count": 1,
+        "parser": "npm"
+      }
+    ],
+    "purpose_breakdown": [
+      {
+        "avg_duration_ms": 213.93382352941177,
+        "failed": 85,
+        "failure_rate": 62.5,
+        "purpose": "dogfood",
+        "total": 136
+      },
+      {
+        "avg_duration_ms": 5533.66576819407,
+        "failed": 76,
+        "failure_rate": 20.485175202156334,
+        "purpose": "real",
+        "total": 371
+      }
+    ],
+    "total_codes_extracted": 193,
+    "total_contexts_enriched": 161,
+    "total_errors": 787,
+    "total_events": 28058,
+    "total_locations_extracted": 16152,
+    "total_raw_output_bytes": 1750247,
+    "total_skipped_noise_events": 11162,
+    "total_structured_output_bytes": 4809553,
+    "total_tasks": 507,
+    "total_visible_events": 16865
+  },
+  "analyze": {
+    "command_patterns": {
+      "carrier_distribution": {
+        "python": 4,
+        "script_other": 2,
+        "shell": 204,
+        "shell_composite": 297,
+        "unknown": 0
+      },
+      "unique_commands": 255
+    },
+    "efficiency": {
+      "components": {
+        "content_convergence_pct": 0.0,
+        "dedup_reduction_pct": 5.035069291498662,
+        "diagnostic_completeness_pct": 38.92914319596798,
+        "noise_filter_pct": 39.82588218503586
+      },
+      "counters": {
+        "codes_extracted": 193,
+        "contexts_enriched": 161,
+        "dedup_collapsed_events": 1486,
+        "locations_extracted": 16152,
+        "raw_output_bytes": 1750247,
+        "skipped_noise_events": 11162,
+        "structured_output_bytes": 4809553,
+        "visible_events": 16865
+      },
+      "schema_version": "quality-v1"
+    },
+    "generated_at": "2026-09-04T12:47:39.040913+00:00",
+    "information_density": {
+      "avg_fields_per_event": 4.5882814170646515,
+      "events_with_code": 193,
+      "events_with_context": 161,
+      "events_with_location": 16152,
+      "structured_event_pct": 57.897925725283336
+    },
+    "summary": {
+      "avg_tasks_per_day": 39.0,
+      "date_range_days": 13,
+      "total_errors": 787,
+      "total_events": 28058,
+      "total_tasks": 507
+    },
+    "temporal": {
+      "avg_events_per_day": 2158.3076923076924,
+      "avg_tasks_per_day": 39.0,
+      "date_range": [
+        "2026-08-22",
+        "2026-09-04"
+      ],
+      "span_days": 13
+    }
+  }
+}

@@ -1,8 +1,8 @@
 # Manage the daemon
 
-```sh
+```bash
 arshy daemon start
-arshy daemon status
+arshy status
 arshy daemon restart
 arshy daemon stop
 ```
