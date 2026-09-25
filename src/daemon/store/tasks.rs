@@ -12,7 +12,6 @@ impl super::Store {
             task: task.clone(),
             raw_output: None,
             dedup_collapsed: 0,
-            correlated_errors: 0,
             metrics: super::TaskMetrics::default(),
         };
         tasks.insert(task.task_id.clone(), record);
@@ -61,13 +60,22 @@ impl super::Store {
         duration_ms: Option<u64>,
     ) -> Result<()> {
         let mut tasks = self.lock();
-        if let Some(record) = tasks.get_mut(task_id) {
+        let updated = if let Some(record) = tasks.get_mut(task_id) {
             record.task.status = status.clone();
             record.task.exit_code = exit_code;
             record.task.duration_ms = duration_ms;
             record.task.finished_at = Some(chrono::Utc::now().to_rfc3339());
-        }
+            true
+        } else {
+            false
+        };
         drop(tasks);
+        if updated {
+            // Preserve failed final-state writes for the background or
+            // shutdown flush. Without this, a failed atomic snapshot can
+            // leave the disk copy Running while dirty remains false.
+            self.mark_dirty();
+        }
         self.persist_tasks()
     }
 
@@ -101,16 +109,10 @@ impl super::Store {
 
     /// Increment feature usage counters for a completed task.
     /// Uses additive updates so multiple calls accumulate correctly.
-    pub fn update_task_counters(
-        &self,
-        task_id: &str,
-        dedup_collapsed: u64,
-        correlated_errors: u64,
-    ) -> Result<()> {
+    pub fn update_task_counters(&self, task_id: &str, dedup_collapsed: u64) -> Result<()> {
         let mut tasks = self.lock();
         if let Some(record) = tasks.get_mut(task_id) {
             record.dedup_collapsed += dedup_collapsed;
-            record.correlated_errors += correlated_errors;
         }
         drop(tasks);
         self.mark_dirty();
@@ -220,6 +222,30 @@ mod tests {
     }
 
     #[test]
+    fn failed_status_persist_remains_dirty_and_flushable() {
+        let (store, tmp) = test_store();
+        store.insert_task(&make_task("t1", TaskStatus::Running)).unwrap();
+        store.flush().unwrap();
+        assert!(!store.dirty.load(std::sync::atomic::Ordering::Acquire));
+
+        // A directory at the atomic temp-file path makes snapshot creation
+        // fail deterministically without relying on filesystem permissions.
+        let temp_file = store.dir.join("tasks.jsonl.tmp");
+        std::fs::create_dir(&temp_file).unwrap();
+        assert!(store.update_task("t1", &TaskStatus::Completed, Some(0), Some(123)).is_err());
+        assert!(store.dirty.load(std::sync::atomic::Ordering::Acquire));
+
+        std::fs::remove_dir(&temp_file).unwrap();
+        store.flush().unwrap();
+        drop(store);
+
+        let reopened = Store::open(&tmp.path().join("test.db")).unwrap();
+        let got = reopened.get_task("t1").unwrap().unwrap();
+        assert_eq!(got.status, TaskStatus::Completed);
+        assert_eq!(got.exit_code, Some(0));
+    }
+
+    #[test]
     fn update_task_pid() {
         let (store, _t) = test_store();
         store.insert_task(&make_task("t1", TaskStatus::Running)).unwrap();
@@ -262,7 +288,7 @@ mod tests {
     fn metric_counters_update_without_error() {
         let (store, _t) = test_store();
         store.insert_task(&make_task("t1", TaskStatus::Completed)).unwrap();
-        assert!(store.update_task_counters("t1", 2, 1).is_ok());
+        assert!(store.update_task_counters("t1", 2).is_ok());
         assert!(store.update_task_raw_output_bytes("t1", 1024).is_ok());
         assert!(store.update_task_pairs_merged("t1", 3).is_ok());
     }

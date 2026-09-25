@@ -1,6 +1,6 @@
 # 系统架构：两个进程，一条执行链
 
-arshy 的架构围绕一个核心判断展开：**命令执行的"价值"与"开销"取决于命令本身，而不取决于调用方式**。短命令（`ls`、`git status`）的价值就是原始输出，任何包装都是浪费；长命令（`cargo build`、`npm test`）的价值在于错误的结构化信息，原始输出反而难以消化。
+arshy 的架构围绕一个核心判断展开：**命令执行的"价值"与"开销"取决于命令本身，而不取决于调用方式**。短命令（`ls`、`git status`）的价值是捕获文本，任何包装都是浪费；长命令（`cargo build`、`npm test`）的价值在于错误的结构化信息，整段捕获文本反而难以消化。
 
 因此 arshy 不做一个"包一层壳的 bash"，而是一个由两个进程组成的执行层：一个轻量代理负责与 AI 客户端打交道，一个常驻守护进程负责真正执行与结构化。本文解释这两个进程为什么分开、如何通信、各自如何存活，以及命令如何在其中走不同的执行路径。
 
@@ -15,7 +15,7 @@ Cargo.toml 声明了两个二进制目标（`[[bin]]`）：
 
 `arshy` 是"门面"：它作为通用 MCP server（`arshy mcp serve`）通过 stdio 与任意 MCP 客户端对话，也作为 CLI 接受 `arshy run "..."` 这类命令。它自己**不执行任何 shell 命令**，只把请求翻译成 IPC 协议转发给 `arshyd`。
 
-`arshyd` 是"引擎"：它拥有 PTY 子进程、解析管线、JSONL 存储、事件总线与安全策略。它是唯一真正 `spawn` 命令的进程。
+`arshyd` 是"引擎"：它拥有命令子进程、解析管线、JSONL 存储、事件总线与安全策略。它是唯一真正 `spawn` 命令的进程。
 
 把两者分开的收益是**生命周期解耦**：代理进程的生命周期与客户端绑定（客户端退出它就退出），守护进程的生命周期与"有没有活干"绑定。这样同一个守护进程可以被多个 MCP 客户端和 CLI 调用，任务历史也不会因为代理退出而丢失。
 
@@ -33,9 +33,9 @@ flowchart LR
 
 - **客户端 ↔ 代理（stdio）**：MCP 的 stdio transport 把代理的进程生命周期绑定到客户端进程上，客户端怎么启动、怎么退出，代理就怎么跟着走。代理不需要自己做服务发现或进程管理。
 - **代理 ↔ 守护进程（UDS + JSON Lines）**：Unix Domain Socket 让本机任意客户端都能连上同一个守护进程；JSON Lines 逐行帧与 stdio 逐行帧形态一致，代理转发几乎不需要缓冲重组。Socket 默认在 `${XDG_DATA_HOME}/arshy/arshyd.sock`，权限 `0o600`（仅属主可访问，见 security-model）。
-- **守护进程 ↔ 命令（`sh -c` 管道）**：命令以 `sh -c "<cmd>"` 子进程方式启动（`src/daemon/exec/pty.rs`），stdout/stderr 由两个异步 reader 逐行送入 channel。注意模块名叫 `pty`，但当前实现是**管道**而非真正的伪终端；`TERM=dumb` 强制工具关闭 ANSI 颜色与光标控制，保证输出逐行可解析。真正的交互式 PTY 输出（`tail -f` 场景）在事件总线上预留了 `StreamOutput` 事件，但没有任何代码路径产生它。
+- **守护进程 ↔ 命令（`sh -c` 管道）**：命令以非交互式 `sh -c "<cmd>"` 子进程启动（`src/daemon/exec/pty.rs`），stdin 接 `/dev/null`，stdout/stderr 是彼此独立的管道，由异步 reader 逐行送入 channel。它不分配真正的伪终端，不提供交互输入，也不保证程序检测到 TTY。`TERM=dumb` 是单独设置的环境变量，不能让管道变成终端。模块名 `pty` 是历史命名。交互式 PTY 未实现。
 
-守护进程启动时会探测一次用户的登录 shell 并缓存其 PATH（`user_shell_path()`），这样在 launchd 等最小 PATH 环境下启动的守护进程，依然能找到 `~/.cargo/bin`、homebrew 等目录里的工具。这解释了为什么"通过 arshy 跑的命令"和"在终端里跑的命令"行为一致。
+守护进程首次执行命令时，会用用户登录 shell 探测并缓存 PATH（`user_shell_path()`），供 `sh -c` 子进程使用。这只补充 PATH；命令本身仍不是登录 shell，其他 profile 设置、交互式功能和终端行为都不因此继承。stdin 为 EOF，且 `TERM=dumb`，所以调用者应使用非交互命令。
 
 ## 代理做了什么
 
@@ -101,7 +101,7 @@ flowchart LR
 
 ### 短路径：零开销直通
 
-`run_short()` 直接 spawn、等待、把合并后的 stdout+stderr（`_source` 标签被有意忽略，保证 `git push` 失败时的 stderr 诊断也出现在输出里）作为 `raw_output` 返回。它**跳过** store 插入、parser session 和 EventBus——这三个都是为结构化服务的。但两条例外很关键：**安全过滤和审计日志不跳过**（见 security-model 的"安全默认非可选"）。超时处理也存在：超时则 `force_kill` 并返回 timeout 状态。
+`run_short()` 直接 spawn、等待，并将 stdout/stderr 两个 reader 收到的行按 channel 到达顺序拼成 `raw_output`；每行来源标签被忽略，因此跨流相对顺序不保证。它**跳过** store 插入、parser session 和 EventBus——这三个都是为结构化服务的。但两条例外很关键：**安全过滤和审计日志不跳过**（见 security-model 的"安全默认非可选"）。超时处理也存在：超时则 `force_kill` 并返回 timeout 状态。
 
 ### 结构化路径：完整流程
 
@@ -111,7 +111,7 @@ parser-backed 或生命周期敏感命令走完整链路：
 2. 创建 task（uuid task_id，写入 store，状态 running），spawn 后台执行任务；
 3. 输出逐行进入 6 层解析管线（见 parser-pipeline），事件去重、合并、存入 JSONL、发布到 EventBus；
 4. **auto 的同步耐心窗口是 60 秒**：命令在 60 秒内结束，则同步返回完整结构化结果；超过 60 秒，降级为 async——返回 `task_id` 和 `running` 状态，任务继续在守护进程里跑，agent 可以 `arshy_query`、`arshy kill` 或订阅；
-5. 完成后从完整错误事件集合选择 `primary_diagnostic`（traceback 场景取最后一个诊断错误）、计算 project context（`git diff --stat HEAD~1` + 错误文件与最近变更文件的关联）、提取 ±3 行源码上下文并回写 store；
+5. 完成后从完整错误事件集合选择 `primary_diagnostic`（traceback 场景取最后一个诊断错误）；不读取源码文件，也不关联 Git 变更；
 6. 响应里内联事件按结果裁剪：失败最多 20 条 error 事件，成功最多 5 条 warning/info 事件，超出部分用 `events_truncated` + `events_hint` 告诉 agent "去 `arshy_query` 取全量"。
 
 显式 `sync` 模式没有 60 秒耐心窗口（调用者选择了阻塞）；显式 `async` 立即返回。任何 `parse_hint` 都会强制走结构化路径——调用方声明了期望格式，就按结构化兑现。
@@ -138,7 +138,7 @@ flowchart TD
 
 ## 一个特殊适配：macOS TCC
 
-`src/daemon/exec/cwd.rs` 处理了 macOS 的 TCC（Transparency, Consent, and Control）：TCC 会限制 PTY 子进程访问 `~/Documents`、`~/Desktop`、`~/Downloads` 等目录，即使父进程（守护进程）有权写入。解决方案是在 `/tmp/.arshy-cwd/<hash>` 建一个指向真实目录的符号链接作为子进程 cwd（符号链接继承其父目录 `/tmp` 的权限），并向环境注入 `ARSHY_CWD` 让命令知道真实路径。这是一个平台性适配，不是安全沙箱的一部分（见 security-model 的边界声明）。
+`src/daemon/exec/cwd.rs` 会识别位于 `~/Documents`、`~/Desktop`、`~/Downloads` 下的 cwd，并尝试在 `/tmp/.arshy-cwd-<uid>/` 创建一个私有符号链接作为子进程 cwd，同时注入 `ARSHY_CWD` 保存请求的真实路径。符号链接只是路径别名，不会改变目标文件权限；此方法是否改变 macOS TCC 对该进程的授权行为尚未验证，不能视为权限绕过或安全边界。
 
 ## 关键取舍
 

@@ -33,7 +33,7 @@ arshy analyze --format pretty
 ```
 
 Execution output contains structured diagnostics. Analytics are explicit and
-use the component-only quality-v1 report; no token estimate is implied.
+use the component-only quality-v2 report; no token estimate is implied.
 
 For a shareable local check, run `arshy doctor --format json`. Review the
 output before attaching it to an issue. Arshy never uploads the report.

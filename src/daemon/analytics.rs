@@ -36,7 +36,6 @@ pub struct InformationDensity {
     pub avg_fields_per_event: f64,
     pub events_with_location: u64,
     pub events_with_code: u64,
-    pub events_with_context: u64,
     pub structured_event_pct: f64,
 }
 
@@ -105,7 +104,7 @@ impl<'a> Analytics<'a> {
         Ok(ImpactReport {
             summary,
             efficiency: stats.efficiency.unwrap_or(crate::ipc::EfficiencyReport {
-                schema_version: "quality-v1".into(),
+                schema_version: "quality-v2".into(),
                 components: crate::ipc::EfficiencyComponents {
                     content_convergence_pct: None,
                     noise_filter_pct: None,
@@ -120,7 +119,6 @@ impl<'a> Analytics<'a> {
                     dedup_collapsed_events: 0,
                     locations_extracted: 0,
                     codes_extracted: 0,
-                    contexts_enriched: 0,
                 },
             }),
             information_density,
@@ -188,14 +186,12 @@ impl<'a> Analytics<'a> {
                 avg_fields_per_event: 0.0,
                 events_with_location: 0,
                 events_with_code: 0,
-                events_with_context: 0,
                 structured_event_pct: 0.0,
             };
         }
 
         let mut with_location: u64 = 0;
         let mut with_code: u64 = 0;
-        let mut with_context: u64 = 0;
         let mut field_count: u64 = 0;
 
         for ev in events {
@@ -212,24 +208,17 @@ impl<'a> Analytics<'a> {
                 fields += 1;
                 with_code += 1;
             }
-            if ev.context.is_some() {
-                fields += 1;
-                with_context += 1;
-            }
             field_count += fields;
         }
 
         // "structured" events are those with at least one enrichment field
-        let structured = events
-            .iter()
-            .filter(|e| e.location.is_some() || e.code.is_some() || e.context.is_some())
-            .count() as u64;
+        let structured =
+            events.iter().filter(|e| e.location.is_some() || e.code.is_some()).count() as u64;
 
         InformationDensity {
             avg_fields_per_event: field_count as f64 / total as f64,
             events_with_location: with_location,
             events_with_code: with_code,
-            events_with_context: with_context,
             structured_event_pct: structured as f64 / total as f64 * 100.0,
         }
     }
@@ -649,7 +638,6 @@ mod tests {
         let density = analytics.compute_information_density(&events);
         assert_eq!(density.events_with_location, 1);
         assert_eq!(density.events_with_code, 1);
-        assert_eq!(density.events_with_context, 0);
         // 50% of events have at least one enrichment field
         assert!((density.structured_event_pct - 50.0).abs() < f64::EPSILON);
     }

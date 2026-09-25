@@ -184,8 +184,7 @@ pub(crate) fn format_daemon_error(
     arshy_lib::ArshyError::DaemonUnreachable(msg)
 }
 
-/// Format milliseconds as a human-readable duration string.
-/// Examples: 500 -> "500ms", 2300 -> "2.3s", 125000 -> "2.1m"
+#[cfg(test)]
 pub(crate) fn format_duration(ms: Option<u64>) -> String {
     match ms {
         None => String::new(),

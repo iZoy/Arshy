@@ -5,8 +5,9 @@
 - Arshy is not a filesystem sandbox; allowed_cwds checks only the starting cwd.
 - Commands that exceed capture limits are drained but their retained output is
   truncated. A single line is capped before UTF-8 decoding.
-- Parser coverage varies by tool and version. Original output remains available
-  through arshy_task with action raw for structured tasks.
+- Parser coverage varies by tool and version. Captured text is available through
+  arshy_task with action raw for persisted structured tasks, subject to the
+  output limits and UTF-8/line rendering described in the IPC reference.
 - Efficiency depends on the command, client, model, and follow-up behavior. No
   fixed token-saving percentage is claimed.
 

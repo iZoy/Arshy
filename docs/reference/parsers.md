@@ -189,7 +189,7 @@ stateful 模式（`to_stateful_pattern`）只使用 `message`/`file`/`line` 捕�
 | 4.5 | `heuristic.rs` | 关键词启发式错误过滤（无工具依赖） |
 | 5 | `toml::raw_event` | raw fallback：每行一个 `log` 事件，按关键词分类 severity（error/warning/info） |
 
-其他处理阶段（任务级，`src/daemon/exec/`）：`dedup.rs`（连续相同事件折叠）、`pair_merger.rs`（rustc 风格诊断配对合并）、context 富化（±3 行源码上下文，`context/mod.rs`）、git 变更关联（`git_correlator.rs`）。
+其他处理阶段（任务级，`src/daemon/exec/`）：`dedup.rs`（连续相同事件折叠）、`pair_merger.rs`（rustc 风格诊断配对合并）。执行路径不读取源码文件，也不关联 Git 变更。
 
 ## Fixture 约定
 

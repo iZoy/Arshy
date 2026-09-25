@@ -50,11 +50,11 @@
 | `task/query` | `QueryParams`（见下） | `{"events": [...], "total": n}` | 事件查询；`task_id` 有值 → 单任务；缺省 → 跨任务搜索 |
 | `task/list` | `{"status": "string|无", "limit": u64}`（limit 默认 10） | `Task[]` | 按 `started_at` 倒序；`status_matches` 对引号容忍 |
 | `task/kill` | `{"task_id": "string"}`（缺失 → INVALID_PARAMS） | `{"task_id": ..., "status":"killed"}` | 终止任务；`read-only` 下拒绝 |
-| `task/tail` | `{"task_id": "string", "lines": u64(默认50, 0=全部), "format": "event\|raw"}` | `{"task_id": ..., "lines": ["..."]}` | 最近事件消息；`format=raw` 读取 `<store>/raw/<task_id>.txt` 原始输出 |
+| `task/tail` | `{"task_id": "string", "lines": u64(默认50, 0=全部), "format": "event\|raw"}` | `{"task_id": ..., "lines": ["..."]}` | 最近事件消息；`format=raw` 仅对持久化任务读取 `<store>/raw/<task_id>.txt` 捕获文本；无输出且无文件时返回空数组，预期输出文件缺失或读取失败时返回错误 |
 | `daemon/status` | `{}` | `{"uptime_secs", "tasks_running", "tasks_total", "db_size_bytes", "parser_count", "counters"}` | 运行状态 + 加载 parser 数 + 遥测快照 |
-| `daemon/health` | `{}` | `{"status":"ok|degraded","store_ok":bool,"tasks_running","tasks_total","uptime_secs","counters"}` | 深度健康检查（store 可用性） |
-| `daemon/prune` | `{"keep": u64}` 或 `{"older_than": u64(天)}` 或 `{}` | `{"tasks_deleted": n, "events_deleted": n}` | keep → `prune_keep`；older_than → `prune_older_than`；都无 → `prune_keep(1000)` |
-| `daemon/shutdown` | `{}` | `{"status":"shutting_down"}` | 触发 watch 关闭信号 |
+| `daemon/health` | `{}` | `{"status":"ok|degraded","store_ok":bool,"store_integrity":"ok|degraded","store_integrity_error":string|null,"tasks_running","tasks_total","uptime_secs","counters"}` | 深度健康检查（store 可用性与 JSONL 完整性；损坏详情包含路径和行号） |
+| `daemon/prune` | `{"keep": u64}` 或 `{"older_than": u64(天)}` 或 `{}` | `{"tasks_deleted": n, "events_deleted": n}` | keep → `prune_keep`；older_than → `prune_older_than`；都无 → `prune_keep(1000)`；`read-only` access level 不拦截，调用会删除保留历史 |
+| `daemon/shutdown` | `{}` | `{"status":"shutting_down"}` | 触发 watch 关闭信号；本机同 UID 的 IPC 调用不受 `read-only` access level 限制 |
 | `daemon/stats` | `{}` | `StatsResponse` | 聚合统计（JSONL store；`db_size_bytes` 为 store 文件总大小） |
 | `daemon/analyze` | `{}` | `ImpactReport` | 影响分析报告（阻塞任务内 spawn_blocking） |
 | `session/cd` | `{"command": "path"}` | `{"cwd": "<绝对路径>"}` | canonicalize 后设置该连接会话 cwd；后续 `task/run` 未带 `cwd` 时自动注入 |
@@ -78,7 +78,7 @@
 
 ### mode 语义（`src/daemon/exec/mod.rs`）
 
-- `auto` + 原始快速路径（只读检查命令且无 parse_hint）→ 同步执行，返回原始输出（兼容字段 `short_command: true`）；
+- `auto` + 原始快速路径（只读检查命令且无 parse_hint）→ 同步执行，返回捕获文本（兼容字段 `short_command: true`）；fast-path task ID 不写入 Store，不能用于后续 query/tail；
 - `auto` + 结构化路径（parser 命中或存在生命周期信号）→ 同步等待，60s 内未完成则降级为 async（返回 `status:"running"` 的 `RunResult`）；
 - `sync` → 显式同步，无限等待（由 `timeout_ms` 控制）；
 - `async` → 立即返回任务 ID，事件经通知流推送。
@@ -89,20 +89,36 @@
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
-| `task_id` | string | 任务 ID（UUID v4） |
-| `status` | enum | `running`/`completed`/`failed`/`killed`/`timeout` |
-| `exit_code` | i32 | 完成时存在 |
+| `task_id` | string | IPC 始终带任务 ID；MCP 只在运行中或输出不完整时展示 |
+| `status` | enum | `running`/`completed`/`failed`/`killed`/`timeout`；表示任务生命周期结果 |
+| `exit_code` | i32 or null | 进程退出码；运行中为 null。`completed` 表示 0，普通非零退出为 `failed`。服务终止时使用负哨兵：`-1` 表示没有数值进程码（如信号终止/worker 恢复），`-2` 表示达到执行超时，`-3` 表示后台 worker 完成了 arshy 取消；判断结果应优先看 `status` |
 | `duration_ms` | u64 | 完成时存在 |
 | `error_count` | u64 | error 事件数 |
 | `warning_count` | u64 | warning 事件数 |
-| `raw_output` | string | 原始输出：仅短命令快路径返回（`short_command=true`）；长命令同步结果为 `None`（原始输出只持久化到 `raw/<task_id>.txt`，可用 `task/tail` 的 `format: "raw"` 读取） |
+| `raw_output` | string | 当前捕获文本；经 UTF-8 替换和逐行处理，不是字节级原始输出 |
 | `short_command` | bool | 是否走了零开销快路径 |
 | `primary_diagnostic` | value | 从完整错误事件集合选择的代表诊断，不宣称因果 |
-| `project_context` | value | 项目上下文（git diff stat 等） |
 | `events` | TaskEvent[] | 内联事件：失败 ≤20 条 error、成功 ≤5 条 warning/info（daemon 追加） |
 | `event_count` | u64 | 该任务事件总数（daemon 追加） |
 | `events_truncated` | bool | 内联事件被截断时（daemon 追加） |
 | `events_hint` | string | 提示用 `arshy_query` 获取完整事件（daemon 追加） |
+
+### 输出保留与截断
+
+默认 `daemon.max_output_bytes` 为 10 MiB；两个执行路径对 stdout/stderr
+合计计数，超过上限后停止捕获后续文本但继续排空管道。结构化任务会发出
+截断事件并持久化截断标记；快路径只在返回文本中放标记。单行最多保留
+64 KiB，超长行会附截断标记；非法 UTF-8 会以替换字符呈现。未以换行结尾
+的最后一行会保留为一行。短命令一旦总量截断，会将已捕获前缀和任务记录
+落盘；超过捕获上限的字节已经丢弃。`raw_output_bytes` 统计 reader 实际读取的源字节，
+包括超出捕获上限后为排空而读取的字节，因此可大于保留文本大小；超时只
+统计截止前读取的部分。捕获文本不保证字节级重放，两个 reader 之间的相对
+顺序也不保证。
+
+结构化 `auto` 模式在 60 秒后只停止同步等待并返回 `running` 任务；后台任务
+仍按 `timeout_ms` 与 daemon 的 `max_task_duration_ms` 上限继续运行。显式
+`sync` 等待到任务终止，除非设置的执行 timeout 或 `max_task_duration_ms`
+上限触发。两者都不把 auto 的 60 秒交接时间当作执行超时。
 
 ## QueryParams（task/query）
 
@@ -151,12 +167,12 @@
 | `code` | string | 错误码（可选） |
 | `message` | string | 消息文本 |
 | `location` | object | `{"file","line","column?"}`（可选） |
-| `context` | object | `{"before":[],"line":"","after":[]}`（±3 行源码上下文，可选） |
+| `context` | object | 旧存储字段；打开存储时迁移删除，当前响应不序列化此字段 |
 | `hint` | object | `{"cause","fix?","retry?"}`；保留为空兼容占位（HintDb 已移除，`cause`/`fix` 不再生成） |
 
 ### StatsResponse
 
-`total_tasks`、`by_status`、`total_events`、`total_errors`、`purpose_breakdown`、`avg_duration_ms`、`p50_duration_ms`、`p99_duration_ms`、`failure_rate`、`db_size_bytes`、`parser_coverage_pct`、`context_enriched`、`dedup_collapsed`、`correlated_errors`、`per_parser_usage`、`total_raw_output_bytes`、`total_structured_output_bytes`、`total_visible_events`、`total_skipped_noise_events`、`total_locations_extracted`、`total_codes_extracted`、`total_contexts_enriched`、`efficiency`。可选字段缺省时省略（`skip_serializing_if`）。`efficiency` 只在显式 analytics 请求中生成，使用 `quality-v1` 分项指标，不包含 token 估算。
+`total_tasks`、`by_status`、`total_events`、`total_errors`、`purpose_breakdown`、`avg_duration_ms`、`p50_duration_ms`、`p99_duration_ms`、`failure_rate`、`db_size_bytes`、`parser_coverage_pct`、`dedup_collapsed`、`per_parser_usage`、`total_raw_output_bytes`、`total_structured_output_bytes`、`total_visible_events`、`total_skipped_noise_events`、`total_locations_extracted`、`total_codes_extracted`、`efficiency`。可选字段缺省时省略（`skip_serializing_if`）。`efficiency` 使用 `quality-v2` 分项指标；diagnostic completeness 现为 unavailable，不包含 token 估算。
 
 ## 通知（daemon → proxy）
 

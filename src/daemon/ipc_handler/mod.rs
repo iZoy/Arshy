@@ -53,10 +53,6 @@ pub struct RunResult {
     /// This is evidence selected for the agent, not a claim about causality.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub primary_diagnostic: Option<serde_json::Value>,
-    /// Project context: recent git changes, related files, etc.
-    /// Helps agent understand what changed before the command ran.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub project_context: Option<serde_json::Value>,
     /// Size of the raw PTY output in bytes (only meaningful for long commands;
     /// short commands return raw_output verbatim). Used by metrics tooling
     /// for diagnostics and offline analytics.
@@ -120,8 +116,8 @@ pub async fn handle(
     let mut line = String::new();
     // Initialize the default cwd to the daemon's startup directory. Without
     // this, a run() call from an agent that never invoked session/cd would
-    // carry cwd=None, which causes compute_enhanced_project_context to leak
-    // the daemon's git diff stat into an unrelated command result.
+    // carry cwd=None, which would run a client's command in another proxy's
+    // daemon startup directory.
     let mut default_cwd: Option<String> =
         std::env::current_dir().ok().map(|p| p.to_string_lossy().into_owned());
     loop {
@@ -424,13 +420,17 @@ async fn dispatch(
         }
         METHOD_HEALTH => {
             // Deep health check — verifies store and executor are functional.
-            let store_ok = store.list_tasks(Some("running"), 1).is_ok();
+            let task_store_ok = store.list_tasks(Some("running"), 1).is_ok();
+            let integrity_error = store.integrity_check().err().map(|error| error.to_string());
+            let store_ok = task_store_ok && integrity_error.is_none();
             let running_count =
                 store.list_tasks(Some("running"), 10_000).map(|t| t.len()).unwrap_or(0);
             let total_tasks = store.list_tasks(None, 1).map(|t| t.len()).unwrap_or(0);
             Ok(serde_json::json!({
                 "status": if store_ok { "ok" } else { "degraded" },
                 "store_ok": store_ok,
+                "store_integrity": if integrity_error.is_none() { "ok" } else { "degraded" },
+                "store_integrity_error": integrity_error,
                 "tasks_running": running_count,
                 "tasks_total": total_tasks,
                 "uptime_secs": daemon_uptime_secs(),

@@ -1,6 +1,6 @@
 # 解析管线：从字节流到事件流
 
-长命令的原始输出是"一行一行的人类文本"，而 agent 需要的是"哪里错了、错码是什么、上下文长什么样"。解析管线就是这两者之间的转换层：它把 stdout/stderr 的每一行流式地变成结构化事件（`TaskEvent`），再经过后处理与增强，最终成为可查询的执行记忆。
+长命令的捕获文本是"一行一行的人类文本"，而 agent 需要的是"哪里错了、错码是什么、上下文长什么样"。解析管线就是这两者之间的转换层：它把 stdout/stderr 的每一行流式地变成结构化事件（`TaskEvent`），再经过后处理与增强，最终成为可查询的执行记忆。
 
 管线设计有一个明确的覆盖目标（写在 `src/daemon/parser/mod.rs` 头部）：**70% 的行由 TOML 正则层处理，25% 由状态机层处理，5% 落入 crash/raw 兜底**。这个比例不是统计出来的，而是对"工具输出多大程度可预测"的假设：大多数构建工具的输出是稳定的格式（正则就够了），少数需要跨行状态（npm、webpack 的块状错误），极少数是未知崩溃（交给通用模式）。
 
@@ -84,7 +84,6 @@ flowchart LR
 | `code` | 错误码 | 如 `E0425`、语言名（crash 层） |
 | `message` | 消息文本 | 通常来自捕获组或整行 |
 | `location` | 位置 | `{ file, line, column? }`（可选） |
-| `context` | 源码上下文 | `{ before[], line, after[] }`（可选） |
 | `hint` | 提示 | **恒为 null 兼容占位**，见下文"为什么不做 cause/fix" |
 
 事件持久化为 `events/<task_id>.jsonl`（每行一个 JSON 事件），查询时默认**排除 log 事件**（`include_logs=false`）——原始行不是 agent 想要的东西，结构化事件才是。
@@ -99,7 +98,7 @@ flowchart LR
 
 ### RustcContextMerger：把上下文行吸收进诊断
 
-rustc 风格的诊断会把 `= note:`、`= help:`、`  |` 管道标记、`N | 源码行`、`^^^` 光标标记作为独立行输出。这些行单独成事件是噪音——它们只对前一条诊断有意义。合并器把它们缓冲并附加到前一条 diagnostic 的 `context.after`，同时过滤纯装饰行（空管道、纯 `^^^`/`---`、`-->` 箭头、ANSI 时间戳、孤立 `}`）。结果：一次"mismatched types"错误在事件里是一个带源码上下文的诊断，而不是五六条碎片事件。
+rustc 风格的诊断会把 `= note:`、`= help:`、管道标记、源码行和光标标记作为相邻输出。解析器会过滤纯装饰行并合并诊断与位置；原始输出仍可通过 `arshy_task(action:"raw")` 获取。解析器不把源码切片加入事件或执行响应。
 
 ### GenericPairMerger：诊断与位置配对
 
@@ -114,24 +113,18 @@ cargo 和 Python traceback 常把"错误消息"和"位置行"分成两个相邻�
 1. **整体 JSON 探测**（见第 1 层）；
 2. **stateful `on_complete`**：状态机基于退出码补发最终事件；
 3. **任务状态判定**：退出码 0 → completed；非 0 → failed；超时 → timeout；被杀 → killed；
-4. **raw output 落盘**：完整原始输出存 `raw/<task_id>.txt`，供 `tail` 和失败恢复使用；
-5. **事件统计**：去重折叠数、配对合并数、与 git 关联的错误数都记入任务计数器——这些数字本身是管线质量的观测数据。
+4. **捕获文本落盘**：结构化任务的捕获文本存入 `raw/<task_id>.txt`，受总量和单行上限约束，并经过 UTF-8 replacement/逐行处理；短命令只有发生截断时才保存任务与已捕获输出，以便按需读取。超出捕获上限的字节会被丢弃；
+5. **事件统计**：去重折叠数、配对合并数等记入任务计数器。
 
-## 上下文增强：±3 行源码与 git 关联
+## 代表诊断
 
-`src/daemon/context/mod.rs` 与 `src/daemon/context/git_correlator.rs` 在事件流定型后做最后一轮增强：
-
-- **±3 行源码上下文**：对带 location 的 error/warning 事件，异步读取源文件，取错误行前后各最多 3 行组成 `context.before`/`context.after`/`context.line`。文件读取带缓存（同一文件多个错误只读一次），越界或读不到文件静默跳过——增强失败不影响事件本身。
-- **git 变更关联**：`git diff --name-only HEAD~1` 得到"最近一次提交以来变更的文件"；`correlated_errors` 标记每个错误事件的文件是否在变更集内，`git diff --stat HEAD~1` 进入失败任务的 `project_context`。这回答了一个 agent 最常问的问题："这个错误是不是我刚改出来的？"
-- **primary diagnostic 选择**：失败时从完整 error 事件集合选择一条代表证据；Python traceback 的横幅不是有用诊断，因此该场景取最后一个 diagnostic error。这个字段不宣称因果。
-
-增强结果通过 `merge_enriched_events` 回写 store（保留原有 log 事件），随后 agent 无论从内联事件还是 `arshy_query` 拿到的都是增强后的版本。
+失败时从完整 error 事件集合选择一条代表诊断；Python traceback 会跳过横幅并选取最后一条 diagnostic error。响应只带解析到的严重级别、位置和错误码，不附源码切片或 Git 工作区摘要，也不宣称错误成因。
 
 ## 为什么不做 cause/fix 合成
 
-这是管线设计中最刻意的克制，代码注释直言不讳：**arshy 的职责是结构化提取——severity、file:line、错误码、源码上下文——而不是建议**。曾经存在的 HintDb（错误码 → cause/fix/retry 映射表，`parsers/errors/*.toml`）已被移除：
+这是管线设计中最刻意的克制：**arshy 的职责是结构化提取——severity、file:line、错误码——而不是建议**。曾经存在的 HintDb（错误码 → cause/fix/retry 映射表，`parsers/errors/*.toml`）已被移除：
 
-- 失败的原始输出已经"自己会说话"，arshy 只负责指出错误**在哪**；
+- 失败命令的输出通常带有有用上下文；arshy 负责抽取结构，同时提供受限的捕获文本查看能力；
 - 解释错误、给出修复方案是 LLM 的工作——它比任何静态映射都更了解项目的上下文；
 - 静态 hint 表会过期、会与项目状态脱节，却以"权威"姿态出现在结构化数据里，误导性最强。
 
@@ -151,6 +144,5 @@ cargo 和 Python traceback 常把"错误消息"和"位置行"分成两个相邻�
 | 逐行流式 vs 整体解析 | 两者都要 | 流式支持实时事件与超长输出；整体 JSON 探测补足跨行结构 |
 | 正则优先 vs 状态机优先 | 状态机在前 | 状态机依赖顺序，先让它消费它认识的块；单行正则其次 |
 | 工具特定 vs 通用 | 工具特定为主，通用兜底 | 精确度优先（70% 目标），通用层保证覆盖面 |
-| 合并 vs 原样保留 | 合并后原样可查 | 展示用合并（少 token），`raw/<id>.txt` 保留原始输出兜底 |
-| 上下文增强失败 | 静默跳过 | 增强是锦上添花，不能因为读文件失败破坏事件流 |
+| 合并 vs 捕获文本 | 合并后可查 | 展示用合并（少 token），`raw/<id>.txt` 保留上限内的捕获文本 |
 | hint/cause/fix | 不做 | 结构与建议分开，建议是 LLM 的职责 |

@@ -35,6 +35,11 @@ pub(crate) fn is_success_summary(line: &str) -> bool {
     if lower.starts_with("test result: ok") {
         return true;
     }
+    // Rust's test harness prints passing test names as
+    // `test module::failed_keyword ... ok`; keywords in the name aren't errors.
+    if lower.starts_with("test ") && lower.ends_with(" ... ok") {
+        return true;
+    }
     let has_zero_failure = ["0 failed", "0 failures", "failed: 0", "failures: 0"]
         .iter()
         .any(|needle| lower.contains(needle));
@@ -207,6 +212,12 @@ mod tests {
         .is_none());
         assert!(try_parse_heuristic("Tests: 0 failed, 12 passed, 12 total").is_none());
         assert!(try_parse_heuristic("FAILED: 2/15 tests").is_some());
+    }
+
+    #[test]
+    fn passing_rust_test_names_with_error_keywords_are_not_errors() {
+        assert!(try_parse_heuristic("test daemon::parser::failed_keyword ... ok").is_none());
+        assert!(try_parse_heuristic("test daemon::parser::panic_keyword ... ok").is_none());
     }
 
     #[test]

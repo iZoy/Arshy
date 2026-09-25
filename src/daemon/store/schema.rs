@@ -4,7 +4,7 @@ impl super::Store {
     /// Ensure storage directories exist. Replaces the old CREATE TABLE statements.
     pub fn initialize_schema(&self) -> Result<()> {
         let events_dir = self.dir.join("events");
-        std::fs::create_dir_all(&events_dir)?;
+        super::ensure_private_dir(&events_dir)?;
         Ok(())
     }
 
@@ -62,13 +62,11 @@ impl super::Store {
         let mut total_events: u64 = 0;
         let mut total_errors: u64 = 0;
         let mut dedup_total: u64 = 0;
-        let mut correlated_total: u64 = 0;
         let mut total_raw_output_bytes: u64 = 0;
         let mut total_visible_events: u64 = 0;
         let mut total_skipped_noise_events: u64 = 0;
         let mut total_locations_extracted: u64 = 0;
         let mut total_codes_extracted: u64 = 0;
-        let mut total_contexts_enriched: u64 = 0;
         let mut total_structured_output_bytes: u64 = 0;
         let mut parser_usage: std::collections::HashMap<String, u64> =
             std::collections::HashMap::new();
@@ -87,13 +85,11 @@ impl super::Store {
             total_events += record.task.events_count;
             total_errors += record.task.error_count;
             dedup_total += record.dedup_collapsed;
-            correlated_total += record.correlated_errors;
             total_raw_output_bytes += record.metrics.raw_output_bytes;
             total_visible_events += record.metrics.visible_events;
             total_skipped_noise_events += record.metrics.skipped_noise_events;
             total_locations_extracted += record.metrics.locations_extracted;
             total_codes_extracted += record.metrics.codes_extracted;
-            total_contexts_enriched += record.metrics.contexts_enriched;
 
             total_structured_output_bytes += record.metrics.structured_events_bytes;
 
@@ -102,16 +98,14 @@ impl super::Store {
             }
         }
 
-        // Use pre-computed TaskMetrics for parser coverage and context.
+        // Use pre-computed TaskMetrics for parser coverage.
         // Falls back to scanning event files only when metrics are zero (legacy data).
         let needs_scan = total_visible_events == 0 && total_skipped_noise_events == 0;
         let mut parser_coverage_non_log = total_visible_events;
-        let mut context_count = total_contexts_enriched;
 
         let events_dir = self.dir.join("events");
         if needs_scan && events_dir.exists() {
             parser_coverage_non_log = 0;
-            context_count = 0;
             for entry in std::fs::read_dir(&events_dir)? {
                 let entry = entry?;
                 let path = entry.path();
@@ -127,9 +121,6 @@ impl super::Store {
                     if let Ok(event) = serde_json::from_str::<crate::ipc::TaskEvent>(line) {
                         if event.event_type != "log" {
                             parser_coverage_non_log += 1;
-                        }
-                        if event.context.is_some() {
-                            context_count += 1;
                         }
                     }
                 }
@@ -180,8 +171,6 @@ impl super::Store {
         }
         let db_size = Some(total);
 
-        let context_enriched = if context_count > 0 { Some(context_count) } else { None };
-
         let per_parser_usage = if parser_usage.is_empty() {
             None
         } else {
@@ -189,7 +178,7 @@ impl super::Store {
                 .into_iter()
                 .map(|(parser, count)| crate::ipc::ParserCount { parser, count })
                 .collect();
-            list.sort_by(|a, b| b.count.cmp(&a.count));
+            list.sort_by_key(|parser| std::cmp::Reverse(parser.count));
             list.truncate(10);
             Some(list)
         };
@@ -206,9 +195,7 @@ impl super::Store {
             failure_rate,
             db_size_bytes: db_size,
             parser_coverage_pct,
-            context_enriched,
             dedup_collapsed: Some(dedup_total),
-            correlated_errors: Some(correlated_total),
             per_parser_usage,
             total_raw_output_bytes: if total_raw_output_bytes > 0 {
                 Some(total_raw_output_bytes)
@@ -240,13 +227,7 @@ impl super::Store {
             } else {
                 None
             },
-            total_contexts_enriched: if total_contexts_enriched > 0 {
-                Some(total_contexts_enriched)
-            } else {
-                None
-            },
             efficiency: Some(build_efficiency_report(
-                &tasks,
                 total_raw_output_bytes,
                 total_structured_output_bytes,
                 total_visible_events,
@@ -254,7 +235,6 @@ impl super::Store {
                 dedup_total,
                 total_locations_extracted,
                 total_codes_extracted,
-                total_contexts_enriched,
             )),
         })
     }
@@ -262,7 +242,6 @@ impl super::Store {
 
 #[allow(clippy::too_many_arguments)]
 fn build_efficiency_report(
-    _tasks: &std::collections::HashMap<String, super::TaskRecord>,
     raw_output_bytes: u64,
     structured_output_bytes: u64,
     visible_events: u64,
@@ -270,7 +249,6 @@ fn build_efficiency_report(
     dedup_collapsed_events: u64,
     locations_extracted: u64,
     codes_extracted: u64,
-    contexts_enriched: u64,
 ) -> crate::ipc::EfficiencyReport {
     let pct = |numerator: u64, denominator: u64| {
         (denominator > 0).then_some(numerator as f64 * 100.0 / denominator as f64)
@@ -278,16 +256,6 @@ fn build_efficiency_report(
     let content = pct(raw_output_bytes.saturating_sub(structured_output_bytes), raw_output_bytes)
         .map(|v| v.clamp(0.0, 100.0));
     let noise = pct(skipped_noise_events, visible_events + skipped_noise_events);
-    let diagnostic = if visible_events > 0 {
-        Some(
-            (locations_extracted as f64 / visible_events as f64 * 40.0
-                + contexts_enriched as f64 / visible_events as f64 * 35.0
-                + codes_extracted as f64 / visible_events as f64 * 25.0)
-                .clamp(0.0, 100.0),
-        )
-    } else {
-        None
-    };
     let dedup = pct(
         dedup_collapsed_events,
         total_event_count(visible_events, skipped_noise_events) + dedup_collapsed_events,
@@ -295,11 +263,11 @@ fn build_efficiency_report(
     let components = crate::ipc::EfficiencyComponents {
         content_convergence_pct: content,
         noise_filter_pct: noise,
-        diagnostic_completeness_pct: diagnostic,
+        diagnostic_completeness_pct: None,
         dedup_reduction_pct: dedup,
     };
     crate::ipc::EfficiencyReport {
-        schema_version: "quality-v1".into(),
+        schema_version: "quality-v2".into(),
         components,
         counters: crate::ipc::EfficiencyCounters {
             raw_output_bytes,
@@ -309,7 +277,6 @@ fn build_efficiency_report(
             dedup_collapsed_events,
             locations_extracted,
             codes_extracted,
-            contexts_enriched,
         },
     }
 }
@@ -393,25 +360,12 @@ mod tests {
 
     #[test]
     fn quality_report_exposes_components_without_aggregate_score() {
-        let mut task = make_task("t1", "cargo test", TaskStatus::Completed);
-        task.events_count = 2;
-        let record = super::super::TaskRecord {
-            task,
-            metrics: super::super::TaskMetrics {
-                raw_output_bytes: 100,
-                structured_events_bytes: 50,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let mut tasks = std::collections::HashMap::new();
-        tasks.insert("t1".into(), record);
-        let report = build_efficiency_report(&tasks, 100, 50, 2, 2, 1, 2, 2, 2);
+        let report = build_efficiency_report(100, 50, 2, 2, 1, 2, 2);
 
-        assert_eq!(report.schema_version, "quality-v1");
+        assert_eq!(report.schema_version, "quality-v2");
         assert_eq!(report.components.content_convergence_pct, Some(50.0));
         assert_eq!(report.components.noise_filter_pct, Some(50.0));
-        assert_eq!(report.components.diagnostic_completeness_pct, Some(100.0));
+        assert_eq!(report.components.diagnostic_completeness_pct, None);
         assert_eq!(report.components.dedup_reduction_pct, Some(20.0));
     }
 
@@ -469,12 +423,11 @@ mod tests {
         task2.parser_name = Some("tsc".into());
         store.insert_task(&task2).unwrap();
 
-        store.update_task_counters("t1", 5, 2).unwrap();
-        store.update_task_counters("t2", 0, 0).unwrap();
+        store.update_task_counters("t1", 5).unwrap();
+        store.update_task_counters("t2", 0).unwrap();
 
         let stats = store.get_stats().unwrap();
         assert_eq!(stats.dedup_collapsed, Some(5));
-        assert_eq!(stats.correlated_errors, Some(2));
 
         let parsers = stats.per_parser_usage.unwrap();
         assert_eq!(parsers.len(), 2);
@@ -488,7 +441,7 @@ mod tests {
     fn update_task_counters_noop_for_missing() {
         let (store, _tmp) = test_store();
         // Should not error for nonexistent task
-        store.update_task_counters("nonexistent", 10, 5).unwrap();
+        store.update_task_counters("nonexistent", 10).unwrap();
     }
 
     #[test]

@@ -6,7 +6,6 @@ use arshy_lib::daemon::{
 };
 use arshy_lib::Result;
 use std::sync::Arc;
-use tokio::net::UnixListener;
 use tokio::sync::watch;
 
 #[tokio::main]
@@ -58,13 +57,12 @@ async fn main() -> Result<()> {
             std::process::exit(1);
         }
     }
-    lifecycle::write_pid()?;
-
     let socket_path = cfg.daemon.expanded_socket_path();
     if let Some(parent) = socket_path.parent() {
         tokio::fs::create_dir_all(parent).await?;
     }
-    lifecycle::cleanup_stale_socket(&socket_path);
+    lifecycle::cleanup_stale_socket(&socket_path)?;
+    lifecycle::write_pid()?;
 
     // ── Store (JSONL) ───────────────────────────────────────────────────────────
     let store_dir = cfg.store.expanded_store_dir();
@@ -95,7 +93,7 @@ async fn main() -> Result<()> {
         }
     }
 
-    // Clean up stale /tmp/.arshy-cwd/ symlinks from previous sessions
+    // Clean up stale legacy and per-UID cwd symlinks from previous sessions.
     store::prune::cleanup_stale_symlinks();
 
     // Probe user's login shell PATH once (cached globally).
@@ -161,14 +159,7 @@ async fn main() -> Result<()> {
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
     // ── Accept loop ────────────────────────────────────────────────────────
-    let _ = tokio::fs::remove_file(&socket_path).await;
-    let listener = UnixListener::bind(&socket_path)?;
-    // Restrict socket to owner-only — prevents unauthorized local access
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&socket_path, std::fs::Permissions::from_mode(0o600))?;
-    }
+    let listener = lifecycle::bind_private_socket(&socket_path)?;
     // Signal a proxy waiting in `start_daemon` that the listener is ready.
     // The lock is scoped to this socket and is intentionally removed only
     // after a successful bind.
@@ -294,7 +285,7 @@ async fn wait_shutdown(mut rx: watch::Receiver<bool>) {
 
 /// Returns `true` if the peer of `stream` runs under the same effective UID as
 /// this process. Connections from other local users are rejected — defense in
-/// depth so that even a 0600 socket can't be abused by a different local user
+/// depth so an owner-only socket can't be abused by a different local user
 /// (e.g. a spawned child or another session).
 #[cfg(unix)]
 fn peer_uid_allowed(stream: &tokio::net::UnixStream) -> bool {

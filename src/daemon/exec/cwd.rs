@@ -1,4 +1,4 @@
-//! CWD accessibility — macOS TCC detection and `/tmp/.arshy-cwd` symlink fallback.
+//! CWD accessibility — macOS TCC path detection and a private symlink fallback.
 
 use std::collections::HashMap;
 
@@ -13,7 +13,7 @@ fn is_tcc_restricted(path: &std::path::Path) -> bool {
     #[cfg(not(target_os = "macos"))]
     {
         let _ = path;
-        return false;
+        false
     }
     #[cfg(target_os = "macos")]
     {
@@ -31,36 +31,53 @@ fn is_tcc_restricted(path: &std::path::Path) -> bool {
     }
 }
 
-/// Create a symlink at `/tmp/.arshy-cwd/<hash>` pointing to `real_cwd`.
-/// This bypasses macOS TCC restrictions because symlinks inherit the parent
-/// directory's permissions, not the target's.
+/// Create a private, per-execution symlink to `real_cwd`.
+///
+/// The symlink provides an alternate path name; it does not change filesystem
+/// permissions. Whether it changes macOS TCC behavior for the spawned process
+/// has not been verified and must not be treated as a security boundary.
 ///
 /// Returns the symlink path (to use as PTY cwd) if successful.
 fn create_cwd_symlink(real_cwd: &std::path::Path) -> Option<std::path::PathBuf> {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
+    // Use a per-user directory and reject pre-existing paths owned by another
+    // user or symlinks. `/tmp` is shared, so create_dir_all alone is unsafe.
+    // SAFETY: geteuid has no preconditions and only reads the effective uid.
+    let uid = unsafe { libc::geteuid() };
+    let symlink_dir = std::path::PathBuf::from(format!("/tmp/.arshy-cwd-{uid}"));
+    create_private_cwd_symlink(&symlink_dir, real_cwd, uid)
+}
 
-    let mut hasher = DefaultHasher::new();
-    real_cwd.hash(&mut hasher);
-    let hash = format!("{:016x}", hasher.finish());
+fn create_private_cwd_symlink(
+    symlink_dir: &std::path::Path,
+    real_cwd: &std::path::Path,
+    uid: u32,
+) -> Option<std::path::PathBuf> {
+    use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
 
-    let symlink_dir = std::path::PathBuf::from("/tmp/.arshy-cwd");
-    let symlink_path = symlink_dir.join(&hash);
-
-    std::fs::create_dir_all(&symlink_dir).ok()?;
-
-    // Remove stale symlink if it points somewhere else
-    if symlink_path.exists() || symlink_path.symlink_metadata().is_ok() {
-        let _ = std::fs::remove_file(&symlink_path);
+    match std::fs::DirBuilder::new().mode(0o700).create(symlink_dir) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(_) => return None,
     }
 
+    let metadata = std::fs::symlink_metadata(symlink_dir).ok()?;
+    if !metadata.file_type().is_dir() || metadata.uid() != uid {
+        tracing::warn!("refusing unsafe cwd symlink directory {:?}", symlink_dir);
+        return None;
+    }
+    std::fs::set_permissions(symlink_dir, std::fs::Permissions::from_mode(0o700)).ok()?;
+
+    // A fresh name prevents concurrent commands from replacing or cleaning up
+    // each other's cwd link. The private directory limits access to this uid.
+    let symlink_path = symlink_dir.join(uuid::Uuid::new_v4().to_string());
     std::os::unix::fs::symlink(real_cwd, &symlink_path).ok()?;
     Some(symlink_path)
 }
 
 /// Prepare a working directory for PTY execution. If the target directory is
-/// in a macOS TCC-restricted location, creates a symlink fallback and injects
-/// ARSHY_CWD into the environment so the command knows the real path.
+/// in a macOS TCC-protected location, creates a symlink path alias and injects
+/// ARSHY_CWD so the command can discover the requested path. This does not
+/// guarantee that macOS TCC will grant access through the alias.
 ///
 /// Returns (effective_cwd, fallback_path_to_cleanup).
 pub(crate) fn prepare_cwd(
@@ -72,7 +89,7 @@ pub(crate) fn prepare_cwd(
         return (None, None);
     }
 
-    // Directory is in a TCC-restricted location — create symlink fallback
+    // Directory matches the TCC-protected path heuristic — create a path alias.
     tracing::info!(
         "cwd {:?} is in a TCC-restricted directory, creating symlink fallback",
         real_cwd
@@ -89,4 +106,34 @@ pub(crate) fn prepare_cwd(
 
     tracing::info!("cwd fallback: {:?} -> {:?}", real_cwd, symlink);
     (Some(symlink.clone()), Some(symlink))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    #[test]
+    fn cwd_fallback_uses_private_directory_and_unique_links() {
+        let target = tempfile::tempdir().unwrap();
+        let temp = tempfile::tempdir().unwrap();
+        let directory = temp.path().join("private-cwd");
+        // SAFETY: geteuid has no preconditions and only reads the effective uid.
+        let uid = unsafe { libc::geteuid() };
+        let first = create_private_cwd_symlink(&directory, target.path(), uid).unwrap();
+        let second = create_private_cwd_symlink(&directory, target.path(), uid).unwrap();
+
+        assert_ne!(first, second, "concurrent executions need distinct cwd links");
+        assert_eq!(std::fs::read_link(&first).unwrap(), target.path());
+        assert_eq!(std::fs::read_link(&second).unwrap(), target.path());
+
+        let metadata = std::fs::symlink_metadata(&directory).unwrap();
+        // SAFETY: geteuid has no preconditions and only reads the effective uid.
+        assert_eq!(metadata.uid(), unsafe { libc::geteuid() });
+        assert_eq!(metadata.permissions().mode() & 0o777, 0o700);
+
+        std::fs::remove_file(first).unwrap();
+        std::fs::remove_file(second).unwrap();
+        std::fs::remove_dir(directory).unwrap();
+    }
 }

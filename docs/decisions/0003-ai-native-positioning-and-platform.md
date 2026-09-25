@@ -1,7 +1,6 @@
 # ADR-0003: AI-native 定位：默认 agent、保留人类通道、Unix-like only
 
 - **状态**:已采纳（2026-08-22）
-- **关联决策**:审计分歧 5、6
 - **相关代码**:`src/cli/tasks.rs`、`README.md`、`docs/tutorials/install.md`
 
 ## 背景
@@ -11,7 +10,7 @@ arshy 的 CLI 默认输出 JSON（agent-first），但 `--format pretty` 曾调�
 ## 决策
 
 1. **AI-native 是唯一默认**：`arshy run` 默认输出 JSON；`--format pretty` 保留给显式的人类观察，`auto` 仅在 stdout 是真实终端时输出人类可读文本（`render_run_text`），否则 JSON；
-2. 人类不是目标用户，但**功能保留**（pretty / stats / benchmark / analyze），不删除；
+2. Agent 是主要使用场景，同时保留人类可用的 CLI 和 pretty 输出；
 3. **平台 Unix-like only**：仅支持 macOS / Linux；Windows 原生不支持，暂无 WSL 支持计划（WSL2 内运行属于 Linux 环境，按 Linux 对待）。文档同步修正。
 
 ## 理由

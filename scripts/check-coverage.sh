@@ -4,18 +4,18 @@ set -euo pipefail
 LCOV="${1:-lcov.info}"
 [[ -f "$LCOV" ]] || { echo "coverage file not found: $LCOV" >&2; exit 1; }
 
-# Keep local and CI worktrees free of raw LLVM profiles left by subprocesses.
-find . -maxdepth 1 -type f -name '*.profraw' -delete
-trap 'find . -maxdepth 1 -type f -name "*.profraw" -delete' EXIT
-
 python3 - "$LCOV" <<'PY'
 import sys
+from pathlib import PurePosixPath
 path = sys.argv[1]
-critical = ("src/daemon/parser/", "src/daemon/exec/", "src/daemon/ipc_handler/",
-            "src/daemon/security/", "src/proxy/")
+critical = tuple(
+    tuple(part.strip("/").split("/"))
+    for part in ("src/daemon/parser/", "src/daemon/exec/", "src/daemon/ipc_handler/",
+                 "src/daemon/security/", "src/proxy/")
+)
 totals = {"all": [0, 0], "critical": [0, 0]}
 current = ""
-for line in open(path):
+for line in open(path, encoding="utf-8"):
     line = line.strip()
     if line.startswith("SF:"):
         current = line[3:]
@@ -25,7 +25,9 @@ for line in open(path):
         hit = int(hits) > 0
         totals["all"][0] += 1
         totals["all"][1] += hit
-        if any(part in current for part in critical):
+        source = PurePosixPath(current.replace("\\", "/")).parts
+        if any(source[i:i + len(prefix)] == prefix
+               for prefix in critical for i in range(len(source) - len(prefix) + 1)):
             totals["critical"][0] += 1
             totals["critical"][1] += hit
 
@@ -34,10 +36,7 @@ def pct(pair):
 
 for name, pair in totals.items():
     value = pct(pair)
-    # Provisional internal-candidate gate. Entry-point/IPC transport branches
-    # require process-level tests that are intentionally kept out of this
-    # first candidate; raise both thresholds after the release test matrix is
-    # expanded.
+    # Keep the published CI gate explicit and consistent across both scopes.
     threshold = 75.0
     print(f"{name} line coverage: {value:.2f}% (required {threshold:.0f}%)")
     if value < threshold:

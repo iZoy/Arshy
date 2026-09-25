@@ -4,10 +4,10 @@ use super::protocol::ToolDefinition;
 
 /// Return the default MCP instructions (plain string per MCP spec).
 pub fn default_instructions() -> String {
-    "Route shell commands through arshy_exec(command:\"<cmd>\") instead of raw Bash; fall back \
-     only when arshy is unreachable. mode:\"auto\" returns inspection output directly and parser-backed \
-     commands as structured diagnostics. Pass cwd explicitly when needed. Use arshy_query for persisted \
-     diagnostics and arshy_task only for cancellation, task listing, or original output."
+    "Use arshy_exec for shell commands. It runs non-interactive sh -c with null stdin and separate \
+     stdout/stderr pipes (no PTY). Pass cwd when needed. mode=auto returns short inspection output \
+     inline and parses configured tools; mode=async returns a task handle. Use arshy_query for saved \
+     diagnostics and arshy_task for raw output, cancellation, or listing."
         .into()
 }
 
@@ -20,51 +20,52 @@ pub fn tool_definitions() -> Vec<ToolDefinition> {
     vec![
         ToolDefinition {
             name: "arshy_exec".into(),
-            description: "Execute one shell command. mode:\"auto\" (default) returns read-only \
-                         inspection output directly and parser-backed commands as structured \
-                         diagnostics with file, line, and code."
+            description: "Run one non-interactive sh -c command (null stdin, separate stdout/stderr, no PTY). \
+                         Pass cwd, timeout_ms, or env as needed. auto selects inline inspection or parsed output; \
+                         async returns a task handle."
                 .into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "command": {"type":"string","description":"Shell command to execute"},
-                    "cwd": {"type":"string","description":"Absolute working directory for this command"},
-                    "timeout_ms": {"type":"integer","description":"Timeout in ms"},
+                    "command": {"type":"string","description":"Command for sh -c"},
+                    "cwd": {"type":"string","description":"Working directory"},
+                    "timeout_ms": {"type":"integer","description":"Execution timeout"},
                     "mode": {"type":"string","enum":["auto","async"],"default":"auto",
-                             "description":"auto: choose the lowest-overhead safe path; async: return a task id immediately"},
-                    "env": {"type":"object","description":"Environment variables as key-value pairs"}
+                             "description":"auto: inline or parsed; async: return a task handle"},
+                    "env": {"type":"object","description":"Environment overrides"}
                 },
                 "required": ["command"]
             }),
             output_schema: Some(serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "task_id": {"type": "string"},
                     "status": {"type": "string"},
                     "exit_code": {"type": ["integer", "null"]},
-                    "duration_ms": {"type": ["integer", "null"]},
-                    "primary_diagnostic": {"type": ["object", "null"]},
-                    "raw_output": {"type": ["string", "null"]}
+                    "diagnostic": {"type": "object", "description":"Failure facts when known",
+                        "properties": {
+                            "severity": {"type":"string"},
+                            "code": {"type":"string"},
+                            "location": {"type":"object"}
+                        }, "additionalProperties": false},
+                    "task_id": {"type": "string", "description":"Present only while running or when output is incomplete"}
                 },
-                "required": ["task_id", "status", "exit_code"]
+                "required": ["status", "exit_code"]
             })),
         },
         ToolDefinition {
             name: "arshy_query".into(),
-            description: "Search persisted structured diagnostic events. Pass task_id for one \
-                         structured task or omit it to search history. Raw log-only lines are \
-                         excluded; use arshy_task(action:\"raw\") for original output."
+            description: "Search saved diagnostics by task or across history. Use arshy_task raw for command output."
                 .into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "task_id": {"type":"string","description":"Persisted structured task ID; omit to search all task history"},
-                    "event_type": {"type":"string","description":"Filter by emitted event type, such as diagnostic, test_result, summary, crash, data, or log"},
-                    "severity": {"type":"string","enum":["error","warning","info"],"description":"Filter by severity"},
-                    "code": {"type":"string","description":"Filter by error code"},
-                    "file": {"type":"string","description":"Filter by file path"},
-                    "limit": {"type":"integer","default":20,"description":"Max events to return"},
-                    "offset": {"type":"integer","default":0,"description":"Pagination offset"}
+                    "task_id": {"type":"string","description":"Task ID; omit to search history"},
+                    "event_type": {"type":"string","description":"Event type filter"},
+                    "severity": {"type":"string","enum":["error","warning","info"],"description":"Severity filter"},
+                    "code": {"type":"string","description":"Code filter"},
+                    "file": {"type":"string","description":"Path filter"},
+                    "limit": {"type":"integer","default":20,"description":"Page size"},
+                    "offset": {"type":"integer","default":0,"description":"Page offset"}
                 },
                 "required": []
             }),
@@ -81,20 +82,19 @@ pub fn tool_definitions() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: "arshy_task".into(),
-            description: "Low-frequency task lifecycle operations: cancel a running task, list \
-                         persisted tasks, or retrieve a task's original output."
+            description: "Cancel a task, list tasks, or retrieve captured output."
                 .into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "action": {"type":"string","enum":["cancel","list","raw"],
-                              "description":"Operation to perform"},
-                    "task_id": {"type":"string","description":"Required for cancel and raw"},
+                              "description":"Operation"},
+                    "task_id": {"type":"string","description":"Task ID for cancel or raw"},
                     "lines": {"type":"integer","default":200,
-                              "description":"Original-output lines for raw; 0 returns all"},
+                              "description":"Raw lines; 0 returns all"},
                     "status": {"type":"string","enum":["running","completed","failed","timeout","killed"],
-                              "description":"Optional list filter"},
-                    "limit": {"type":"integer","default":10,"description":"Maximum tasks for list"}
+                              "description":"List filter"},
+                    "limit": {"type":"integer","default":10,"description":"List limit"}
                 },
                 "required": ["action"]
             }),
@@ -117,40 +117,52 @@ mod tests {
         assert!(inst.contains("arshy_exec"));
     }
 
-    /// The agent-visible MCP surface (instructions + tool descriptions +
-    /// action enum) must stay lean: every token here is paid on every
-    /// handshake. ~4 chars/token; budget allows ~20% headroom over the
-    /// current trimmed size (~1350 chars ≈ 340 tokens).
+    fn description_chars(value: &serde_json::Value) -> usize {
+        match value {
+            serde_json::Value::Object(object) => object
+                .iter()
+                .map(|(key, value)| {
+                    if key == "description" {
+                        value.as_str().map_or(0, str::len)
+                    } else {
+                        description_chars(value)
+                    }
+                })
+                .sum(),
+            serde_json::Value::Array(values) => values.iter().map(description_chars).sum(),
+            _ => 0,
+        }
+    }
+
+    /// The pre-change definitions contain 1,495 characters across instructions and
+    /// every tool/parameter description. Keep at least 20% of that prose out.
     #[test]
     fn mcp_surface_stays_lean() {
         let inst = default_instructions();
         let tools = tool_definitions();
-        let exec = tools.iter().find(|t| t.name == "arshy_exec").unwrap();
-        let query = tools.iter().find(|t| t.name == "arshy_query").unwrap();
-        let task = tools.iter().find(|t| t.name == "arshy_task").unwrap();
-        let action_desc = task
-            .input_schema
-            .get("properties")
-            .and_then(|p| p.get("action"))
-            .and_then(|a| a.get("description"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-        let total_chars = inst.len()
-            + exec.description.len()
-            + query.description.len()
-            + task.description.len()
-            + action_desc.len();
+        let description_total = tools
+            .iter()
+            .map(|tool| description_chars(&serde_json::to_value(tool).unwrap()))
+            .sum::<usize>();
+        let total_chars = inst.len() + description_total;
 
         assert!(
-            total_chars <= 1600,
-            "MCP surface grew to {total_chars} chars (~{} tokens) — trim before merging",
-            total_chars / 4
+            total_chars * 100 <= 1495 * 80,
+            "MCP descriptions total {total_chars} chars; expected at most 1196"
         );
 
+        let exec = tools.iter().find(|t| t.name == "arshy_exec").unwrap();
         assert!(!exec.input_schema["properties"].as_object().unwrap().contains_key("action"));
+        assert!(exec.description.contains("sh -c"));
+        assert!(exec.description.contains("null stdin"));
+        assert!(exec.description.contains("no PTY"));
         let properties = exec.input_schema["properties"].as_object().unwrap();
         assert!(!properties.contains_key("parse_hint"));
         assert_eq!(properties["mode"]["enum"], serde_json::json!(["auto", "async"]));
+        assert_eq!(
+            exec.output_schema.as_ref().unwrap()["required"],
+            serde_json::json!(["status", "exit_code"])
+        );
     }
 
     #[test]

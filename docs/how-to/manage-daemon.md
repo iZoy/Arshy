@@ -8,7 +8,7 @@ arshy daemon stop
 ```
 
 The CLI or MCP proxy can auto-start `arshyd` when configured. The daemon owns
-PTY execution, parser sessions, event storage, and notifications; `arshy` is
+non-interactive `sh -c` execution over stdout/stderr pipes, parser sessions, event storage, and notifications; `arshy` is
 the thin CLI/proxy front end.
 
 The default lifecycle is on demand: `daemon.auto_start = true` starts the

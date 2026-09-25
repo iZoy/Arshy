@@ -13,7 +13,7 @@ In a fresh MCP-enabled Agent session, give this prompt:
 
 ~~~text
 Use arshy_exec to run cargo check in the current project. Read the primary
-diagnostic and location. Retrieve the original output with arshy_task raw,
+diagnostic and location. Retrieve the captured output with arshy_task raw,
 fix only the reported type mismatch, and run cargo check again.
 ~~~
 

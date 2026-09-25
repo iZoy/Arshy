@@ -1,65 +1,57 @@
-# arshy 文档
+# Arshy documentation
 
-**arshy** 是 AI Agent 的结构化执行层：Agent 跑命令拿结构化结果（`file:line` 定位、
-错误码、源码上下文），短命令零开销直出、长命令结构化解析、执行历史可查询、
-按需自启 + 空闲退出；卸载二进制后，任务历史由用户单独审阅和清理。
+This index is for people installing, using, or contributing to Arshy. Start with
+the setup guide, then use the task guides and reference pages as needed. The
+[中文指南](zh/README.md) covers installation, MCP setup, data, and security in
+Chinese.
 
-文档按 Diátaxis 框架组织为四个象限，另有产品与设计文档、发布清单与指标证据。
+## Start here
 
-## 快速开始（Tutorials · 学习导向）
+- [Getting started](getting-started.md) — install, register an MCP client, run a command, and understand retained data.
+- [Install tutorial](tutorials/install.md) — verify the binary, check the daemon, upgrade, and uninstall.
+- [First command tutorial](tutorials/first-command.md) — run short and structured commands and inspect task results.
+- [Connect an Agent](tutorials/setup-agent.md) — configure a generic MCP client.
+- [FAQ](faq.md) — common questions about compatibility, metrics, security, and removal.
 
-按顺序走完即可获得完整可用环境：
+## User guides
 
-1. [安装 arshy 并验证](tutorials/install.md) — 校验安装、`doctor` 体检、升级与卸载
-2. [运行第一条命令](tutorials/first-command.md) — 短命令直出、长命令结构化、任务管理
-3. [把任意 Agent 接入 arshy](tutorials/setup-agent.md) — Prompt 引导 / 通用 MCP / 验证
+- [Configure Arshy](how-to/configure.md)
+- [Manage the daemon](how-to/manage-daemon.md)
+- [Integrate an MCP client](how-to/integrate-agent.md)
+- [Security and the directory guard](how-to/security.md)
+- [Troubleshoot](how-to/troubleshoot.md)
 
-## 操作指南（How-to · 任务导向）
+## Contributor guides
 
-| 任务 | 指南 |
-|------|------|
-| 配置 arshy | [configure.md](how-to/configure.md) |
-| 管理 daemon（启停/自启/空闲退出/launchd） | [manage-daemon.md](how-to/manage-daemon.md) |
-| 为任意 CLI 编写自定义 parser | [create-parser.md](how-to/create-parser.md) |
-| 接入各种 AI Agent | [integrate-agent.md](how-to/integrate-agent.md) |
-| 配置与使用安全能力 | [security.md](how-to/security.md) |
-| 运行与扩展测试体系 | [run-tests.md](how-to/run-tests.md) |
-| 常见问题排查 | [troubleshoot.md](how-to/troubleshoot.md) |
+- [Contributing](../CONTRIBUTING.md) — development setup, pull requests, and project conventions.
+- [Create a parser](how-to/create-parser.md) — add or customize a TOML parser and fixtures.
+- [Run and extend tests](how-to/run-tests.md) — unit, integration, parser fixture, and dogfood checks.
+- [Testing model](explanation/testing.md) — what each test layer verifies and where its limits are.
 
-## 参考资料（Reference · 信息导向）
+## Reference
 
-- [CLI 命令](reference/cli.md) — 全部子命令、参数、默认值、退出码
-- [配置参考](reference/config.md) — 配置键、环境变量、默认值、加载优先级
-- [MCP 协议](reference/mcp.md) — 工具 schema、资源、通知、版本协商
-- [IPC 协议](reference/ipc.md) — JSON-RPC 方法、数据结构、错误码
-- [Parser 参考](reference/parsers.md) — 38 个内置 parser、TOML schema、fixture 约定
-- [错误码参考表](reference/reference-codes.md) — 非显而易见退出码的含义（docker/kubectl/aws）
-- [指标定义](reference/metrics.md) — `daemon/stats` / `daemon/analyze` / `benchmark` 字段含义、诚实边界与引用守则
+- [CLI](reference/cli.md)
+- [Configuration](reference/config.md)
+- [MCP protocol](reference/mcp.md)
+- [Daemon IPC](reference/ipc.md) — for integrations and contributors working on the protocol.
+- [Parsers](reference/parsers.md)
+- [Reference codes](reference/reference-codes.md)
+- [Metrics contract](reference/metrics.md)
 
-## 概念解释（Explanation · 理解导向）
+## Concepts and architecture
 
-- [系统架构](explanation/architecture.md) — 双二进制、通信、生命周期、长短命令路径
-- [解析管线](explanation/parser-pipeline.md) — 六层管线、事件模型、上下文富化
-- [设计原则](explanation/design-principles.md) — token 克制主义、语义 > 压缩、不做清单
-- [接入模型](explanation/integration-model.md) — MCP 原生 + 薄客户端引导与生命周期边界
-- [安全模型](explanation/security-model.md) — 威胁模型、命令过滤、路径沙箱、审计
-- [测试体系](explanation/testing.md) — 分层测试策略与质量门禁
+- [Architecture](explanation/architecture.md)
+- [Parser pipeline](explanation/parser-pipeline.md)
+- [Integration model](explanation/integration-model.md)
+- [Security model](explanation/security-model.md)
+- [Design principles](explanation/design-principles.md)
 
-## 营销素材（Marketing · 对开发者公开声明）
+## Project information
 
-诚实首发的对外承诺——所有数字可由 `scripts/measure-savings.sh` 复现：
+- [Known issues](known-issues.md)
+- [Security policy](../SECURITY.md)
+- [Changelog](../CHANGELOG.md)
+- [Architecture decisions](decisions/README.md) — accepted technical decisions and their trade-offs.
 
-- [性能声明](marketing/CLAIMS.md) — 组件化质量指标、引用守则与复现 checklist
-- [常见问题](marketing/FAQ.md) — 安装、性能、集成、安全、故障排除
-- [英文发布稿](marketing/launch-en.md) / [中文发布稿](marketing/launch-zh.md)
-
-## 决策记录（Decisions）
-
-- [ADR 索引](decisions/README.md) — 已采纳决策与讨论中的草案（从 2026-08 起补齐）
-
-## 产品与设计文档（存档，未随技术文档重写）
-
-- [战略路线图与北极星](ROADMAP-STRATEGY.md)
-- [发布清单](release-checklist.md)
-- 归档文档与历史规格不随当前候选包发布。
-- [指标证据说明](evidence/README.md)（证据快照生成规则与溯源约定）
+Pages under `reference/` and `explanation/` describe the current implementation;
+when behavior changes, the source code and tests are authoritative.

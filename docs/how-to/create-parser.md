@@ -241,7 +241,7 @@ fields = { file = 1, line = 2, code = 3, message = 4 }
 since_version = "0.1.0"
 ```
 
-规则（项目约定，见仓库根 `AGENTS.md`）：
+项目 parser 约定另见[贡献指南](../../CONTRIBUTING.md)：
 
 - 新增 pattern 必须带 `since_version`；
 - 弃用必须用 `deprecated = true` + `replaced_by`（pattern 级替代必须在同一 parser 内）；

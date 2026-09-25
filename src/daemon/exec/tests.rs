@@ -1,6 +1,6 @@
 use super::*;
 use super::{is_short_command, Executor, ExecutorConfig};
-use crate::config::ParserConfig;
+use crate::config::{ParserConfig, SecurityConfig};
 use crate::daemon::bus::EventBus;
 use crate::daemon::parser::Engine;
 use crate::daemon::store::Store;
@@ -18,6 +18,64 @@ fn setup() -> (Arc<Store>, Arc<Engine>, EventBus, TempDir) {
     (store, parser, bus, tmp)
 }
 
+async fn wait_for_task_completion(store: &Store, task_id: &str) {
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            if store.get_task(task_id).unwrap().is_some_and(|task| task.status.is_terminal()) {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("task {task_id} did not finish within 5s"));
+}
+
+#[test]
+fn invalid_access_level_is_rejected() {
+    let (store, parser, bus, _tmp) = setup();
+    let security = SecurityConfig { access_level: "read_only".into(), ..Default::default() };
+    let result = Executor::new(store, parser, bus).with_security(&security);
+    assert!(
+        matches!(result, Err(crate::ArshyError::Config(message)) if message.contains("security.access_level"))
+    );
+}
+
+#[test]
+fn executor_constructor_enforces_default_security_policy() {
+    let (store, parser, bus, _tmp) = setup();
+    let executor = Executor::new(store, parser, bus);
+
+    assert!(executor.filter.check("rm -rf /").is_err());
+    assert!(executor.filter.check("echo hello").is_ok());
+}
+
+#[test]
+fn invalid_enabled_rate_limit_is_rejected() {
+    for (burst, max_commands_per_second) in [
+        (0.5, 10.0),
+        (f64::NAN, 10.0),
+        (f64::INFINITY, 10.0),
+        (1.0, 0.0),
+        (1.0, f64::NAN),
+        (1.0, f64::INFINITY),
+    ] {
+        let (store, parser, bus, _tmp) = setup();
+        let security = SecurityConfig {
+            rate_limit: crate::config::RateLimitConfig {
+                enabled: true,
+                burst,
+                max_commands_per_second,
+            },
+            ..Default::default()
+        };
+        let result = Executor::new(store, parser, bus).with_security(&security);
+        assert!(
+            matches!(result, Err(crate::ArshyError::Config(message)) if message.contains("security.rate_limit"))
+        );
+    }
+}
+
 #[tokio::test]
 async fn test_executor_run_echo() {
     let (store, parser, bus, _tmp) = setup();
@@ -31,7 +89,7 @@ async fn test_executor_run_echo() {
     assert_eq!(result.status, TaskStatus::Running);
 
     // Wait for the background task to complete
-    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    wait_for_task_completion(&store, &result.task_id).await;
 
     // Check the task was updated in the store
     let task = store.get_task(&result.task_id).unwrap().unwrap();
@@ -64,7 +122,7 @@ async fn test_executor_run_failure() {
     let result =
         executor.run("exit 1", None, None, "async", None, None, false, None, None).await.unwrap();
 
-    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    wait_for_task_completion(&store, &result.task_id).await;
 
     let task = store.get_task(&result.task_id).unwrap().unwrap();
     assert_eq!(task.status, TaskStatus::Failed);
@@ -81,10 +139,35 @@ async fn test_executor_tail() {
         .await
         .unwrap();
 
-    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    wait_for_task_completion(&store, &result.task_id).await;
 
     let lines = executor.tail(&result.task_id, 10, "raw").await.unwrap();
     assert_eq!(lines, vec!["a", "b", "c"]);
+}
+
+#[tokio::test]
+async fn raw_tail_reports_missing_or_unreadable_output_instead_of_empty_success() {
+    let (store, parser, bus, _tmp) = setup();
+    let executor = Executor::new(store.clone(), parser, bus);
+
+    let empty =
+        executor.run("true", None, None, "sync", None, None, false, None, None).await.unwrap();
+    assert!(executor.tail(&empty.task_id, 0, "raw").await.unwrap().is_empty());
+
+    let output = executor
+        .run("printf 'captured output'", None, None, "sync", None, None, false, None, None)
+        .await
+        .unwrap();
+    let raw_path = store.store_dir().join("raw").join(format!("{}.txt", output.task_id));
+    std::fs::remove_file(&raw_path).unwrap();
+    let missing_error = executor.tail(&output.task_id, 0, "raw").await.unwrap_err();
+    assert!(
+        missing_error.to_string().contains("raw output")
+            && missing_error.to_string().contains("missing")
+    );
+
+    std::fs::create_dir(&raw_path).unwrap();
+    assert!(executor.tail(&output.task_id, 0, "raw").await.is_err());
 }
 
 #[tokio::test]
@@ -135,6 +218,99 @@ async fn requested_timeout_cannot_exceed_daemon_maximum() {
         .unwrap();
     assert_eq!(result.status, TaskStatus::Timeout);
     assert_eq!(result.exit_code, Some(-2));
+}
+
+#[tokio::test]
+async fn timeout_still_applies_after_both_output_streams_close() {
+    let (store, parser, bus, _tmp) = setup();
+    let executor = Executor::new(store, parser, bus)
+        .with_config(ExecutorConfig { max_task_duration_ms: 100, ..Default::default() });
+
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        executor.run(
+            r#"exec 1>&- 2>&-; sleep 30"#,
+            None,
+            Some(100),
+            "sync",
+            None,
+            None,
+            false,
+            None,
+            None,
+        ),
+    )
+    .await
+    .expect("closed output streams must not disable the task timeout")
+    .unwrap();
+
+    assert_eq!(result.status, TaskStatus::Timeout);
+    assert_eq!(result.exit_code, Some(-2));
+}
+
+#[tokio::test]
+async fn short_path_timeout_still_applies_after_output_streams_close() {
+    let (store, parser, bus, _tmp) = setup();
+    let executor = Executor::new(store, parser, bus)
+        .with_config(ExecutorConfig { max_task_duration_ms: 100, ..Default::default() });
+
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        executor.run_short(r#"exec 1>&- 2>&-; sleep 30"#, None, Some(100), None),
+    )
+    .await
+    .expect("closed output streams must not disable the short-command timeout")
+    .unwrap();
+
+    assert_eq!(result.status, TaskStatus::Timeout);
+    assert_eq!(result.exit_code, Some(-2));
+}
+
+#[tokio::test]
+async fn signal_terminated_structured_command_is_failed_not_timeout() {
+    let (store, parser, bus, _tmp) = setup();
+    let executor = Executor::new(store, parser, bus);
+    let result = executor
+        .run("kill -TERM $$", None, None, "sync", None, None, false, None, None)
+        .await
+        .unwrap();
+
+    assert_eq!(result.status, TaskStatus::Failed);
+    assert_eq!(result.exit_code, Some(-1));
+}
+
+#[tokio::test]
+async fn raw_output_byte_count_uses_source_bytes_not_rendered_text() {
+    let (store, parser, bus, _tmp) = setup();
+    let executor = Executor::new(store, parser, bus);
+    let result =
+        executor.run_short("printf '\\377x\\nno-newline'", None, Some(2_000), None).await.unwrap();
+
+    assert!(result.raw_output.as_deref().unwrap().contains("[invalid UTF-8 replaced]"));
+    assert_eq!(result.raw_output_bytes, Some(13));
+}
+
+#[tokio::test]
+async fn structured_raw_output_byte_count_uses_source_bytes_not_rendered_text() {
+    let (store, parser, bus, _tmp) = setup();
+    let executor = Executor::new(store.clone(), parser, bus);
+    let result = executor
+        .run(
+            "printf '\\377x\\nno-newline'",
+            None,
+            Some(2_000),
+            "sync",
+            None,
+            None,
+            false,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(result.raw_output_bytes, Some(13));
+    assert_eq!(store.get_task_raw_output_bytes(&result.task_id), 13);
 }
 
 #[tokio::test]
@@ -243,7 +419,23 @@ async fn output_limits_truncate_without_deadlocking_the_child() {
         .await
         .unwrap();
     assert!(short.short_command);
-    assert!(short.raw_output.unwrap().contains("output truncated"));
+    assert!(short.raw_output.as_deref().unwrap().contains("output truncated"));
+    assert_eq!(store.get_task(&short.task_id).unwrap().unwrap().status, TaskStatus::Completed);
+    let saved = executor.tail(&short.task_id, 0, "raw").await.unwrap().join("\n");
+    assert!(saved.contains("abcdefghijklmnopqrstuvwxyz"));
+    assert!(saved.contains("output truncated"));
+
+    let (large_store, large_parser, large_bus, _large_tmp) = setup();
+    let large_executor = Executor::new(large_store.clone(), large_parser, large_bus)
+        .with_config(ExecutorConfig { max_output_bytes: 32_768, ..Default::default() });
+    let large = large_executor
+        .run("printf '%020000d' 0", None, None, "auto", None, None, false, None, None)
+        .await
+        .unwrap();
+    assert!(!large.raw_output.as_deref().unwrap().contains("output truncated"));
+    assert!(large_store.get_task(&large.task_id).unwrap().is_some());
+    let large_saved = large_executor.tail(&large.task_id, 0, "raw").await.unwrap().join("\n");
+    assert_eq!(large_saved.len(), 20_000);
 }
 
 #[tokio::test]
@@ -324,6 +516,34 @@ async fn test_executor_kill_graceful() {
     // Check task was updated
     let task = store.get_task(&result.task_id).unwrap().unwrap();
     assert!(task.status == TaskStatus::Killed, "expected Killed, got {:?}", task.status);
+}
+
+#[tokio::test]
+async fn repeated_cancel_does_not_mark_task_terminal_before_process_exit() {
+    let (store, parser, bus, _tmp) = setup();
+    let config = ExecutorConfig { kill_graceful_ms: 100, kill_force_ms: 100, ..Default::default() };
+    let executor = Executor::new(store.clone(), parser, bus).with_config(config);
+
+    let result = executor
+        .run("trap '' INT TERM; exec sleep 60", None, None, "async", None, None, false, None, None)
+        .await
+        .unwrap();
+    executor.kill(&result.task_id).await.unwrap();
+    executor.kill(&result.task_id).await.unwrap();
+
+    assert_eq!(store.get_task(&result.task_id).unwrap().unwrap().status, TaskStatus::Running);
+
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            if store.get_task(&result.task_id).unwrap().unwrap().status.is_terminal() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("cancelled process did not reach a terminal state");
+    assert_eq!(store.get_task(&result.task_id).unwrap().unwrap().status, TaskStatus::Killed);
 }
 
 #[tokio::test]
@@ -521,7 +741,7 @@ async fn auto_long_uses_smart_sync() {
     assert_eq!(result.status, TaskStatus::Failed, "invalid path should fail");
     assert!(result.exit_code.is_some(), "should have exit code");
     assert!(
-        result.primary_diagnostic.is_some() || result.project_context.is_some(),
+        result.primary_diagnostic.is_some(),
         "smart sync attaches a primary diagnostic or project context for failed builds"
     );
 }
@@ -633,7 +853,7 @@ async fn parse_hint_json_with_json_output() {
         .unwrap();
     assert!(!result.short_command);
 
-    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    wait_for_task_completion(&store, &result.task_id).await;
 
     // Verify JSON events were stored
     use crate::ipc::QueryParams;
@@ -723,7 +943,7 @@ async fn cli_json_output_auto_detected() {
         .await
         .unwrap();
 
-    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    wait_for_task_completion(&store, &result.task_id).await;
 
     use crate::ipc::QueryParams;
     let params = QueryParams {
@@ -766,7 +986,7 @@ async fn parse_hint_json_array_produces_structured_events() {
         .await
         .unwrap();
 
-    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    wait_for_task_completion(&store, &result.task_id).await;
 
     use crate::ipc::QueryParams;
     let params = QueryParams {
@@ -801,7 +1021,7 @@ async fn stderr_recognizes_generic_errors() {
     false, None, None,
     ).await.unwrap();
 
-    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    wait_for_task_completion(&store, &result.task_id).await;
 
     use crate::ipc::QueryParams;
     let params = QueryParams {
@@ -843,7 +1063,7 @@ async fn stderr_permission_denied_is_error() {
         .await
         .unwrap();
 
-    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    wait_for_task_completion(&store, &result.task_id).await;
 
     use crate::ipc::QueryParams;
     let params = QueryParams {
@@ -877,7 +1097,7 @@ async fn short_command_with_parse_hint_stores_events() {
 
     assert!(!result.short_command);
 
-    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    wait_for_task_completion(&store, &result.task_id).await;
 
     let task = store.get_task(&result.task_id).unwrap().unwrap();
     assert_eq!(task.status, TaskStatus::Completed);
@@ -906,7 +1126,7 @@ async fn non_json_output_no_false_positive() {
         .await
         .unwrap();
 
-    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    wait_for_task_completion(&store, &result.task_id).await;
 
     use crate::ipc::QueryParams;
     let params = QueryParams {
@@ -931,115 +1151,6 @@ async fn non_json_output_no_false_positive() {
     );
 }
 
-// ── Errors-only filter tests ──────────────────────────────────────────
-
-#[test]
-fn filter_errors_only() {
-    let events = Some(vec![
-        serde_json::json!({"type": "diagnostic", "severity": "error", "message": "bad"}),
-        serde_json::json!({"type": "diagnostic", "severity": "warning", "message": "warn"}),
-        serde_json::json!({"type": "log", "severity": "info", "message": "ok"}),
-        serde_json::json!({"type": "diagnostic", "severity": "error", "message": "bad2"}),
-    ]);
-    let filtered = filter_events_errors_only(&events);
-    let evts = filtered.unwrap();
-    assert_eq!(evts.len(), 2);
-    assert_eq!(evts[0]["message"], "bad");
-    assert_eq!(evts[1]["message"], "bad2");
-}
-
-#[test]
-fn filter_errors_only_none_passthrough() {
-    assert!(filter_events_errors_only(&None).is_none());
-}
-
-#[test]
-fn filter_errors_only_empty() {
-    let events = Some(vec![]);
-    assert!(filter_events_errors_only(&events).unwrap().is_empty());
-}
-
-// ── enrich_events() tests ─────────────────────────────────────────────────
-
-#[test]
-fn enrich_events_adds_context_for_errors() {
-    let events = vec![serde_json::json!({
-        "seq": 0,
-        "type": "diagnostic",
-        "severity": "error",
-        "code": null,
-        "message": "compile error",
-        "location": {"file": "Cargo.toml", "line": 1, "column": null},
-        "context": null,
-        "hint": null
-    })];
-    let cwd = std::path::Path::new(".");
-    let enriched = enrich_events(events, cwd);
-    assert_eq!(enriched.len(), 1);
-    // Should have context after enrichment (Cargo.toml exists in the repo)
-    assert!(
-        enriched[0].get("context").is_some() && !enriched[0]["context"].is_null(),
-        "expected context to be populated"
-    );
-}
-
-#[test]
-fn enrich_events_preserves_non_error_events() {
-    let events = vec![
-        serde_json::json!({
-            "seq": 0,
-            "type": "log",
-            "severity": "info",
-            "code": null,
-            "message": "building...",
-            "location": null,
-            "context": null,
-            "hint": null
-        }),
-        serde_json::json!({
-            "seq": 1,
-            "type": "diagnostic",
-            "severity": "error",
-            "code": null,
-            "message": "compile failed",
-            "location": null,
-            "context": null,
-            "hint": null
-        }),
-    ];
-    let cwd = std::path::Path::new(".");
-    let enriched = enrich_events(events, cwd);
-    assert_eq!(enriched.len(), 2);
-    // Info event should be unchanged (no location to enrich)
-    assert_eq!(enriched[0]["message"], "building...");
-    assert!(enriched[0]["context"].is_null());
-}
-
-#[test]
-fn enrich_events_empty_input() {
-    let events = vec![];
-    let cwd = std::path::Path::new(".");
-    let enriched = enrich_events(events, cwd);
-    assert!(enriched.is_empty());
-}
-
-#[test]
-fn enrich_events_no_tool_no_hints() {
-    let events = vec![serde_json::json!({
-        "seq": 0,
-        "type": "diagnostic",
-        "severity": "error",
-        "code": "SOME_CODE",
-        "message": "some error",
-        "location": null,
-        "context": null,
-        "hint": null
-    })];
-    let cwd = std::path::Path::new(".");
-    let enriched = enrich_events(events, cwd);
-    // Without a tool, no language mapping → no hints
-    assert!(enriched[0]["hint"].is_null());
-}
 #[test]
 fn select_primary_diagnostic_first_error_for_normal_stream() {
     let events = Some(vec![
@@ -1089,12 +1200,71 @@ async fn run_dedup_key_reuses_same_task() {
         "a replayed request with the same dedup_key must reuse the original task"
     );
 
+    // Fill the bounded cache. A new replay key still has to be cached after
+    // evicting an old result, or concurrent/retried calls can execute twice.
+    {
+        let mut cache = executor.run_dedup.lock().await;
+        for index in 0..RUN_DEDUP_CACHE_MAX {
+            cache_run_result(&mut cache, format!("seed-{index}"), r1.clone(), Instant::now());
+        }
+        assert_eq!(cache.len(), RUN_DEDUP_CACHE_MAX);
+    }
+
     // A different key is a different command invocation.
     let r3 = executor
         .run("echo dedup", None, None, "async", None, None, false, None, Some("req-2"))
         .await
         .unwrap();
     assert_ne!(r1.task_id, r3.task_id);
+    let r4 = executor
+        .run("echo dedup", None, None, "async", None, None, false, None, Some("req-2"))
+        .await
+        .unwrap();
+    assert_eq!(r3.task_id, r4.task_id, "a full cache must evict old results and retain new ones");
+
+    // Reusing an MCP request id for a different invocation must not replay a
+    // stale result from the earlier call.
+    let r5 = executor
+        .run("echo different", None, None, "async", None, None, false, None, Some("req-1"))
+        .await
+        .unwrap();
+    assert_ne!(r1.task_id, r5.task_id);
+
+    let mut env_forward = HashMap::new();
+    env_forward.insert("FIRST".into(), "1".into());
+    env_forward.insert("SECOND".into(), "2".into());
+    let mut env_reverse = HashMap::new();
+    env_reverse.insert("SECOND".into(), "2".into());
+    env_reverse.insert("FIRST".into(), "1".into());
+    let r6 = executor
+        .run(
+            "echo env",
+            None,
+            None,
+            "async",
+            None,
+            Some(&env_forward),
+            false,
+            None,
+            Some("req-env"),
+        )
+        .await
+        .unwrap();
+    let r7 = executor
+        .run(
+            "echo env",
+            None,
+            None,
+            "async",
+            None,
+            Some(&env_reverse),
+            false,
+            None,
+            Some("req-env"),
+        )
+        .await
+        .unwrap();
+    assert_eq!(r6.task_id, r7.task_id, "environment map order must not affect replay identity");
 }
 
 /// `max_concurrent_tasks` must actually bound structured tasks (previously

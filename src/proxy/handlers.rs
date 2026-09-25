@@ -6,9 +6,7 @@ use arshy_lib::Result;
 use std::time::Duration;
 use tokio::io::{AsyncWriteExt, BufWriter};
 
-use super::protocol::{
-    format_duration, negotiate_protocol_version, write_json_error, write_json_response,
-};
+use super::protocol::{negotiate_protocol_version, write_json_error, write_json_response};
 
 // ── MCP handlers ────────────────────────────────────────────────────────────
 
@@ -211,157 +209,7 @@ pub(crate) async fn handle_tool_call(
         return Ok(None);
     }
 
-    // Extract task_id for cancellation tracking
-    let task_id = result["task_id"].as_str().map(String::from);
-
-    // Short command → plain text (like a native shell)
-    let is_short = result["short_command"].as_bool().unwrap_or(false);
-    let status = result["status"].as_str().unwrap_or("");
-    let content = if is_short {
-        let raw = result["raw_output"].as_str().unwrap_or("");
-        // Provide meaningful message for timeouts
-        let text = if raw.is_empty() && (status == "failed" || status == "timeout") {
-            let label = if status == "timeout" { "timed out" } else { "failed" };
-            format!("[command {}: exit code {}]", label, result["exit_code"].as_i64().unwrap_or(-1))
-        } else {
-            raw.to_string()
-        };
-        let exit = result.get("exit_code").and_then(|value| value.as_i64());
-        let task = result.get("task_id").and_then(|value| value.as_str()).unwrap_or("");
-        let state = format!(
-            "status: {status}, exit_code: {}, task_id: {task}",
-            exit.map_or_else(|| "null".into(), |code| code.to_string())
-        );
-        serde_json::json!([
-            {"type": "text", "text": text},
-            {"type": "text", "text": state}
-        ])
-    } else {
-        // Long command → concise structured summary.
-        // Agent gets: status icon, duration, error count, and a primary diagnostic.
-        // Full events are available via arshy_query — not included here.
-        let primary_diagnostic = result.get("primary_diagnostic");
-        let error_count = result.get("error_count").and_then(|v| v.as_u64()).unwrap_or(0);
-        let exit_code = result.get("exit_code").and_then(|v| v.as_i64());
-        let duration_ms = result.get("duration_ms").and_then(|v| v.as_u64());
-
-        let status_icon = match status {
-            "completed" => "✓",
-            "failed" | "timeout" => "✗",
-            "killed" => "⊘",
-            "running" => "⟳",
-            _ => "?",
-        };
-
-        let duration_str = format_duration(duration_ms);
-        let has_errors = error_count > 0;
-        let exit_nonzero = exit_code.is_some_and(|c| c != 0);
-
-        // Build one-line summary: "✓ 0 errors, 2.3s" or "✗ 3 errors, 10.5s (exit 1)"
-        let mut text = String::new();
-        text.push_str(status_icon);
-        text.push(' ');
-        text.push_str(&format!("{} error{}", error_count, if error_count == 1 { "" } else { "s" }));
-        if !duration_str.is_empty() {
-            text.push_str(", ");
-            text.push_str(&duration_str);
-        }
-        if exit_nonzero {
-            if let Some(code) = exit_code {
-                text.push_str(&format!(" (exit {})", code));
-            }
-        }
-
-        // Attach the representative diagnostic for failures.
-        if let Some(rc) = primary_diagnostic {
-            if let Some(msg) = rc.get("message").and_then(|v| v.as_str()) {
-                if !msg.is_empty() {
-                    text.push_str(&format!("\nPrimary diagnostic: {}", msg));
-                }
-            }
-        }
-
-        // Include git diff stat on failure (helps agent correlate errors with changes)
-        if has_errors || exit_nonzero {
-            if let Some(pc) = result.get("project_context") {
-                if let Some(stat) = pc.get("git_diff_stat").and_then(|v| v.as_str()) {
-                    if !stat.is_empty() {
-                        text.push_str(&format!("\nChanged files:\n{}", stat));
-                    }
-                }
-            }
-        }
-
-        // Zero structured events → the agent cannot see what the command
-        // printed. Point it at the raw-output channel instead of leaving it
-        // blind (token restraint: hint only, no raw text inlined).
-        let event_count = result.get("event_count").and_then(|v| v.as_u64()).unwrap_or(0);
-        if event_count == 0 && status != "running" {
-            text.push_str(
-                "\n(0 structured events — fetch the original output with \
-                 arshy_task(action:\"raw\"))",
-            );
-        }
-
-        // Text-only MCP clients cannot inspect structuredContent. Always give
-        // them the lifecycle contract, then point them at the paginated query
-        // path when the inline event sample is incomplete or needs detail.
-        if let Some(tid) = result.get("task_id").and_then(|v| v.as_str()) {
-            if !tid.is_empty() {
-                let exit = exit_code.map_or_else(|| "null".into(), |code| code.to_string());
-                text.push_str(&format!("\nstatus: {status}, exit_code: {exit}, task_id: {tid}"));
-                if event_count > 0 {
-                    text.push_str(&format!(
-                        "\n{} structured events available; page with \
-                         arshy_query(task_id:\"{}\", limit:20, offset:0)",
-                        event_count, tid
-                    ));
-                }
-            }
-        }
-
-        serde_json::json!([{"type": "text", "text": text}])
-    };
-
-    // Flag errors so agents can detect them programmatically via isError.
-    // Only flag explicit failures and high exit codes (>=2).
-    // exit_code=1 is ambiguous (grep no match, diff differs, test condition false)
-    // and should not trigger MCP isError.
-    let has_errors = result.get("error_count").and_then(|v| v.as_u64()).unwrap_or(0) > 0;
-    let exit_code = result.get("exit_code").and_then(|v| v.as_i64());
-    let is_error = should_mark_tool_error(status, exit_code, has_errors);
-
-    let mut structured = serde_json::Map::new();
-    for key in &[
-        "task_id",
-        "status",
-        "exit_code",
-        "duration_ms",
-        "error_count",
-        "warning_count",
-        "event_count",
-        "events",
-        "events_truncated",
-        "events_hint",
-        "raw_output",
-        "short_command",
-        "primary_diagnostic",
-        "project_context",
-        "raw_output_bytes",
-    ] {
-        if let Some(val) = result.get(*key) {
-            structured.insert((*key).to_string(), val.clone());
-        }
-    }
-    // Exit state is part of every execution contract, including running tasks.
-    structured.entry("exit_code".to_string()).or_insert(serde_json::Value::Null);
-    let mut result_obj = serde_json::json!({
-        "content": content,
-        "structuredContent": serde_json::Value::Object(structured),
-    });
-    if is_error {
-        result_obj["isError"] = serde_json::json!(true);
-    }
+    let (result_obj, task_id) = build_run_result(result);
 
     let mcp_response = serde_json::json!({
         "jsonrpc": "2.0",
@@ -374,6 +222,118 @@ pub(crate) async fn handle_tool_call(
     stdout.write_all(&json).await?;
     stdout.flush().await?;
     Ok(task_id)
+}
+
+fn build_run_result(result: &serde_json::Value) -> (serde_json::Value, Option<String>) {
+    let status = result["status"].as_str().unwrap_or("");
+    let exit_value = result.get("exit_code").cloned().unwrap_or(serde_json::Value::Null);
+    let is_failure = status == "failed"
+        || status == "timeout"
+        || exit_value.as_i64().is_some_and(|code| code != 0);
+    let raw = result.get("raw_output").and_then(|v| v.as_str()).unwrap_or("");
+    let events = result.get("events").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+    let primary = result.get("primary_diagnostic").filter(|v| v.is_object());
+    let task_id = result.get("task_id").and_then(|v| v.as_str()).map(str::to_owned);
+
+    let (inline_raw, inline_truncated, omitted_bytes) = clip_inline_output(raw);
+    let mut text = if !raw.is_empty() {
+        inline_raw
+    } else if is_failure {
+        let messages = events
+            .iter()
+            .filter_map(|event| event.get("message").and_then(|v| v.as_str()))
+            .filter(|message| !message.is_empty())
+            .collect::<Vec<_>>();
+        if messages.is_empty() {
+            format!(
+                "[command failed: exit code {}]",
+                exit_value.as_i64().map_or_else(|| "unknown".into(), |code| code.to_string())
+            )
+        } else {
+            messages.join("\n")
+        }
+    } else if status == "running" {
+        String::new()
+    } else {
+        "✓".into()
+    };
+    if inline_truncated {
+        text.push_str(&format!("\n[output clipped: {omitted_bytes} bytes omitted]"));
+    }
+
+    let raw_truncated = inline_truncated
+        || raw.contains("[output truncated at ")
+        || raw.contains("[line truncated at ")
+        || (raw.is_empty()
+            && result.get("raw_output_bytes").and_then(|v| v.as_u64()).unwrap_or(0) > 0);
+    let event_count = result.get("event_count").and_then(|v| v.as_u64()).unwrap_or(0);
+    let events_not_fully_inlined = event_count > if is_failure { 1 } else { 0 };
+    let needs_handle = status == "running"
+        || result.get("events_truncated").and_then(|v| v.as_bool()).unwrap_or(false)
+        || raw_truncated
+        || events_not_fully_inlined;
+    let handle = if needs_handle { task_id.as_deref().filter(|tid| !tid.is_empty()) } else { None };
+    if let Some(tid) = handle {
+        let hint = if status == "running" {
+            format!("\nTask {tid} is running; use arshy_task(action:\"cancel\", task_id:\"{tid}\") to stop it or arshy_query(task_id:\"{tid}\") to inspect results.")
+        } else if raw_truncated {
+            format!("\nOutput is incomplete; retrieve captured output with arshy_task(action:\"raw\", task_id:\"{tid}\", lines:0).")
+        } else if events_not_fully_inlined {
+            format!("\nMore diagnostics are available with arshy_query(task_id:\"{tid}\").")
+        } else {
+            format!(
+                "\nMore output is available with arshy_task(action:\"raw\", task_id:\"{tid}\")."
+            )
+        };
+        text.push_str(&hint);
+    }
+    let mut structured = serde_json::Map::new();
+    structured.insert("status".into(), serde_json::json!(status));
+    structured.insert("exit_code".into(), exit_value.clone());
+    if is_failure {
+        if let Some(diagnostic) = primary {
+            let mut facts = serde_json::Map::new();
+            for key in ["severity", "code", "location"] {
+                if let Some(value) = diagnostic.get(key).filter(|value| !value.is_null()) {
+                    facts.insert(key.into(), value.clone());
+                }
+            }
+            if !facts.is_empty() {
+                structured.insert("diagnostic".into(), serde_json::Value::Object(facts));
+            }
+        }
+    }
+    if let Some(tid) = handle {
+        structured.insert("task_id".into(), serde_json::json!(tid));
+    }
+    let has_errors = result.get("error_count").and_then(|v| v.as_u64()).unwrap_or(0) > 0;
+    let is_error = should_mark_tool_error(status, exit_value.as_i64(), has_errors);
+    let mut result_obj = serde_json::json!({
+        "content": [{"type":"text","text":text}],
+        "structuredContent": serde_json::Value::Object(structured),
+    });
+    if is_error {
+        result_obj["isError"] = serde_json::json!(true);
+    }
+    (result_obj, handle.map(str::to_owned))
+}
+
+fn clip_inline_output(raw: &str) -> (String, bool, usize) {
+    let limit = arshy_lib::ipc::MCP_INLINE_OUTPUT_LIMIT_BYTES;
+    if raw.len() <= limit {
+        return (raw.to_owned(), false, 0);
+    }
+    let edge = limit / 2;
+    let mut head_end = edge;
+    while !raw.is_char_boundary(head_end) {
+        head_end -= 1;
+    }
+    let mut tail_start = raw.len() - edge;
+    while !raw.is_char_boundary(tail_start) {
+        tail_start += 1;
+    }
+    let omitted = tail_start.saturating_sub(head_end);
+    (format!("{}\n[…]\n{}", &raw[..head_end], &raw[tail_start..]), true, omitted)
 }
 
 fn should_mark_tool_error(status: &str, exit_code: Option<i64>, has_errors: bool) -> bool {
@@ -525,7 +485,102 @@ pub(crate) fn mcp_tool_to_ipc_method(
 
 #[cfg(test)]
 mod tests {
-    use super::{build_query_result, should_mark_tool_error};
+    use super::{build_query_result, build_run_result, clip_inline_output, should_mark_tool_error};
+
+    fn text(result: &serde_json::Value) -> &str {
+        result["content"][0]["text"].as_str().unwrap()
+    }
+
+    #[test]
+    fn successful_inline_output_has_only_status_and_exit_code() {
+        let input = serde_json::json!({
+            "status":"completed", "exit_code":0, "task_id":"unused",
+            "raw_output":"hello\n", "raw_output_bytes":6, "duration_ms":12, "event_count":0
+        });
+        let (result, handle) = build_run_result(&input);
+        assert_eq!(text(&result), "hello\n");
+        assert!(handle.is_none());
+        assert_eq!(
+            result["structuredContent"],
+            serde_json::json!({"status":"completed","exit_code":0})
+        );
+    }
+
+    #[test]
+    fn empty_success_is_minimal() {
+        let (result, _) =
+            build_run_result(&serde_json::json!({"status":"completed","exit_code":0}));
+        assert_eq!(text(&result), "✓");
+    }
+
+    #[test]
+    fn failure_preserves_raw_error_and_structures_only_facts() {
+        let input = serde_json::json!({
+            "status":"failed", "exit_code":2, "raw_output":"error[E0308]: mismatched types\n",
+            "error_count":1,
+            "primary_diagnostic":{"message":"mismatched types","severity":"error","code":"E0308",
+                "location":{"file":"src/main.rs","line":8},"context":{"line":"secret source"}}
+        });
+        let (result, _) = build_run_result(&input);
+        assert_eq!(text(&result), "error[E0308]: mismatched types\n");
+        assert_eq!(
+            result["structuredContent"]["diagnostic"],
+            serde_json::json!({
+                "severity":"error", "code":"E0308", "location":{"file":"src/main.rs","line":8}
+            })
+        );
+        assert!(result["structuredContent"]["diagnostic"].get("message").is_none());
+        assert!(result["structuredContent"]["diagnostic"].get("context").is_none());
+    }
+
+    #[test]
+    fn handle_is_exposed_only_for_running_or_incomplete_results() {
+        let (running, running_handle) = build_run_result(&serde_json::json!({
+            "status":"running","exit_code":null,"task_id":"task-1"
+        }));
+        assert_eq!(running_handle.as_deref(), Some("task-1"));
+        assert_eq!(running["structuredContent"]["task_id"], "task-1");
+        assert!(text(&running).contains("arshy_task(action:\"cancel\""));
+
+        let (events, event_handle) = build_run_result(&serde_json::json!({
+            "status":"completed","exit_code":0,"task_id":"task-2","events_truncated":true
+        }));
+        assert_eq!(event_handle.as_deref(), Some("task-2"));
+        assert_eq!(events["structuredContent"]["task_id"], "task-2");
+        assert!(text(&events).contains("arshy_query(task_id:\"task-2\")"));
+
+        let (warning, warning_handle) = build_run_result(&serde_json::json!({
+            "status":"completed","exit_code":0,"task_id":"task-warning","event_count":1
+        }));
+        assert_eq!(warning_handle.as_deref(), Some("task-warning"));
+        assert!(text(&warning).contains("arshy_query(task_id:\"task-warning\")"));
+
+        let (raw, raw_handle) = build_run_result(&serde_json::json!({
+            "status":"completed","exit_code":0,"task_id":"task-3",
+            "raw_output":"prefix\n[output truncated at 100 bytes]","raw_output_bytes":120
+        }));
+        assert_eq!(raw_handle.as_deref(), Some("task-3"));
+        assert!(text(&raw).contains("arshy_task(action:\"raw\""));
+    }
+
+    #[test]
+    fn long_output_is_clipped_at_utf8_boundaries_and_keeps_both_ends() {
+        let raw =
+            format!("start:{}終わり", "x".repeat(arshy_lib::ipc::MCP_INLINE_OUTPUT_LIMIT_BYTES));
+        let (clipped, was_clipped, omitted) = clip_inline_output(&raw);
+        assert!(was_clipped);
+        assert!(omitted > 0);
+        assert!(clipped.starts_with("start:"));
+        assert!(clipped.ends_with("終わり"));
+
+        let (response, task_id) = build_run_result(&serde_json::json!({
+            "status":"completed", "exit_code":0, "task_id":"large-output", "raw_output":raw
+        }));
+        assert_eq!(task_id.as_deref(), Some("large-output"));
+        assert!(text(&response).contains("output clipped"));
+        assert!(text(&response).contains("lines:0"));
+        assert_eq!(response["structuredContent"]["task_id"], "large-output");
+    }
 
     #[test]
     fn exit_one_without_diagnostics_is_not_an_mcp_transport_error() {

@@ -169,9 +169,7 @@ pub fn render_stats(result: &serde_json::Value) -> String {
     let timeout = by_status.and_then(|s| s.get("timeout")).and_then(|v| v.as_u64()).unwrap_or(0);
 
     let parser_coverage_pct = result.get("parser_coverage_pct").and_then(|v| v.as_f64());
-    let context_enriched = result.get("context_enriched").and_then(|v| v.as_u64());
     let dedup_collapsed = result.get("dedup_collapsed").and_then(|v| v.as_u64());
-    let correlated_errors = result.get("correlated_errors").and_then(|v| v.as_u64());
     let per_parser_usage = result.get("per_parser_usage").and_then(|v| v.as_array());
 
     let _ = writeln!(out);
@@ -256,11 +254,8 @@ pub fn render_stats(result: &serde_json::Value) -> String {
         box_line(&mut out, &format!("DB size:       {} bytes", bytes));
     }
 
-    let has_intelligence = parser_coverage_pct.is_some()
-        || context_enriched.is_some()
-        || dedup_collapsed.is_some()
-        || correlated_errors.is_some()
-        || per_parser_usage.is_some();
+    let has_intelligence =
+        parser_coverage_pct.is_some() || dedup_collapsed.is_some() || per_parser_usage.is_some();
     if has_intelligence {
         box_divider(&mut out);
         box_line(&mut out, &format!("{}Intelligence{}", BOLD, RESET));
@@ -270,22 +265,11 @@ pub fn render_stats(result: &serde_json::Value) -> String {
                 &format!("  Parser coverage: {:.0}% events structured (not raw log)", cov),
             );
         }
-        if let Some(ctx) = context_enriched {
-            box_line(&mut out, &format!("  Context enriched: {} events with source code", ctx));
-        }
         if let Some(dedup) = dedup_collapsed {
             if dedup > 0 {
                 box_line(
                     &mut out,
                     &format!("  Dedup saved:     {} duplicate lines suppressed", dedup),
-                );
-            }
-        }
-        if let Some(corr) = correlated_errors {
-            if corr > 0 {
-                box_line(
-                    &mut out,
-                    &format!("  Git correlation:  {} errors linked to recent changes", corr),
                 );
             }
         }
@@ -495,10 +479,6 @@ pub fn render_analyze(result: &serde_json::Value) -> String {
         .and_then(|e| e.get("components"))
         .and_then(|c| c.get("noise_filter_pct"))
         .and_then(|v| v.as_f64());
-    let diagnostic_pct = efficiency
-        .and_then(|e| e.get("components"))
-        .and_then(|c| c.get("diagnostic_completeness_pct"))
-        .and_then(|v| v.as_f64());
     let dedup_pct = efficiency
         .and_then(|e| e.get("components"))
         .and_then(|c| c.get("dedup_reduction_pct"))
@@ -511,8 +491,6 @@ pub fn render_analyze(result: &serde_json::Value) -> String {
         info.and_then(|i| i.get("events_with_location")).and_then(|v| v.as_u64()).unwrap_or(0);
     let with_code =
         info.and_then(|i| i.get("events_with_code")).and_then(|v| v.as_u64()).unwrap_or(0);
-    let with_context =
-        info.and_then(|i| i.get("events_with_context")).and_then(|v| v.as_u64()).unwrap_or(0);
 
     let patterns = result.get("command_patterns");
     let carriers = patterns.and_then(|p| p.get("carrier_distribution"));
@@ -547,12 +525,11 @@ pub fn render_analyze(result: &serde_json::Value) -> String {
     let _ = writeln!(out);
 
     box_top(&mut out);
-    box_line(&mut out, &format!("{}ARSHY QUALITY COMPONENTS (quality-v1){}", BOLD, RESET));
+    box_line(&mut out, &format!("{}ARSHY QUALITY COMPONENTS (quality-v2){}", BOLD, RESET));
     box_divider(&mut out);
     for (label, value) in [
         ("Content convergence", content_pct),
         ("Noise filtering", noise_pct),
-        ("Diagnostic completeness", diagnostic_pct),
         ("Dedup reduction", dedup_pct),
     ] {
         box_line(
@@ -583,14 +560,6 @@ pub fn render_analyze(result: &serde_json::Value) -> String {
         &format!(
             "  Events with code:      {} / {}",
             fmt_commas(with_code),
-            fmt_commas(total_events)
-        ),
-    );
-    box_line(
-        &mut out,
-        &format!(
-            "  Events with context:   {} / {}",
-            fmt_commas(with_context),
             fmt_commas(total_events)
         ),
     );
@@ -720,17 +689,6 @@ fn one_line_summary(result: &serde_json::Value) -> String {
         }
     }
 
-    let has_errors = error_count > 0;
-    let exit_nonzero = exit_code.is_some_and(|c| c != 0);
-    if has_errors || exit_nonzero {
-        if let Some(pc) = result.get("project_context") {
-            if let Some(stat) = pc.get("git_diff_stat").and_then(|v| v.as_str()) {
-                if !stat.is_empty() {
-                    text.push_str(&format!("\nChanged files:\n{}", stat));
-                }
-            }
-        }
-    }
     text
 }
 
@@ -820,11 +778,10 @@ mod tests {
             "summary": {"total_tasks": 5},
             "command_patterns": {"unique_commands": 2, "carrier_distribution": {}},
             "efficiency": {
-                "schema_version": "quality-v1",
+                "schema_version": "quality-v2",
                 "components": {
                     "content_convergence_pct": 80.0,
                     "noise_filter_pct": 30.0,
-                    "diagnostic_completeness_pct": 70.0,
                     "dedup_reduction_pct": 10.0
                 }
             }
@@ -875,7 +832,6 @@ mod tests {
             "warning_count": 1,
             "duration_ms": 10500,
             "primary_diagnostic": {"message": "cannot find type `X`"},
-            "project_context": {"git_diff_stat": " src/main.rs | 2 +-"},
             "events": [
                 {"type": "diagnostic", "severity": "error", "message": "cannot find type `X`",
                  "location": {"file": "src/main.rs", "line": 42, "column": 9}},
@@ -889,7 +845,6 @@ mod tests {
         assert!(r.contains("src/main.rs:42: cannot find type `X`"), "{r}");
         assert!(r.contains("src/lib.rs:7: unused import"), "{r}");
         assert!(!r.contains("noise"), "info events must be filtered: {r}");
-        assert!(r.contains("src/main.rs | 2 +-"), "{r}");
     }
 
     #[test]

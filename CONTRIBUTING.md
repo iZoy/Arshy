@@ -1,6 +1,6 @@
 # Contributing to Arshy
 
-Arshy is an AI agent's native shell — we eat our own dog food. All contributions should be tested through arshy itself before submission.
+Contributions from the community are welcome. Use the documented Rust toolchain and CI checks below; no Arshy installation is required to build or test the project.
 
 ## Development Setup
 
@@ -33,14 +33,11 @@ New parsers are ranked by observed use.
 
 ## Project Conventions
 
-### Shell Execution (Dog Fooding)
-Arshy's own development must use arshy for ALL shell commands. See `AGENTS.md` for the full policy. This ensures every feature and fix is validated through real-world usage.
-
-### Documentation Anti-Drift
-Docs are **generated from source facts**, not prose memory. Before any PR that changes runtime behaviour, update the matching doc:
+### Documentation
+Keep user and contributor documentation aligned with source behavior. Before a PR that changes runtime behavior, update the matching page:
 
 - **Storage changed** → `docs/reference/config.md` + `docs/explanation/architecture.md`. The store is **JSONL**: `tasks.jsonl` / `events/<id>.jsonl` / `raw/<id>.txt` / `versions.json`. **Never** document SQLite, `arshy.db`, `wal_mode`, `db_path`, or `backend` — those are removed.
-- **Parser changed** → `docs/reference/parsers.md` + `docs/explanation/parser-pipeline.md` (6-tier: JSON → Stateful → TOML → Crash → Heuristic → Raw; 37 builtin parsers).
+- **Parser changed** → `docs/reference/parsers.md` + `docs/explanation/parser-pipeline.md` (JSON → Stateful → TOML → Crash → Heuristic → Raw).
 - **IPC / MCP changed** → `docs/reference/ipc.md` / `docs/reference/mcp.md`.
 - **Config keys / env vars changed** → `docs/reference/config.md`. Env vars are `ARSHY_<SECTION>_<KEY>`; the settable CLI keys live in `VALID_KEYS` in `src/cli/mod.rs`. Note `security.*` is **not** CLI-settable.
 - The `TaskEvent.hint` / `EventHint` field is a **null wire-compat placeholder only** — do not document it as a feature; HintDb is removed.

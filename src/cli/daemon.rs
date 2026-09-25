@@ -1,7 +1,7 @@
 //! Daemon management and generic local diagnostics.
 
 use arshy_lib::config::Config;
-use arshy_lib::ipc::{self, Request, METHOD_SHUTDOWN, METHOD_STATS, METHOD_STATUS};
+use arshy_lib::ipc::{self, Request, METHOD_HEALTH, METHOD_SHUTDOWN, METHOD_STATS, METHOD_STATUS};
 use arshy_lib::Result;
 use serde::Serialize;
 use std::path::PathBuf;
@@ -143,8 +143,16 @@ struct DoctorReport {
     os: &'static str,
     arch: &'static str,
     daemon: DoctorCheck,
+    store_integrity: StoreIntegrityCheck,
     protocol: ProtocolCheck,
     parser_count: Option<u64>,
+}
+
+#[derive(Serialize)]
+struct StoreIntegrityCheck {
+    status: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    details: Option<String>,
 }
 
 fn doctor_error_message(code: &'static str) -> &'static str {
@@ -285,17 +293,55 @@ pub(crate) async fn doctor(
         }
         Err(_) => DoctorCheck::failed("daemon_unreachable"),
     };
+    let store_integrity = if daemon.status == "ok" {
+        match connect(config_path.clone(), None).await {
+            Ok(mut connection) => {
+                let request = Request {
+                    jsonrpc: "2.0".into(),
+                    id: 2,
+                    method: METHOD_HEALTH.into(),
+                    params: serde_json::json!({}),
+                };
+                match ipc::send_request(&mut connection, &request).await {
+                    Ok(response) if response.result["store_integrity"] == "ok" => {
+                        StoreIntegrityCheck { status: "ok", details: None }
+                    }
+                    Ok(response) => StoreIntegrityCheck {
+                        status: "degraded",
+                        details: response.result["store_integrity_error"]
+                            .as_str()
+                            .map(str::to_owned)
+                            .or_else(|| Some("store integrity check failed".to_string())),
+                    },
+                    Err(error) => StoreIntegrityCheck {
+                        status: "failed",
+                        details: Some(format!("store health request failed: {error}")),
+                    },
+                }
+            }
+            Err(error) => StoreIntegrityCheck {
+                status: "failed",
+                details: Some(format!("cannot connect to daemon for store health: {error}")),
+            },
+        }
+    } else {
+        StoreIntegrityCheck {
+            status: "skipped",
+            details: Some("daemon is unavailable".to_string()),
+        }
+    };
     let protocol = if daemon.status == "ok" {
         check_mcp_protocol(config_path.as_deref()).await
     } else {
         ProtocolCheck::skipped("daemon_unreachable")
     };
-    let failed = daemon.status != "ok" || protocol.status != "ok";
+    let failed = daemon.status != "ok" || store_integrity.status != "ok" || protocol.status != "ok";
     let report = DoctorReport {
         version: env!("CARGO_PKG_VERSION"),
         os: std::env::consts::OS,
         arch: std::env::consts::ARCH,
         daemon,
+        store_integrity,
         protocol,
         parser_count,
     };
@@ -312,6 +358,10 @@ pub(crate) async fn doctor(
                 report.daemon.code,
                 report.daemon.message,
             );
+            println!("  store integrity: {}", report.store_integrity.status);
+            if let Some(details) = &report.store_integrity.details {
+                println!("    {details}");
+            }
             print_doctor_check(
                 "protocol",
                 report.protocol.status,

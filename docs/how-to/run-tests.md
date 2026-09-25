@@ -3,26 +3,24 @@
 arshy 的测试体系分四层：**单元测试 → 集成测试（真实进程）→ Parser fixture → Dogfood 回归**。
 每层回答不同问题，全部通过才允许提交（见 [测试体系](../explanation/testing.md)）。
 
-## 快速运行全部测试
-
-```bash
-cargo build --bin arshy --bin arshyd     # 集成测试需要真实二进制
-cargo test --lib --bin arshy --bin arshyd # 单元测试（517+43+2）
-cargo test --test integration             # 集成测试（真实 daemon + MCP proxy 进程）
-cargo test fixture_cargo                 # 单个 parser fixture 示例（库测试）
-ARSHY=./target/debug/arshy ./scripts/dogfood.sh  # 28 项 dogfood 回归
-```
-
-提交前完整门禁（与 CI 一致）：
+## 提交前运行 CI 检查
 
 ```bash
 cargo fmt --all -- --check
 cargo clippy --all-targets -- -D warnings
-cargo test --lib --bin arshy --bin arshyd
-cargo test --test integration
+cargo test --all-targets --workspace
 cargo doc --no-deps --document-private-items
+cargo build --bin arshy --bin arshyd
 ARSHY=./target/debug/arshy ./scripts/dogfood.sh
+cargo llvm-cov --all-targets --workspace --lcov --output-path lcov.info
+./scripts/check-coverage.sh lcov.info
+cargo package --allow-dirty --no-verify
+bash -n install/install.sh
+bash install/install.sh --version v0.1.0-alpha.1 --dry-run
 ```
+
+Pull request CI runs these checks, along with the coverage gate and Cargo
+package validation. The build prepares debug binaries used by the dogfood script.
 
 ## 单元测试
 
@@ -44,7 +42,7 @@ store），`TestDaemon` 守卫保证进程必被回收，不会污染真实数�
 
 ```bash
 cargo test --test integration          # 全部（macOS / Linux 均可运行）
-cargo test --test integration run_echo # 单个用例
+cargo test --test integration run_short_echo_returns_raw_output # 单个用例
 ```
 
 覆盖范围：daemon health、短命令直出、长命令结构化、跨任务搜索、list/tail、
@@ -64,20 +62,20 @@ kill、安全拦截、优雅关闭、MCP 协议版本协商、MCP 工具调用�
 fixture 测试由 `src/daemon/parser/mod.rs` 的 `run_parser_fixtures` 生成并强制校验字段匹配率。
 
 ```bash
-cargo test fixture_<tool>               # 例如 fixture_cargo / fixture_python（库测试）
+cargo test --bin arshyd fixture_<tool>   # 例如 fixture_cargo
 ```
 
 **新增/更新 fixture（bless 流程）**：
 
 1. 新建或修改 `parsers/builtin/tests/<tool>/<name>.txt`（真实工具输出）；
-2. 运行 `ARSHY_BLESS=1 cargo test fixture_` 自动生成期望 `.json`；
+2. 运行 `ARSHY_BLESS=1 cargo test --bin arshyd` 自动生成期望 `.json`；
 3. 人工检查生成的 `.json` 符合预期（severity/code/file/line 字段）；
-4. 正常跑 `cargo test fixture_` 确认通过（字段匹配率 ≥95%）。
+4. 正常跑 `cargo test --bin arshyd fixture_` 确认字段匹配率至少 95%，且事件数量完全一致。
 
 ## Dogfood 回归
 
 `scripts/dogfood.sh` 让 arshy 用自己跑自己：daemon 健康、短/长命令、错误提取
-（E0308 + 源码上下文）、git 关联、安全拦截、去重、stats/analyze，共 28 项。
+（E0308 位置与错误码）、安全拦截、去重、stats/analyze。
 
 ```bash
 ARSHY=./target/debug/arshy ./scripts/dogfood.sh
@@ -89,5 +87,5 @@ dogfood 所有命令自动打 `--purpose dogfood` 标签，不会污染"真实�
 
 ## CI 门禁
 
-`.github/workflows/ci.yml` 在 push/PR 时依次执行：fmt check → clippy
-`-D warnings` → 单元测试 → doc build → 集成测试 → dogfood。全部通过才算绿。
+`.github/workflows/ci.yml` 在 push/PR 时执行格式检查、Clippy、workspace 测试、
+文档构建、集成测试和 dogfood。全部通过才算绿。

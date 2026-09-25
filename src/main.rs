@@ -50,7 +50,7 @@ mod tests {
 
 #[derive(clap::Subcommand, Debug)]
 pub enum CliCommand {
-    /// Execute a shell command
+    /// Execute a shell command with non-interactive sh -c (null stdin; no PTY)
     Run {
         command: String,
         #[arg(long)]

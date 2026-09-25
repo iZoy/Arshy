@@ -6,21 +6,25 @@ universal claim.
 
 ## Execution counters
 
-Run responses may include exact `raw_output_bytes`, structured event counts,
-locations, codes, contexts, and deduplication counters. They describe that
-command only and are not an efficiency claim.
+Run responses may include `raw_output_bytes`, structured event counts,
+locations, codes, and deduplication counters. `raw_output_bytes` counts
+bytes read from stdout and stderr before UTF-8 replacement, line truncation, or
+the total-output capture limit, including bytes drained after capture stops to
+keep child pipes from blocking. On timeout it covers bytes consumed before the
+deadline; it does not promise byte-for-byte replay from `raw_output`. These
+counters describe that command only and are not an efficiency claim.
 
-## Quality components (`quality-v1`)
+## Quality components (`quality-v2`)
 
 The explicit `stats`, `analyze`, and `benchmark` commands may include:
 
 ```json
 {
-  "schema_version": "quality-v1",
+  "schema_version": "quality-v2",
   "components": {
     "content_convergence_pct": 81.2,
     "noise_filter_pct": 34.0,
-    "diagnostic_completeness_pct": 76.5,
+    "diagnostic_completeness_pct": null,
     "dedup_reduction_pct": 9.1
   },
   "counters": {}
@@ -40,8 +44,9 @@ version, workload, platform, sample size, and raw counters together.
 
 ```bash
 ARSHY=./target/release/arshy JSON=1 scripts/measure-savings.sh \
-  > docs/evidence/quality-v1.json
+  > target/quality-v2.json
 ```
 
 The script reports per-ecosystem command outcomes and the component-only
-quality report. It does not estimate tokens.
+quality report. It does not estimate tokens. Diagnostic completeness is
+unavailable because source-context enrichment has been removed.

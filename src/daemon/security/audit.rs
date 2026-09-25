@@ -3,6 +3,8 @@
 use crate::Result;
 use serde::Serialize;
 use std::io::Write;
+#[cfg(unix)]
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -32,7 +34,13 @@ impl AuditLog {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let file = std::fs::OpenOptions::new().create(true).append(true).open(path)?;
+        let mut options = std::fs::OpenOptions::new();
+        options.create(true).append(true);
+        #[cfg(unix)]
+        options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
+        let file = options.open(path)?;
+        #[cfg(unix)]
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
         Ok(Self { path: path.to_path_buf(), file: Mutex::new(file) })
     }
 
@@ -80,6 +88,30 @@ mod tests {
         log.log(&test_entry("t1", "echo hello")).unwrap();
 
         assert!(path.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn audit_log_is_owner_only() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("audit.log");
+        let _log = AuditLog::new(&path).unwrap();
+        let mode = std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn audit_log_refuses_symlink_targets() {
+        let tmp = TempDir::new().unwrap();
+        let target = tmp.path().join("sensitive.txt");
+        std::fs::write(&target, "keep permissions").unwrap();
+        let link = tmp.path().join("audit.log");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        assert!(AuditLog::new(&link).is_err());
+        let mode = std::fs::metadata(target).unwrap().permissions().mode() & 0o777;
+        assert_ne!(mode, 0o600);
     }
 
     #[test]

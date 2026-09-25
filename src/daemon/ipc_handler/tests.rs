@@ -29,8 +29,6 @@ async fn spawn_daemon_pair() -> (DaemonConnection, mpsc::Receiver<Notification>,
         let _ = handle(daemon_stream, 0, executor, store_clone, bus, sd_tx).await;
     });
 
-    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-
     let (conn, notif_rx) = DaemonConnection::new(client_stream);
     (conn, notif_rx, store, tmp)
 }
@@ -413,8 +411,6 @@ async fn e2e_parallel_connections() {
         let _ = handle(d2, 1, exec2, store2, bus2, sd2).await;
     });
 
-    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-
     let (mut conn1, _notif1) = DaemonConnection::new(c1);
     let (mut conn2, _notif2) = DaemonConnection::new(c2);
 
@@ -481,7 +477,6 @@ async fn spawn_secure_daemon(
         let _ = handle(daemon_stream, 0, executor, store, bus, sd_tx).await;
     });
 
-    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     let (conn, notif_rx) = DaemonConnection::new(client_stream);
     (conn, notif_rx, tmp)
 }
@@ -510,7 +505,6 @@ async fn spawn_secure_daemon_with_audit(
         let _ = handle(daemon_stream, 0, executor, store, bus, sd_tx).await;
     });
 
-    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     let (conn, notif_rx) = DaemonConnection::new(client_stream);
     (conn, notif_rx, tmp)
 }

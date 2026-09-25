@@ -6,6 +6,9 @@ mod transport;
 pub use transport::*;
 
 use serde::{Deserialize, Serialize};
+
+/// Maximum command-output text included inline in an MCP execution response.
+pub const MCP_INLINE_OUTPUT_LIMIT_BYTES: usize = 16 * 1024;
 use std::collections::HashMap;
 
 // ── Method names ─────────────────────────────────────────────────────────────
@@ -159,7 +162,7 @@ pub struct TaskEvent {
     pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub location: Option<EventLocation>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing)]
     pub context: Option<EventContext>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hint: Option<EventHint>,
@@ -323,15 +326,9 @@ pub struct StatsResponse {
     /// Parser coverage: percentage of events that aren't raw log fallback.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parser_coverage_pct: Option<f64>,
-    /// Number of error/warning events enriched with source context.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub context_enriched: Option<u64>,
     /// Total duplicate events collapsed by deduplicator.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dedup_collapsed: Option<u64>,
-    /// Total errors correlated with recent git changes.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub correlated_errors: Option<u64>,
     /// Per-parser usage counts (top parsers by task count).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub per_parser_usage: Option<Vec<ParserCount>>,
@@ -353,9 +350,6 @@ pub struct StatsResponse {
     /// Total error codes extracted across all tasks.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub total_codes_extracted: Option<u64>,
-    /// Total contexts enriched across all tasks.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub total_contexts_enriched: Option<u64>,
     /// Versioned, analytics-only efficiency report. Never present in a run
     /// response or on the executor's hot path.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -389,7 +383,6 @@ pub struct EfficiencyCounters {
     pub dedup_collapsed_events: u64,
     pub locations_extracted: u64,
     pub codes_extracted: u64,
-    pub contexts_enriched: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -418,6 +411,28 @@ mod tests {
         assert!(TaskStatus::Failed.is_terminal());
         assert!(TaskStatus::Killed.is_terminal());
         assert!(TaskStatus::Timeout.is_terminal());
+    }
+
+    #[test]
+    fn task_events_do_not_serialize_context_payloads() {
+        let event = TaskEvent {
+            seq: 0,
+            event_type: "diagnostic".into(),
+            severity: Some("error".into()),
+            code: Some("E1".into()),
+            message: "original error".into(),
+            location: None,
+            context: Some(EventContext {
+                before: vec!["secret source".into()],
+                line: "source line".into(),
+                after: vec![],
+            }),
+            hint: None,
+        };
+        let serialized = serde_json::to_value(event).unwrap();
+        assert_eq!(serialized["message"], "original error");
+        assert!(serialized.get("context").is_none());
+        assert!(!serialized.to_string().contains("secret source"));
     }
 
     #[test]

@@ -41,6 +41,9 @@ impl ContextEnricher {
     /// Skips events that already have context, aren't error/warning,
     /// or have no location.
     pub fn enrich(&mut self, events: &mut [TaskEvent], cwd: &Path) {
+        let Ok(cwd) = cwd.canonicalize() else {
+            return;
+        };
         for event in events.iter_mut() {
             if event.context.is_some() {
                 continue;
@@ -52,14 +55,17 @@ impl ContextEnricher {
                 Some(loc) => loc,
                 None => continue,
             };
-            if let Some(ctx) = self.read_context(cwd, loc) {
+            if let Some(ctx) = self.read_context(&cwd, loc) {
                 event.context = Some(ctx);
             }
         }
     }
 
     fn read_context(&mut self, cwd: &Path, loc: &EventLocation) -> Option<EventContext> {
-        let path = cwd.join(&loc.file);
+        let path = cwd.join(&loc.file).canonicalize().ok()?;
+        if !path.starts_with(cwd) {
+            return None;
+        }
         const MAX_CONTEXT_FILE_BYTES: u64 = 2 * 1024 * 1024;
         const MAX_CONTEXT_FILES: usize = 32;
         if !self.file_cache.contains_key(&path) && self.file_cache.len() >= MAX_CONTEXT_FILES {
@@ -204,6 +210,59 @@ mod tests {
             hint: None,
         }];
         enricher.enrich(&mut events, std::path::Path::new("."));
+        assert!(events[0].context.is_none());
+    }
+
+    #[test]
+    fn enricher_rejects_paths_outside_cwd() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cwd = tmp.path().join("project");
+        std::fs::create_dir(&cwd).unwrap();
+        let outside = tmp.path().join("secret.rs");
+        std::fs::write(&outside, "secret outside project\n").unwrap();
+
+        let mut enricher = ContextEnricher::new(3);
+        let mut events = ["../secret.rs", outside.to_str().unwrap()]
+            .into_iter()
+            .map(|file| TaskEvent {
+                seq: 0,
+                event_type: "diagnostic".into(),
+                severity: Some("error".into()),
+                code: None,
+                message: "external location".into(),
+                location: Some(EventLocation { file: file.into(), line: 1, column: None }),
+                context: None,
+                hint: None,
+            })
+            .collect::<Vec<_>>();
+
+        enricher.enrich(&mut events, &cwd);
+        assert!(events.iter().all(|event| event.context.is_none()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn enricher_rejects_symlinks_escaping_cwd() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cwd = tmp.path().join("project");
+        std::fs::create_dir(&cwd).unwrap();
+        let outside = tmp.path().join("secret.rs");
+        std::fs::write(&outside, "secret outside project\n").unwrap();
+        std::os::unix::fs::symlink(&outside, cwd.join("linked.rs")).unwrap();
+
+        let mut enricher = ContextEnricher::new(3);
+        let mut events = vec![TaskEvent {
+            seq: 0,
+            event_type: "diagnostic".into(),
+            severity: Some("error".into()),
+            code: None,
+            message: "symlink location".into(),
+            location: Some(EventLocation { file: "linked.rs".into(), line: 1, column: None }),
+            context: None,
+            hint: None,
+        }];
+
+        enricher.enrich(&mut events, &cwd);
         assert!(events[0].context.is_none());
     }
 

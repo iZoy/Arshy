@@ -21,16 +21,15 @@ pub(crate) use background::{run_background, BackgroundTask, CompletionInfo};
 pub(crate) use cwd::prepare_cwd;
 #[allow(unused_imports)]
 pub(crate) use decision::{classify_carrier, is_short_command, is_short_command_with_route};
-pub(crate) use enrich::{
-    compute_enhanced_project_context, enrich_events, filter_events_errors_only,
-    select_primary_diagnostic,
-};
+pub(crate) use enrich::select_primary_diagnostic;
 
 use crate::ipc::{Task, TaskStatus};
 use crate::ArshyError;
 use crate::Result;
-use std::collections::HashMap;
+use sha2::{Digest, Sha256};
+use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, RwLock};
+use std::time::Instant;
 use tokio::sync::{oneshot, Mutex as TokioMutex, Semaphore};
 
 use super::bus::EventBus;
@@ -39,6 +38,20 @@ use super::parser::Engine;
 use super::reference::ReferenceTable;
 use super::security::{AuditEntry, AuditLog, CommandFilter, RateLimiter};
 use super::store::Store;
+
+type RunDedupCache = HashMap<String, (RunResult, Instant, usize)>;
+
+#[derive(serde::Serialize)]
+struct RunDedupRequest<'a> {
+    command: &'a str,
+    cwd: Option<&'a str>,
+    timeout_ms: Option<u64>,
+    mode: &'a str,
+    parse_hint: Option<&'a str>,
+    env: Option<BTreeMap<&'a str, &'a str>>,
+    errors_only: bool,
+    purpose: Option<&'a str>,
+}
 
 /// Core executor that owns the store, parser, and event bus.
 pub struct Executor {
@@ -60,7 +73,7 @@ pub struct Executor {
     /// Short-lived cache of run results keyed by the proxy-injected
     /// `dedup_key` (MCP request id). Prevents a replayed `tools/call` after a
     /// connection blip from executing the same command twice.
-    run_dedup: Arc<TokioMutex<HashMap<String, (RunResult, std::time::Instant)>>>,
+    run_dedup: Arc<TokioMutex<RunDedupCache>>,
     /// Per-key single-flight locks close the race between the cache lookup and
     /// execution. Weak entries disappear once all callers for a key finish.
     run_dedup_locks: Arc<TokioMutex<HashMap<String, std::sync::Weak<TokioMutex<()>>>>>,
@@ -100,6 +113,52 @@ const RUN_DEDUP_TTL_SECS: u64 = 120;
 /// Cap on dedup cache entries to bound memory.
 const RUN_DEDUP_CACHE_MAX: usize = 256;
 
+/// Bound cached response memory as well as entry count. A single oversized
+/// result may exceed this budget, but it replaces all older entries so the
+/// cache cannot retain several large raw outputs at once.
+const RUN_DEDUP_CACHE_MAX_BYTES: usize = 64 * 1024 * 1024;
+
+fn run_dedup_cache_key(key: &str, request: &RunDedupRequest<'_>) -> String {
+    let fingerprint = serde_json::to_vec(request).unwrap_or_default();
+    let digest = Sha256::digest(fingerprint);
+    let fingerprint = digest.iter().map(|byte| format!("{byte:02x}")).collect::<String>();
+    format!("{key}:{fingerprint}")
+}
+
+fn run_result_size(result: &RunResult) -> usize {
+    std::mem::size_of::<RunResult>()
+        .saturating_add(result.task_id.len())
+        .saturating_add(result.raw_output.as_ref().map_or(0, String::len))
+        .saturating_add(
+            result.primary_diagnostic.as_ref().map_or(0, |value| value.to_string().len()),
+        )
+}
+
+fn cache_run_result(
+    cache: &mut RunDedupCache,
+    key: String,
+    result: RunResult,
+    inserted_at: Instant,
+) {
+    cache.retain(|_, (_, at, _)| at.elapsed().as_secs() < RUN_DEDUP_TTL_SECS);
+    let result_size = run_result_size(&result);
+    let mut cached_bytes =
+        cache.values().fold(0usize, |total, (_, _, bytes)| total.saturating_add(*bytes));
+
+    while !cache.is_empty()
+        && (cache.len() >= RUN_DEDUP_CACHE_MAX
+            || cached_bytes.saturating_add(result_size) > RUN_DEDUP_CACHE_MAX_BYTES)
+    {
+        let oldest = cache.iter().min_by_key(|(_, (_, at, _))| *at).map(|(key, _)| key.clone());
+        let Some(oldest) = oldest else { break };
+        if let Some((_, _, bytes)) = cache.remove(&oldest) {
+            cached_bytes = cached_bytes.saturating_sub(bytes);
+        }
+    }
+
+    cache.insert(key, (result, inserted_at, result_size));
+}
+
 /// Cancellation-safe activity marker for a fast-path command. The proxy can
 /// disconnect while a command is still running; a `Drop` guard guarantees the
 /// idle watchdog is released even when that cancels the executor future.
@@ -119,13 +178,22 @@ impl Drop for FastActivityGuard {
 }
 
 impl Executor {
+    /// Create an executor with the default security policy.
+    ///
+    /// Call [`Self::with_security`] to replace it with application-specific
+    /// security settings before accepting requests.
     pub fn new(store: Arc<Store>, parser: Arc<Engine>, event_bus: EventBus) -> Self {
+        // Keep the public library constructor safe by default. The daemon
+        // replaces this with the user's configured policy via `with_security`.
+        let default_security = crate::config::SecurityConfig::default();
+        let filter = CommandFilter::from_config(&default_security)
+            .expect("the built-in security policy must contain valid regular expressions");
         Self {
             store,
             parser,
             event_bus,
             config: ExecutorConfig::default(),
-            filter: CommandFilter::permissive(),
+            filter,
             allowed_cwds: Vec::new(),
             access_level: "full".into(),
             audit_log: None,
@@ -152,6 +220,22 @@ impl Executor {
     }
 
     pub fn with_security(mut self, config: &crate::config::SecurityConfig) -> Result<Self> {
+        if !matches!(config.access_level.as_str(), "full" | "read-only") {
+            return Err(ArshyError::Config(format!(
+                "invalid security.access_level '{}': expected 'full' or 'read-only'",
+                config.access_level
+            )));
+        }
+        if config.rate_limit.enabled
+            && (!config.rate_limit.burst.is_finite()
+                || config.rate_limit.burst < 1.0
+                || !config.rate_limit.max_commands_per_second.is_finite()
+                || config.rate_limit.max_commands_per_second <= 0.0)
+        {
+            return Err(ArshyError::Config(
+                "invalid security.rate_limit: burst must be finite and at least 1, and max_commands_per_second must be finite and greater than 0".into(),
+            ));
+        }
         self.filter = CommandFilter::from_config(config)?;
         self.allowed_cwds = config.allowed_cwds.clone();
         self.access_level = config.access_level.clone();
@@ -184,13 +268,15 @@ impl Executor {
 
     /// Kill all running tasks. Used during daemon shutdown to drain work.
     pub async fn kill_all(&self) {
-        let registry = self.kill_registry.lock().await;
-        let count = registry.len();
+        let senders: Vec<_> = self.kill_registry.lock().await.values().cloned().collect();
+        let count = senders.len();
         if count > 0 {
             tracing::info!("killing {} running task(s)", count);
         }
-        for (_task_id, tx) in registry.iter() {
-            let _ = tx.send(()).await;
+        for tx in senders {
+            // Cancellation is best-effort and idempotent; don't block shutdown
+            // if an earlier request already occupies the one-slot channel.
+            let _ = tx.try_send(());
         }
     }
 
@@ -213,10 +299,26 @@ impl Executor {
         purpose: Option<&str>,
         dedup_key: Option<&str>,
     ) -> Result<RunResult> {
+        let cache_key = dedup_key.map(|key| {
+            let canonical_env = env.map(|values| {
+                values.iter().map(|(name, value)| (name.as_str(), value.as_str())).collect()
+            });
+            let request = RunDedupRequest {
+                command,
+                cwd,
+                timeout_ms,
+                mode,
+                parse_hint,
+                env: canonical_env,
+                errors_only,
+                purpose,
+            };
+            run_dedup_cache_key(key, &request)
+        });
         let mut dedup_guard = None;
-        if let Some(key) = dedup_key {
+        if let Some(key) = cache_key.as_deref() {
             let cache = self.run_dedup.lock().await;
-            if let Some((result, at)) = cache.get(key) {
+            if let Some((result, at, _)) = cache.get(key) {
                 if at.elapsed().as_secs() < RUN_DEDUP_TTL_SECS {
                     return Ok(result.clone());
                 }
@@ -238,7 +340,7 @@ impl Executor {
 
             // Another caller may have completed while this caller waited.
             let cache = self.run_dedup.lock().await;
-            if let Some((result, at)) = cache.get(key) {
+            if let Some((result, at, _)) = cache.get(key) {
                 if at.elapsed().as_secs() < RUN_DEDUP_TTL_SECS {
                     return Ok(result.clone());
                 }
@@ -251,12 +353,9 @@ impl Executor {
             .run_inner(command, cwd, timeout_ms, mode, parse_hint, env, errors_only, purpose)
             .await?;
 
-        if let Some(key) = dedup_key {
+        if let Some(key) = cache_key {
             let mut cache = self.run_dedup.lock().await;
-            cache.retain(|_, (_, at)| at.elapsed().as_secs() < RUN_DEDUP_TTL_SECS);
-            if cache.len() < RUN_DEDUP_CACHE_MAX {
-                cache.insert(key.to_string(), (result.clone(), std::time::Instant::now()));
-            }
+            cache_run_result(&mut cache, key, result.clone(), Instant::now());
         }
 
         drop(dedup_guard);
@@ -281,7 +380,7 @@ impl Executor {
         mode: &str,
         parse_hint: Option<&str>,
         env: Option<&HashMap<String, String>>,
-        errors_only: bool,
+        _errors_only: bool,
         purpose: Option<&str>,
     ) -> Result<RunResult> {
         if !matches!(mode, "auto" | "sync" | "async") {
@@ -295,7 +394,9 @@ impl Executor {
         {
             let mut limiter = self.rate_limiter.lock().await;
             if !limiter.try_acquire() {
-                tracing::warn!("rate limit exceeded for command: {}", command);
+                // Commands can contain credentials or other user data. Keep
+                // them out of process logs even when requests are rejected.
+                tracing::warn!("rate limit exceeded for command request");
                 return Err(ArshyError::Ipc(
                     "rate limit exceeded: too many commands per second".into(),
                 ));
@@ -328,9 +429,10 @@ impl Executor {
         check_result?;
 
         // ── CWD accessibility check & symlink fallback ──────────────────
-        // macOS TCC restricts PTY child processes from accessing ~/Documents etc.
-        // If the target cwd is restricted, create a symlink at /tmp/.arshy-cwd/<hash>
-        // that bypasses TCC, and inject ARSHY_CWD so the command knows the real path.
+        // Some macOS privacy configurations can restrict child access to
+        // ~/Documents, ~/Desktop, and ~/Downloads. For those paths we try a
+        // private symlink alias; this does not guarantee TCC access, and
+        // ARSHY_CWD carries the requested path for tools that need it.
         let cwd_path = cwd.map(std::path::PathBuf::from);
         let mut effective_env = env.cloned();
         let (fallback_cwd, symlink_to_cleanup) = if let Some(ref real) = cwd_path {
@@ -534,7 +636,6 @@ impl Executor {
                 raw_output: None,
                 short_command: false,
                 primary_diagnostic: None,
-                project_context: None,
                 raw_output_bytes: None,
             });
         }
@@ -564,7 +665,6 @@ impl Executor {
                                 raw_output: None,
                                 short_command: false,
                                 primary_diagnostic: None,
-                                project_context: None,
                                 raw_output_bytes: None,
                             });
                         }
@@ -575,45 +675,24 @@ impl Executor {
 
                 match completion {
                     Ok(info) => {
-                        // Query a bounded page for counts and project context.
-                        // The full events array is NOT sent to the agent; use arshy_query for detail.
-                        let (events_json, mut event_summary): (
-                            Option<Vec<serde_json::Value>>,
-                            super::store::EventSummary,
-                        ) = {
+                        // Keep the complete diagnostics in the store. The proxy emits only the
+                        // command output inline and exposes a task handle when either channel is
+                        // truncated.
+                        let event_summary = {
                             let params = crate::ipc::QueryParams {
                                 task_id: Some(task_id.clone()),
                                 event_type: None,
                                 severity: None,
                                 code: None,
                                 file: None,
-                                limit: 200,
+                                limit: 0,
                                 offset: 0,
                                 include_logs: false,
                             };
                             self.store
                                 .query_events_with_summary(&params)
-                                .map(|(evts, summary)| {
-                                    (
-                                        Some(
-                                            evts.into_iter()
-                                                .map(|e| {
-                                                    serde_json::to_value(&e).unwrap_or_default()
-                                                })
-                                                .collect(),
-                                        ),
-                                        summary,
-                                    )
-                                })
-                                .unwrap_or((None, super::store::EventSummary::default()))
-                        };
-
-                        let events_json = if errors_only {
-                            event_summary.total = event_summary.errors;
-                            event_summary.warnings = 0;
-                            filter_events_errors_only(&events_json)
-                        } else {
-                            events_json
+                                .map(|(_, summary)| summary)
+                                .unwrap_or_default()
                         };
 
                         // Counts describe the complete visible event set, not
@@ -621,11 +700,6 @@ impl Executor {
                         let response_error_count = event_summary.errors;
                         let response_warning_count = event_summary.warnings;
                         let response_event_count = event_summary.total;
-
-                        // Background completion enriches both sync and async
-                        // tasks before signalling done, so this response reads
-                        // the same persisted representation as later queries.
-                        let enriched_events = events_json.clone();
 
                         // Diagnostic selection must inspect the complete error set. The output
                         // capture limit bounds the event file, while this query avoids making the
@@ -654,22 +728,9 @@ impl Executor {
                             })
                         };
 
-                        let project_context = {
-                            let status_clone = info.status.clone();
-                            let cwd_path_clone = cwd.map(std::path::PathBuf::from);
-                            let events_clone = enriched_events.clone();
-                            tokio::task::spawn_blocking(move || {
-                                compute_enhanced_project_context(
-                                    &status_clone,
-                                    cwd_path_clone.as_deref(),
-                                    events_clone.as_ref().unwrap_or(&vec![]),
-                                )
-                            })
-                            .await
-                            .unwrap_or(None)
-                        };
-
                         let raw_len = store_for_enrichment.get_task_raw_output_bytes(&task_id);
+                        let raw_output =
+                            store_for_enrichment.get_task_raw_output(&task_id).ok().flatten();
                         Ok(RunResult {
                             task_id: task_id.clone(),
                             status: info.status.clone(),
@@ -678,10 +739,9 @@ impl Executor {
                             error_count: Some(response_error_count),
                             warning_count: Some(response_warning_count),
                             event_count: Some(response_event_count),
-                            raw_output: None,
+                            raw_output,
                             short_command: false,
                             primary_diagnostic,
-                            project_context,
                             raw_output_bytes: Some(raw_len),
                         })
                     }
@@ -696,7 +756,6 @@ impl Executor {
                         raw_output: None,
                         short_command: false,
                         primary_diagnostic: None,
-                        project_context: None,
                         raw_output_bytes: None,
                     }),
                 }
@@ -708,7 +767,8 @@ impl Executor {
     /// Zero-overhead raw-output path for inspection commands.
     ///
     /// Skips Store insert, parser session, EventBus — directly spawns, waits,
-    /// and returns raw stdout. Security checks and audit logging still apply.
+    /// and returns stdout/stderr lines in reader arrival order. Security
+    /// checks and audit logging still apply.
     async fn run_short(
         &self,
         command: &str,
@@ -717,6 +777,7 @@ impl Executor {
         env: Option<&HashMap<String, String>>,
     ) -> Result<RunResult> {
         let task_id = uuid::Uuid::new_v4().to_string();
+        let started_at = chrono::Utc::now().to_rfc3339();
         let start = std::time::Instant::now();
 
         let cwd_path = cwd.map(std::path::PathBuf::from);
@@ -726,7 +787,8 @@ impl Executor {
         let effective_timeout = timeout_ms
             .map(|value| value.min(self.config.max_task_duration_ms))
             .unwrap_or(self.config.max_task_duration_ms);
-        let timeout_dur = tokio::time::Duration::from_millis(effective_timeout);
+        let deadline =
+            tokio::time::Instant::now() + tokio::time::Duration::from_millis(effective_timeout);
 
         // Collect both stdout and stderr (the `_source` tag is deliberately
         // ignored): short commands return one merged raw blob so a failing
@@ -738,8 +800,7 @@ impl Executor {
         let max_bytes = self.config.max_output_bytes;
         let timed_out = tokio::select! {
             _result = async {
-                while let Some((_source, line)) = handle.output_rx.recv().await {
-                    let line_bytes = line.len() as u64 + u64::from(!stdout_lines.is_empty());
+                while let Some((_source, line, line_bytes)) = handle.output_rx.recv().await {
                     total_bytes = total_bytes.saturating_add(line_bytes);
                     if !truncated && captured_bytes.saturating_add(line_bytes) <= max_bytes {
                         captured_bytes = captured_bytes.saturating_add(line_bytes);
@@ -752,19 +813,40 @@ impl Executor {
                     }
                 }
             } => Ok(()),
-            _ = tokio::time::sleep(timeout_dur) => {
+            _ = tokio::time::sleep_until(deadline) => {
                 let _ = handle.force_kill();
                 Err(())
             }
         };
 
-        let exit_code = match handle.wait().await {
-            Ok(code) => code.unwrap_or(-1),
-            Err(_) => -1,
+        // Closing stdout/stderr does not mean the process exited. Keep the
+        // original deadline active while reaping the shell as well.
+        let wait_result = if timed_out.is_ok() {
+            tokio::select! {
+                result = handle.wait() => Some(result),
+                _ = tokio::time::sleep_until(deadline) => None,
+            }
+        } else {
+            None
+        };
+        let timed_out = timed_out.is_err() || wait_result.is_none();
+        if wait_result.is_none() {
+            let _ = handle.force_kill();
+        }
+        let exit_code = if timed_out {
+            -2
+        } else {
+            match match wait_result {
+                Some(result) => result,
+                None => handle.wait().await,
+            } {
+                Ok(code) => code.unwrap_or(-1),
+                Err(_) => -1,
+            }
         };
 
         let duration_ms = start.elapsed().as_millis() as u64;
-        let status = if timed_out.is_err() {
+        let status = if timed_out {
             TaskStatus::Timeout
         } else {
             match exit_code {
@@ -774,11 +856,37 @@ impl Executor {
         };
 
         let mut raw_output = stdout_lines.join("\n");
+        let mut persist_captured_output = truncated;
         if truncated {
             if !raw_output.is_empty() {
                 raw_output.push('\n');
             }
             raw_output.push_str(&format!("[output truncated at {} bytes]", max_bytes));
+        }
+        persist_captured_output |= raw_output.len() > crate::ipc::MCP_INLINE_OUTPUT_LIMIT_BYTES;
+        if persist_captured_output {
+            // A truncated fast-path result needs a real handle so callers can
+            // retrieve the captured output later when the MCP inline response
+            // is clipped. Bytes beyond the configured capture limit are
+            // deliberately drained and discarded.
+            self.store.insert_task(&crate::ipc::Task {
+                task_id: task_id.clone(),
+                command: command.to_string(),
+                cwd: cwd.map(str::to_owned),
+                status: status.clone(),
+                exit_code: Some(exit_code),
+                pid: None,
+                parser_name: None,
+                started_at,
+                finished_at: Some(chrono::Utc::now().to_rfc3339()),
+                duration_ms: Some(duration_ms),
+                events_count: 0,
+                error_count: 0,
+                purpose: None,
+                carrier: None,
+            })?;
+            self.store.update_task_raw_output(&task_id, &raw_output)?;
+            self.store.update_task_raw_output_bytes(&task_id, total_bytes)?;
         }
 
         // Audit log
@@ -805,7 +913,6 @@ impl Executor {
             raw_output: Some(raw_output),
             short_command: true,
             primary_diagnostic: None,
-            project_context: None,
             raw_output_bytes: Some(total_bytes),
         })
     }
@@ -824,17 +931,38 @@ impl Executor {
             )));
         }
 
-        let kill_tx = self.kill_registry.lock().await.remove(task_id);
+        let kill_tx = self.kill_registry.lock().await.get(task_id).cloned();
         match kill_tx {
             Some(tx) => {
-                // Signal the background task to initiate graceful kill
-                let _ = tx.send(()).await;
-                Ok(())
+                // Keep the sender registered until the background task has
+                // fully completed. This makes concurrent/repeated cancel
+                // requests idempotent instead of making the second request
+                // mistake an in-progress cancellation for a missing worker.
+                match tx.try_send(()) {
+                    Ok(()) | Err(tokio::sync::mpsc::error::TrySendError::Full(())) => Ok(()),
+                    Err(tokio::sync::mpsc::error::TrySendError::Closed(())) => {
+                        Err(ArshyError::Ipc(format!(
+                            "task {} is no longer accepting cancellation",
+                            task_id
+                        )))
+                    }
+                }
             }
             None => {
                 // A Running task without a registry entry is inconsistent but
                 // cannot be controlled. Make it terminal so it does not pin
                 // daemon idle exit forever.
+                let current = self
+                    .store
+                    .get_task(task_id)?
+                    .ok_or_else(|| ArshyError::TaskNotFound(task_id.to_string()))?;
+                if current.status.is_terminal() {
+                    return Err(ArshyError::Ipc(format!(
+                        "task {} is already {}",
+                        task_id,
+                        current.status.as_str()
+                    )));
+                }
                 self.store.update_task(task_id, &TaskStatus::Killed, Some(-1), None)?;
                 self.store.mark_activity();
                 Ok(())
@@ -884,8 +1012,17 @@ impl Executor {
         if format == "raw" {
             let raw_path = self.store.store_dir().join("raw").join(format!("{task_id}.txt"));
             let content = match std::fs::read_to_string(&raw_path) {
-                Ok(c) => c,
-                Err(_) => return Ok(vec![]),
+                Ok(content) => content,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    let expected_bytes = self.store.get_task_raw_output_bytes(task_id);
+                    if expected_bytes == 0 {
+                        return Ok(vec![]);
+                    }
+                    return Err(ArshyError::Exec(format!(
+                        "raw output for task {task_id} is missing ({expected_bytes} bytes recorded)"
+                    )));
+                }
+                Err(error) => return Err(error.into()),
             };
             let all: Vec<String> = content.lines().map(|s| s.to_string()).collect();
             let start = all.len().saturating_sub(lines);

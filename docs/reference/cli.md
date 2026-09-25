@@ -27,7 +27,7 @@ arshy self-update [--dest <dir>]
 `run` is the execution path. It returns structured events and exact output
 counters; it never includes quality analytics. `stats`, `analyze`, and
 `benchmark` are explicit analytics surfaces and may return component-only
-`quality-v1` measurements.
+`quality-v2` measurements.
 
 `doctor --format json` reports only version, OS/architecture, daemon and MCP
 protocol status, and parser count. It runs locally and does not upload data.

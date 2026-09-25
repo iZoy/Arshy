@@ -36,13 +36,13 @@ arshy run "echo hello from arshy"
 | `short_command` | `true` 表示走了零开销的短命令路径 |
 | `task_id` | 任务 ID，后续用 `query` / `tail` / `kill` 引用 |
 
-`echo` 属于短命令白名单：直接返回原始输出，不做解析，因此 `events` 为空。默认输出格式是 JSON——arshy 是 agent-first 的 shell，JSON 是给 agent 消费的默认形态（见第 4 步）。
+`echo` 属于短命令白名单：直接返回捕获文本，不做解析，因此 `events` 为空。这里的“捕获文本”经过逐行读取与 UTF-8 展示处理，并不保证保留原始字节。默认输出格式是 JSON——arshy 是 agent-first 的 shell，JSON 是给 agent 消费的默认形态（见第 4 步）。
 
 ## 第 2 步：观察自动模式（auto-mode）
 
 `arshy run` 默认 `--mode auto`，自动区分命令长短：
 
-- **原始快速路径**（`ls`、`echo`、`git status` 等检查类工具）：立即返回原始输出，零解析开销。
+- **原始快速路径**（`ls`、`echo`、`git status` 等检查类工具）：立即返回捕获文本，零解析开销；不创建持久任务记录，因此该 task ID 不能后续查询或重新读取。
 - **结构化路径**：命令命中 parser 资产，或者包含 chaining、重定向、后台运行、`--watch` 等生命周期信号时，输出进入 6 层解析管线，事件去重、错误附带 `file:line` 与源代码上下文。新增 parser TOML 不需要再修改 Rust 命令名单。
 
 判断一条命令是否走长路径，看返回里的 `short_command` 字段即可。
@@ -163,7 +163,7 @@ arshy list --status running
 arshy query <task_id>
 ```
 
-查看某个任务的原始输出：
+查看某个持久化任务的捕获文本：
 
 ```bash
 arshy tail <task_id> --lines 50
@@ -211,7 +211,7 @@ pretty 视图会展示任务总数（按状态拆分）、事件数、失败率�
 arshy analyze --format pretty
 ```
 
-报告包含 Summary、quality-v1 分项指标、INFORMATION DENSITY 与 COMMAND PATTERNS 等区块。它们是显式 analytics 的工程指标，不是 token 节省估算。
+报告包含 Summary、quality-v2 分项指标、INFORMATION DENSITY 与 COMMAND PATTERNS 等区块。它们是显式 analytics 的工程指标，不是 token 节省估算。
 
 ### 标记任务用途
 

@@ -17,9 +17,10 @@ const SPAWN_RETRIES: usize = 3;
 pub struct ProcessHandle {
     /// OS process ID (available after spawn).
     pub pid: u32,
-    /// Channel receiver for output lines. Each line is (source, text).
-    /// source is "stdout" or "stderr".
-    pub output_rx: mpsc::Receiver<(String, String)>,
+    /// Channel receiver for output lines as (source, rendered text, raw byte count).
+    /// The count includes the line terminator when present and does not include
+    /// synthetic read-error messages.
+    pub output_rx: mpsc::Receiver<(String, String, u64)>,
     /// The child process handle (kept for kill/wait).
     child: Option<Child>,
 }
@@ -44,32 +45,38 @@ fn render_line(bytes: &[u8], truncated: bool) -> String {
     text
 }
 
-async fn stream_output<R>(mut reader: R, source: &'static str, tx: mpsc::Sender<(String, String)>)
-where
+async fn stream_output<R>(
+    mut reader: R,
+    source: &'static str,
+    tx: mpsc::Sender<(String, String, u64)>,
+) where
     R: AsyncRead + Unpin + Send + 'static,
 {
     let mut chunk = [0u8; 8192];
     let mut line = Vec::with_capacity(8192);
     let mut truncated = false;
+    let mut line_bytes = 0u64;
 
     loop {
         let read = match reader.read(&mut chunk).await {
             Ok(0) => break,
             Ok(read) => read,
             Err(error) => {
-                let _ = tx.send((source.into(), format!("[output read error: {error}]"))).await;
+                let _ = tx.send((source.into(), format!("[output read error: {error}]"), 0)).await;
                 return;
             }
         };
 
         for byte in &chunk[..read] {
+            line_bytes = line_bytes.saturating_add(1);
             if *byte == b'\n' {
                 let text = render_line(&line, truncated);
-                if tx.send((source.into(), text)).await.is_err() {
+                if tx.send((source.into(), text, line_bytes)).await.is_err() {
                     return;
                 }
                 line.clear();
                 truncated = false;
+                line_bytes = 0;
             } else if line.len() < MAX_LINE_BYTES {
                 line.push(*byte);
             } else {
@@ -79,7 +86,7 @@ where
     }
 
     if !line.is_empty() || truncated {
-        let _ = tx.send((source.into(), render_line(&line, truncated))).await;
+        let _ = tx.send((source.into(), render_line(&line, truncated), line_bytes)).await;
     }
 }
 
@@ -105,9 +112,11 @@ impl ProcessHandle {
             libc::kill(-(self.pid as libc::pid_t), libc::SIGKILL);
         }
         if let Some(ref mut child) = self.child {
-            child
-                .start_kill()
-                .map_err(|e| crate::ArshyError::Exec(format!("failed to kill process: {}", e)))?;
+            if child.try_wait()?.is_none() {
+                child.start_kill().map_err(|e| {
+                    crate::ArshyError::Exec(format!("failed to kill process: {}", e))
+                })?;
+            }
         }
         Ok(())
     }
@@ -311,7 +320,7 @@ mod tests {
         assert!(handle.pid > 0);
 
         let mut lines = Vec::new();
-        while let Some((source, line)) = handle.output_rx.recv().await {
+        while let Some((source, line, _)) = handle.output_rx.recv().await {
             assert_eq!(source, "stdout");
             lines.push(line);
         }
@@ -326,7 +335,7 @@ mod tests {
         let mut handle = spawn_command("echo error >&2", None, None).await.unwrap();
         let mut stderr_lines = Vec::new();
 
-        while let Some((source, line)) = handle.output_rx.recv().await {
+        while let Some((source, line, _)) = handle.output_rx.recv().await {
             if source == "stderr" {
                 stderr_lines.push(line);
             }
@@ -348,7 +357,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let mut handle = spawn_command("pwd", Some(tmp.path()), None).await.unwrap();
         let mut lines = Vec::new();
-        while let Some((_, line)) = handle.output_rx.recv().await {
+        while let Some((_, line, _)) = handle.output_rx.recv().await {
             lines.push(line);
         }
         assert_eq!(lines.len(), 1);
@@ -363,7 +372,7 @@ mod tests {
     async fn test_spawn_multiline() {
         let mut handle = spawn_command("printf 'line1\nline2\nline3\n'", None, None).await.unwrap();
         let mut lines = Vec::new();
-        while let Some((_, line)) = handle.output_rx.recv().await {
+        while let Some((_, line, _)) = handle.output_rx.recv().await {
             lines.push(line);
         }
         assert_eq!(lines, vec!["line1", "line2", "line3"]);
@@ -394,7 +403,7 @@ mod tests {
     async fn test_spawn_empty_echo() {
         let mut handle = spawn_command("echo ''", None, None).await.unwrap();
         let mut lines = Vec::new();
-        while let Some((_, line)) = handle.output_rx.recv().await {
+        while let Some((_, line, _)) = handle.output_rx.recv().await {
             lines.push(line);
         }
         // Empty echo produces empty line
@@ -406,7 +415,7 @@ mod tests {
     async fn test_spawn_special_characters() {
         let mut handle = spawn_command("echo 'a]b[c{d}e(f)g*h?i$j!k'", None, None).await.unwrap();
         let mut lines = Vec::new();
-        while let Some((_, line)) = handle.output_rx.recv().await {
+        while let Some((_, line, _)) = handle.output_rx.recv().await {
             lines.push(line);
         }
         assert_eq!(lines, vec!["a]b[c{d}e(f)g*h?i$j!k"]);
@@ -417,7 +426,7 @@ mod tests {
     async fn test_spawn_pipe() {
         let mut handle = spawn_command("echo 'hello world' | wc -w", None, None).await.unwrap();
         let mut lines = Vec::new();
-        while let Some((_, line)) = handle.output_rx.recv().await {
+        while let Some((_, line, _)) = handle.output_rx.recv().await {
             lines.push(line);
         }
         assert_eq!(lines.len(), 1);
@@ -431,7 +440,7 @@ mod tests {
         let mut stdout_lines = Vec::new();
         let mut stderr_lines = Vec::new();
 
-        while let Some((source, line)) = handle.output_rx.recv().await {
+        while let Some((source, line, _)) = handle.output_rx.recv().await {
             if source == "stdout" {
                 stdout_lines.push(line);
             } else {
@@ -451,12 +460,14 @@ mod tests {
         writer.write_all(b"before\xffafter\nnext\n").await.unwrap();
         drop(writer);
 
-        let first = rx.recv().await.unwrap().1;
-        let second = rx.recv().await.unwrap().1;
+        let (_, first, first_bytes) = rx.recv().await.unwrap();
+        let (_, second, second_bytes) = rx.recv().await.unwrap();
         task.await.unwrap();
         assert!(first.contains('\u{fffd}'));
         assert!(first.contains("[invalid UTF-8 replaced]"));
+        assert_eq!(first_bytes, 13);
         assert_eq!(second, "next");
+        assert_eq!(second_bytes, 5);
     }
 
     #[tokio::test]
@@ -468,9 +479,10 @@ mod tests {
         writer.write_all(&vec![b'x'; size]).await.unwrap();
         drop(writer);
 
-        let line = rx.recv().await.unwrap().1;
+        let (_, line, raw_bytes) = rx.recv().await.unwrap();
         task.await.unwrap();
         assert!(line.starts_with(&"x".repeat(MAX_LINE_BYTES)));
         assert!(line.ends_with(&format!("[line truncated at {MAX_LINE_BYTES} bytes]")));
+        assert_eq!(raw_bytes, size as u64);
     }
 }

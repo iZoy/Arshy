@@ -30,7 +30,7 @@ arshy_exec、arshy_query 与 arshy_task。如果已有同名但内容不同的�
 冲突，不要直接覆盖。
 
 结构化结果位于 MCP structuredContent，并同时提供文本回退。需要更多诊断时
-使用 arshy_query，需要原始输出时使用 arshy_task 的 raw 操作。
+使用 arshy_query，需要查看捕获文本时使用 arshy_task 的 raw 操作。
 
 ## 数据、安全与反馈
 

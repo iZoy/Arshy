@@ -1,5 +1,6 @@
 //! JSONL file-based storage — tasks and events.
 
+mod context_purge;
 mod events;
 pub mod prune;
 mod schema;
@@ -15,7 +16,7 @@ use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::Notify;
 
-/// Per-task metrics tracking parser pipeline throughput and enrichment.
+/// Per-task metrics tracking parser pipeline throughput.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct TaskMetrics {
@@ -25,7 +26,6 @@ pub struct TaskMetrics {
     pub skipped_noise_events: u64,
     pub locations_extracted: u64,
     pub codes_extracted: u64,
-    pub contexts_enriched: u64,
     pub pairs_merged: u64,
 }
 
@@ -45,7 +45,6 @@ struct TaskRecord {
     task: crate::ipc::Task,
     raw_output: Option<String>,
     dedup_collapsed: u64,
-    correlated_errors: u64,
     metrics: TaskMetrics,
 }
 
@@ -70,7 +69,6 @@ impl Default for TaskRecord {
             },
             raw_output: None,
             dedup_collapsed: 0,
-            correlated_errors: 0,
             metrics: TaskMetrics::default(),
         }
     }
@@ -85,11 +83,14 @@ impl Default for TaskRecord {
 pub struct Store {
     dir: PathBuf,
     tasks: Mutex<HashMap<String, TaskRecord>>,
+    /// Malformed task rows retained verbatim so a later snapshot flush does
+    /// not destroy recoverable bytes before an operator repairs the store.
+    corrupt_task_lines: Mutex<Vec<(usize, String)>>,
     /// Open append handles for active task event streams. Keeping one handle
     /// per task avoids reopening and flushing the JSONL file for every parser
     /// event during a build; handles are dropped when a task is rewritten or
     /// the store is dropped.
-    event_files: Mutex<HashMap<String, std::fs::File>>,
+    event_files: Mutex<HashMap<String, Option<std::fs::File>>>,
     dirty: AtomicBool,
     /// Epoch seconds of the most recent task activity. Initialised at open
     /// time so a never-used daemon still idle-exits after the timeout, and
@@ -112,17 +113,197 @@ pub struct Store {
     activity_notify: Arc<Notify>,
 }
 
+trait RollbackAppend: std::io::Write {
+    fn current_len(&self) -> std::io::Result<u64>;
+    fn rollback_to(&mut self, len: u64) -> std::io::Result<()>;
+}
+
+impl RollbackAppend for std::fs::File {
+    fn current_len(&self) -> std::io::Result<u64> {
+        self.metadata().map(|metadata| metadata.len())
+    }
+
+    fn rollback_to(&mut self, len: u64) -> std::io::Result<()> {
+        self.set_len(len)?;
+        self.sync_data()
+    }
+}
+
+#[derive(Debug)]
+struct AppendFailure {
+    write_error: std::io::Error,
+    rollback_error: Option<std::io::Error>,
+}
+
+fn append_jsonl_line<W: RollbackAppend>(
+    file: &mut W,
+    line: &str,
+) -> std::result::Result<(), AppendFailure> {
+    let original_len = file
+        .current_len()
+        .map_err(|write_error| AppendFailure { write_error, rollback_error: None })?;
+    let write_result = file.write_all(line.as_bytes()).and_then(|()| file.write_all(b"\n"));
+    match write_result {
+        Ok(()) => Ok(()),
+        Err(write_error) => {
+            let rollback_error = file.rollback_to(original_len).err();
+            Err(AppendFailure { write_error, rollback_error })
+        }
+    }
+}
+
+fn handle_append_failure(
+    files: &mut HashMap<String, Option<std::fs::File>>,
+    task_id: &str,
+    failure: AppendFailure,
+) -> crate::Result<()> {
+    if let Some(rollback_error) = failure.rollback_error {
+        // Do not append more bytes after a rollback failure: that would make
+        // later records appear inside a corrupt JSON row.
+        files.insert(task_id.to_string(), None);
+        return Err(crate::ArshyError::Other(format!(
+            "event append failed for task {task_id}: {}; rollback also failed: {}",
+            failure.write_error, rollback_error
+        )));
+    }
+    Err(failure.write_error.into())
+}
+
+/// Keep command history, diagnostics, and raw program output private to the
+/// current user. Store files can contain credentials copied into commands or
+/// printed by build tools, so the store must not inherit a permissive umask.
+fn ensure_private_dir(path: &Path) -> Result<()> {
+    use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
+
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    match std::fs::DirBuilder::new().mode(0o700).create(path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(error) => return Err(error.into()),
+    }
+    // Open without following symlinks, then harden through the descriptor so
+    // a path swap cannot redirect chmod to a different directory.
+    let directory = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)?;
+    let metadata = directory.metadata()?;
+    // SAFETY: geteuid has no preconditions and only reads the effective uid.
+    if !metadata.file_type().is_dir() || metadata.uid() != unsafe { libc::geteuid() } {
+        return Err(crate::ArshyError::Other(format!(
+            "refusing unsafe store directory {} (expected a real directory owned by this user)",
+            path.display()
+        )));
+    }
+    directory.set_permissions(std::fs::Permissions::from_mode(0o700))?;
+    Ok(())
+}
+
+fn secure_existing_file(path: &Path) -> Result<()> {
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_file() => {}
+        Ok(_) => {
+            return Err(crate::ArshyError::Other(format!(
+                "refusing non-regular store file {}",
+                path.display()
+            )))
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.into()),
+    }
+    // Use O_NOFOLLOW and descriptor-based chmod to avoid symlink replacement
+    // races between metadata checks and permission changes.
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)?;
+    let metadata = file.metadata()?;
+    // SAFETY: geteuid has no preconditions and only reads the effective uid.
+    if !metadata.file_type().is_file() || metadata.uid() != unsafe { libc::geteuid() } {
+        return Err(crate::ArshyError::Other(format!(
+            "refusing unsafe store file {} (expected a regular file owned by this user)",
+            path.display()
+        )));
+    }
+    file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    Ok(())
+}
+
+/// Create or replace a private store file, refusing symlink targets.
+pub(super) fn create_private_file(path: &Path) -> Result<std::fs::File> {
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)?;
+    let metadata = file.metadata()?;
+    // SAFETY: geteuid has no preconditions and only reads the effective uid.
+    if !metadata.file_type().is_file() || metadata.uid() != unsafe { libc::geteuid() } {
+        return Err(crate::ArshyError::Other(format!(
+            "refusing unsafe store file {} (expected a regular file owned by this user)",
+            path.display()
+        )));
+    }
+    file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    Ok(file)
+}
+
+fn open_private_append(path: &Path) -> Result<std::fs::File> {
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)?;
+    let metadata = file.metadata()?;
+    // SAFETY: geteuid has no preconditions and only reads the effective uid.
+    if !metadata.file_type().is_file() || metadata.uid() != unsafe { libc::geteuid() } {
+        return Err(crate::ArshyError::Other(format!(
+            "refusing unsafe store file {} (expected a regular file owned by this user)",
+            path.display()
+        )));
+    }
+    file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    Ok(file)
+}
+
+fn secure_store_layout(path: &Path) -> Result<()> {
+    ensure_private_dir(path)?;
+    let raw_dir = path.join("raw");
+    let events_dir = path.join("events");
+    ensure_private_dir(&raw_dir)?;
+    ensure_private_dir(&events_dir)?;
+
+    for name in ["tasks.jsonl", "tasks.jsonl.tmp", "versions.json"] {
+        secure_existing_file(&path.join(name))?;
+    }
+    for directory in [&raw_dir, &events_dir] {
+        for entry in std::fs::read_dir(directory)? {
+            secure_existing_file(&entry?.path())?;
+        }
+    }
+    Ok(())
+}
+
 impl Store {
     /// Open (or create) the JSONL store directory at `path`.
     pub fn open(path: &Path) -> Result<Self> {
         let store_dir = path.to_path_buf();
 
-        std::fs::create_dir_all(&store_dir)?;
+        secure_store_layout(&store_dir)?;
+        context_purge::purge_legacy_context(&store_dir)?;
 
-        // Ensure raw output directory exists
-        std::fs::create_dir_all(store_dir.join("raw"))?;
-
-        let mut tasks_map = load_tasks_from_disk(&store_dir)?;
+        let (mut tasks_map, corrupt_task_lines) = load_tasks_from_disk(&store_dir)?;
         let recovered_at = chrono::Utc::now().to_rfc3339();
         let mut recovered = 0usize;
         for record in tasks_map.values_mut() {
@@ -140,6 +321,7 @@ impl Store {
         let store = Self {
             dir: store_dir,
             tasks: Mutex::new(tasks_map),
+            corrupt_task_lines: Mutex::new(corrupt_task_lines),
             event_files: Mutex::new(HashMap::new()),
             dirty: AtomicBool::new(recovered > 0),
             last_activity: AtomicI64::new(chrono::Utc::now().timestamp()),
@@ -161,15 +343,33 @@ impl Store {
     /// Write the full tasks HashMap to tasks.jsonl atomically.
     fn persist_tasks(&self) -> Result<()> {
         let tasks = self.tasks.lock().unwrap();
+        self.persist_tasks_snapshot(&tasks)
+    }
+
+    /// Persist a snapshot when the caller already owns the task mutex. This is
+    /// needed by prune, which must keep task and event-file locks together so
+    /// an append cannot slip between task removal and file cleanup.
+    fn persist_tasks_snapshot(&self, tasks: &HashMap<String, TaskRecord>) -> Result<()> {
+        let mut corrupt_task_lines = self
+            .corrupt_task_lines
+            .lock()
+            .map_err(|_| crate::ArshyError::Other("corrupt task lines mutex poisoned".into()))?;
         let path = self.dir.join("tasks.jsonl");
         let tmp = self.dir.join("tasks.jsonl.tmp");
-        let mut file = std::fs::File::create(&tmp)?;
+        let mut file = create_private_file(&tmp)?;
         for task in tasks.values() {
             serde_json::to_writer(&mut file, task)?;
             file.write_all(b"\n")?;
         }
+        let mut relocated_corrupt_lines = Vec::with_capacity(corrupt_task_lines.len());
+        for (index, (_, line)) in corrupt_task_lines.iter().enumerate() {
+            file.write_all(line.as_bytes())?;
+            file.write_all(b"\n")?;
+            relocated_corrupt_lines.push((tasks.len() + index + 1, line.clone()));
+        }
         file.sync_all()?;
         std::fs::rename(&tmp, &path)?;
+        *corrupt_task_lines = relocated_corrupt_lines;
         self.dirty.store(false, Ordering::Release);
         Ok(())
     }
@@ -290,28 +490,34 @@ impl Store {
     /// Append a single event JSON line to the per-task file.
     fn append_event_line(&self, task_id: &str, line: &str) -> Result<()> {
         let events_dir = self.dir.join("events");
-        std::fs::create_dir_all(&events_dir)?;
+        ensure_private_dir(&events_dir)?;
         let path = events_dir.join(format!("{}.jsonl", task_id));
         let mut files = self.event_files.lock().expect("event file mutex poisoned");
-        let file = match files.entry(task_id.to_string()) {
-            std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
-            std::collections::hash_map::Entry::Vacant(entry) => {
-                let file = std::fs::OpenOptions::new().create(true).append(true).open(&path)?;
-                entry.insert(file)
-            }
+        if !files.contains_key(task_id) {
+            files.insert(task_id.to_string(), Some(open_private_append(&path)?));
+        }
+        let append_result = {
+            let Some(Some(file)) = files.get_mut(task_id) else {
+                return Err(crate::ArshyError::Other(format!(
+                    "event stream for task {task_id} was disabled after a failed partial append"
+                )));
+            };
+            append_jsonl_line(file, line)
         };
-        file.write_all(line.as_bytes())?;
-        file.write_all(b"\n")?;
+        if let Err(failure) = append_result {
+            return handle_append_failure(&mut files, task_id, failure);
+        }
         Ok(())
     }
 
     /// Write raw output to a per-task file under `<store_dir>/raw/<task_id>.txt`.
     fn write_raw_output(&self, task_id: &str, raw_output: &str) -> Result<()> {
         let raw_dir = self.dir.join("raw");
-        std::fs::create_dir_all(&raw_dir)?;
+        ensure_private_dir(&raw_dir)?;
         let path = raw_dir.join(format!("{}.txt", task_id));
         let tmp = raw_dir.join(format!("{}.txt.tmp", task_id));
-        std::fs::write(&tmp, raw_output)?;
+        use std::io::Write as _;
+        create_private_file(&tmp)?.write_all(raw_output.as_bytes())?;
         std::fs::rename(&tmp, &path)?;
         Ok(())
     }
@@ -329,22 +535,43 @@ impl Store {
     /// Run `integrity_check` — verify tasks.jsonl is parseable.
     pub fn integrity_check(&self) -> Result<String> {
         let tasks = self.lock();
+        let corrupt_task_lines = self
+            .corrupt_task_lines
+            .lock()
+            .map_err(|_| crate::ArshyError::Other("corrupt task lines mutex poisoned".into()))?;
+        if !corrupt_task_lines.is_empty() {
+            let lines = corrupt_task_lines
+                .iter()
+                .map(|(line, _)| line.to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Err(crate::ArshyError::Other(format!(
+                "corrupt task rows in {} at line(s): {}",
+                self.dir.join("tasks.jsonl").display(),
+                lines
+            )));
+        }
         // If we loaded successfully, the data is intact
         // Verify that the events directory is accessible
         let events_dir = self.dir.join("events");
         if events_dir.exists() {
+            let _event_files = self
+                .event_files
+                .lock()
+                .map_err(|_| crate::ArshyError::Other("event file mutex poisoned".into()))?;
             // Try to read each event file
             for entry in std::fs::read_dir(&events_dir)? {
                 let entry = entry?;
                 let path = entry.path();
                 if path.extension().is_some_and(|e| e == "jsonl") {
                     let content = std::fs::read_to_string(&path)?;
-                    for line in content.lines() {
+                    for (line_number, line) in content.lines().enumerate() {
                         if !line.trim().is_empty() {
                             let _: serde_json::Value = serde_json::from_str(line).map_err(|e| {
                                 crate::ArshyError::Other(format!(
-                                    "corrupt event in {}: {}",
+                                    "corrupt event in {} at line {}: {}",
                                     path.display(),
+                                    line_number + 1,
                                     e
                                 ))
                             })?;
@@ -353,6 +580,7 @@ impl Store {
                 }
             }
         }
+        drop(corrupt_task_lines);
         drop(tasks);
         Ok("ok".to_string())
     }
@@ -363,13 +591,16 @@ impl Store {
     }
 }
 
-fn load_tasks_from_disk(dir: &Path) -> Result<HashMap<String, TaskRecord>> {
+type LoadedTasks = (HashMap<String, TaskRecord>, Vec<(usize, String)>);
+
+fn load_tasks_from_disk(dir: &Path) -> Result<LoadedTasks> {
     let path = dir.join("tasks.jsonl");
     let mut map = HashMap::new();
+    let mut corrupt_lines = Vec::new();
     if path.exists() {
         let content = std::fs::read_to_string(&path)?;
-        for (lineno, line) in content.lines().enumerate() {
-            let line = line.trim();
+        for (lineno, raw_line) in content.lines().enumerate() {
+            let line = raw_line.trim();
             if line.is_empty() {
                 continue;
             }
@@ -379,10 +610,12 @@ fn load_tasks_from_disk(dir: &Path) -> Result<HashMap<String, TaskRecord>> {
                     if let Some(ref raw) = record.raw_output {
                         if !raw.is_empty() {
                             let raw_dir = dir.join("raw");
-                            let _ = std::fs::create_dir_all(&raw_dir);
+                            let _ = ensure_private_dir(&raw_dir);
                             let path = raw_dir.join(format!("{}.txt", record.task.task_id));
                             if !path.exists() {
-                                let _ = std::fs::write(&path, raw);
+                                if let Ok(mut file) = create_private_file(&path) {
+                                    let _ = file.write_all(raw.as_bytes());
+                                }
                             }
                         }
                     }
@@ -391,11 +624,12 @@ fn load_tasks_from_disk(dir: &Path) -> Result<HashMap<String, TaskRecord>> {
                 }
                 Err(e) => {
                     tracing::warn!("tasks.jsonl line {} corrupt, skipping: {}", lineno + 1, e);
+                    corrupt_lines.push((lineno + 1, raw_line.to_string()));
                 }
             }
         }
     }
-    Ok(map)
+    Ok((map, corrupt_lines))
 }
 
 // ── Store Tests ─────────────────────────────────────────────────────────────
@@ -404,7 +638,95 @@ fn load_tasks_from_disk(dir: &Path) -> Result<HashMap<String, TaskRecord>> {
 mod tests {
     use super::*;
     use crate::ipc::{EventLocation, QueryParams, Task, TaskEvent, TaskStatus};
+    use std::io;
     use tempfile::TempDir;
+
+    struct FaultWriter {
+        bytes: Vec<u8>,
+        fail_after: Option<usize>,
+        fail_rollback: bool,
+    }
+
+    impl std::io::Write for FaultWriter {
+        fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+            if let Some(limit) = self.fail_after {
+                if self.bytes.len() >= limit {
+                    return Err(io::Error::new(io::ErrorKind::WriteZero, "injected disk full"));
+                }
+                let count = buffer.len().min(limit - self.bytes.len());
+                self.bytes.extend_from_slice(&buffer[..count]);
+                return Ok(count);
+            }
+            self.bytes.extend_from_slice(buffer);
+            Ok(buffer.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl RollbackAppend for FaultWriter {
+        fn current_len(&self) -> io::Result<u64> {
+            Ok(self.bytes.len() as u64)
+        }
+
+        fn rollback_to(&mut self, len: u64) -> io::Result<()> {
+            if self.fail_rollback {
+                return Err(io::Error::other("injected rollback failure"));
+            }
+            self.bytes.truncate(len as usize);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn partial_event_append_rolls_back_before_future_rows() {
+        let previous = b"{\"seq\":1}\n";
+        let mut file = FaultWriter {
+            bytes: previous.to_vec(),
+            fail_after: Some(previous.len() + 4),
+            fail_rollback: false,
+        };
+
+        let failure = append_jsonl_line(&mut file, r#"{"seq":2}"#).unwrap_err();
+        assert!(failure.rollback_error.is_none());
+        assert_eq!(file.bytes, previous);
+
+        file.fail_after = None;
+        append_jsonl_line(&mut file, r#"{"seq":3}"#).unwrap();
+        assert_eq!(file.bytes, b"{\"seq\":1}\n{\"seq\":3}\n");
+        for line in file.bytes.split(|byte| *byte == b'\n').filter(|line| !line.is_empty()) {
+            serde_json::from_slice::<serde_json::Value>(line).unwrap();
+        }
+    }
+
+    #[test]
+    fn rollback_failure_disables_the_event_stream() {
+        let previous = b"{\"seq\":1}\n";
+        let mut writer = FaultWriter {
+            bytes: previous.to_vec(),
+            fail_after: Some(previous.len() + 4),
+            fail_rollback: true,
+        };
+        let failure = append_jsonl_line(&mut writer, r#"{"seq":2}"#).unwrap_err();
+        assert!(failure.rollback_error.is_some());
+        assert!(writer.bytes.len() > previous.len(), "injected write should leave a partial row");
+
+        let (store, _tmp) = test_store();
+        let task = make_task("poisoned-stream", "echo test", TaskStatus::Running);
+        store.insert_task(&task).unwrap();
+        let path = store.dir.join("events/poisoned-stream.jsonl");
+        let file = open_private_append(&path).unwrap();
+        let mut streams = store.event_files.lock().unwrap();
+        streams.insert("poisoned-stream".to_string(), Some(file));
+        handle_append_failure(&mut streams, "poisoned-stream", failure).unwrap_err();
+        drop(streams);
+
+        let error = store.append_event_line("poisoned-stream", r#"{"seq":3}"#).unwrap_err();
+        assert!(error.to_string().contains("disabled after a failed partial append"));
+        assert_eq!(std::fs::metadata(path).unwrap().len(), 0);
+    }
 
     /// Create a temporary store with initialized schema.
     fn test_store() -> (Store, TempDir) {
@@ -507,6 +829,36 @@ mod tests {
         assert_eq!(task.status, TaskStatus::Failed);
         assert!(task.finished_at.is_some());
         assert!(reopened.idle_since_secs().unwrap().is_some());
+    }
+
+    #[test]
+    fn corrupt_task_rows_survive_flush_and_report_relocated_line() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("store");
+        {
+            let store = Store::open(&path).unwrap();
+            store.insert_task(&make_task("recoverable-a", "true", TaskStatus::Completed)).unwrap();
+            store.insert_task(&make_task("recoverable-b", "true", TaskStatus::Completed)).unwrap();
+            store.flush().unwrap();
+        }
+
+        let tasks_path = path.join("tasks.jsonl");
+        let mut original = std::fs::read(&tasks_path).unwrap();
+        original.splice(0..0, b"not-json\n".iter().copied());
+        std::fs::write(&tasks_path, &original).unwrap();
+
+        let reopened = Store::open(&path).unwrap();
+        let integrity_error = reopened.integrity_check().unwrap_err();
+        assert!(integrity_error.to_string().contains("line(s): 1"));
+        reopened.update_task("recoverable-a", &TaskStatus::Failed, Some(1), Some(0)).unwrap();
+        let integrity_error = reopened.integrity_check().unwrap_err();
+        assert!(integrity_error.to_string().contains("line(s): 3"));
+        reopened.flush().unwrap();
+
+        let after_flush = std::fs::read_to_string(tasks_path).unwrap();
+        assert!(after_flush.lines().any(|line| line == "not-json"));
+        assert!(after_flush.contains("recoverable-a"));
+        assert!(after_flush.contains("recoverable-b"));
     }
 
     // ── Schema tests ────────────────────────────────────────────────────────
@@ -685,6 +1037,69 @@ mod tests {
         let task = store.get_task("cnt-1").unwrap().unwrap();
         assert_eq!(task.events_count, 3);
         assert_eq!(task.error_count, 1);
+    }
+
+    #[test]
+    fn finalize_event_stream_preserves_corrupt_event_file() {
+        let (store, _tmp) = test_store();
+        store.insert_task(&make_task("corrupt-evt", "cmd", TaskStatus::Running)).unwrap();
+        let event = make_event("diagnostic", "error", "keep this event");
+        store.insert_event("corrupt-evt", 1, &event).unwrap();
+
+        let event_path = store.store_dir().join("events/corrupt-evt.jsonl");
+        let mut original = std::fs::read(&event_path).unwrap();
+        original.extend_from_slice(b"not-json\n");
+        std::fs::write(&event_path, &original).unwrap();
+
+        store.finalize_event_stream("corrupt-evt").unwrap();
+        assert_eq!(std::fs::read(event_path).unwrap(), original);
+    }
+
+    #[test]
+    fn finalize_event_stream_rejects_unknown_task_without_creating_orphan_file() {
+        let (store, _tmp) = test_store();
+        let error = store.finalize_event_stream("pruned-task").unwrap_err();
+
+        assert!(error.to_string().contains("unknown task pruned-task"));
+        assert!(!store.store_dir().join("events/pruned-task.jsonl").exists());
+        assert!(!store.store_dir().join("events/pruned-task.jsonl.tmp").exists());
+    }
+
+    #[test]
+    fn event_queries_report_corrupt_rows_instead_of_hiding_them() {
+        let (store, _tmp) = test_store();
+        store.insert_task(&make_task("corrupt-query", "cmd", TaskStatus::Completed)).unwrap();
+        store
+            .insert_event("corrupt-query", 1, &make_event("diagnostic", "error", "visible event"))
+            .unwrap();
+
+        let event_path = store.store_dir().join("events/corrupt-query.jsonl");
+        let mut original = std::fs::read(&event_path).unwrap();
+        original.extend_from_slice(b"not-json\n");
+        std::fs::write(&event_path, original).unwrap();
+
+        let integrity_error = store.integrity_check().unwrap_err().to_string();
+        assert!(integrity_error.contains("corrupt event"));
+        assert!(integrity_error.contains("line 2"));
+
+        let per_task = QueryParams {
+            task_id: Some("corrupt-query".into()),
+            event_type: None,
+            severity: None,
+            code: None,
+            file: None,
+            limit: 100,
+            offset: 0,
+            include_logs: true,
+        };
+        let error = store.query_events(&per_task).unwrap_err().to_string();
+        assert!(error.contains("corrupt event"));
+        assert!(error.contains("line 2"));
+
+        let cross_task = QueryParams { task_id: None, ..per_task };
+        let error = store.search_events(&cross_task).unwrap_err().to_string();
+        assert!(error.contains("corrupt event"));
+        assert!(error.contains("line 2"));
     }
 
     #[test]
@@ -966,6 +1381,7 @@ mod tests {
             store
                 .insert_event(&format!("prune-{:03}", i), 1, &make_event("log", "info", "msg"))
                 .unwrap();
+            store.finalize_event_stream(&format!("prune-{:03}", i)).unwrap();
         }
     }
 
@@ -1027,6 +1443,7 @@ mod tests {
         old_task.started_at = old_date;
         store.insert_task(&old_task).unwrap();
         store.insert_event("old-1", 1, &make_event("log", "info", "old")).unwrap();
+        store.finalize_event_stream("old-1").unwrap();
 
         // Insert a task from today
         store.insert_task(&make_task("new-1", "new cmd", TaskStatus::Running)).unwrap();
@@ -1079,5 +1496,99 @@ mod tests {
         store.update_task_raw_output("t2", "second version").unwrap();
         let raw = store.get_task_raw_output("t2").unwrap();
         assert_eq!(raw.as_deref(), Some("second version"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn store_data_is_owner_only_even_with_permissive_umask_and_existing_files() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("store");
+        std::fs::create_dir_all(path.join("raw")).unwrap();
+        std::fs::create_dir_all(path.join("events")).unwrap();
+        std::fs::write(path.join("tasks.jsonl"), "").unwrap();
+        std::fs::write(path.join("raw/old.txt"), "private output").unwrap();
+        std::fs::write(path.join("events/old.jsonl"), "").unwrap();
+        for directory in [path.clone(), path.join("raw"), path.join("events")] {
+            std::fs::set_permissions(directory, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        for file in
+            [path.join("tasks.jsonl"), path.join("raw/old.txt"), path.join("events/old.jsonl")]
+        {
+            std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o644)).unwrap();
+        }
+
+        let store = Store::open(&path).unwrap();
+        store.initialize_schema().unwrap();
+        store.insert_task(&make_task("private", "echo secret-token", TaskStatus::Running)).unwrap();
+        store.insert_event("private", 1, &make_event("log", "info", "private output")).unwrap();
+        store.update_task_raw_output("private", "private output").unwrap();
+        store.flush().unwrap();
+
+        for directory in [path.clone(), path.join("raw"), path.join("events")] {
+            assert_eq!(std::fs::metadata(directory).unwrap().permissions().mode() & 0o777, 0o700);
+        }
+        for file in [
+            path.join("tasks.jsonl"),
+            path.join("events/private.jsonl"),
+            path.join("raw/private.txt"),
+            path.join("raw/old.txt"),
+            path.join("events/old.jsonl"),
+        ] {
+            assert_eq!(std::fs::metadata(file).unwrap().permissions().mode() & 0o777, 0o600);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn store_open_refuses_symlink_root_and_task_file() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+
+        let tmp = TempDir::new().unwrap();
+        let external = tmp.path().join("external");
+        std::fs::create_dir(&external).unwrap();
+        std::fs::set_permissions(&external, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let root_link = tmp.path().join("root-link");
+        symlink(&external, &root_link).unwrap();
+        assert!(Store::open(&root_link).is_err());
+        assert_eq!(
+            std::fs::metadata(&external).unwrap().permissions().mode() & 0o777,
+            0o755,
+            "refusing the symlink must not chmod its target"
+        );
+
+        let store_dir = tmp.path().join("store");
+        std::fs::create_dir(&store_dir).unwrap();
+        let task_target = tmp.path().join("sensitive.jsonl");
+        std::fs::write(&task_target, "external data").unwrap();
+        let task_link = store_dir.join("tasks.jsonl");
+        symlink(&task_target, &task_link).unwrap();
+        assert!(Store::open(&store_dir).is_err());
+        assert_eq!(std::fs::read_to_string(&task_target).unwrap(), "external data");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn store_open_rejects_fifo_without_waiting_for_a_writer() {
+        use std::ffi::CString;
+        use std::os::unix::ffi::OsStrExt;
+
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("store");
+        std::fs::create_dir(&path).unwrap();
+        let task_file = path.join("tasks.jsonl");
+        let c_path = CString::new(task_file.as_os_str().as_bytes()).unwrap();
+        // SAFETY: `c_path` is NUL-terminated and points to a path inside our
+        // temporary directory; mode is restricted to the current user.
+        let result = unsafe { libc::mkfifo(c_path.as_ptr(), 0o600) };
+        assert_eq!(result, 0, "failed to create FIFO fixture");
+
+        let started = std::time::Instant::now();
+        assert!(Store::open(&path).is_err());
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(1),
+            "opening a corrupted store FIFO must fail promptly"
+        );
     }
 }

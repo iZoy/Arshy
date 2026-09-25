@@ -19,6 +19,7 @@ exclude = [
     "/.pre-commit-config.yaml",
     "/.superpowers",
     "/.workbuddy",
+    "/qoder-arhsy",
     "/AGENTS.md",
     "/.gitignore",
     "/CODEOWNERS",
@@ -57,8 +58,9 @@ dirs = "5"
 uuid = { version = "1", features = ["v4"] }
 regex = "1"
 libc = "0.2"
+sha2 = "0.10"
 
-notify = "7"
+notify = "8.2"
 rust-embed = { version = "8", features = ["include-exclude"] }
 
 [dev-dependencies]

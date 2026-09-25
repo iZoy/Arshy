@@ -1,12 +1,11 @@
 # ADR-0002: JSONL 存储维持 + 规模触发线
 
 - **状态**:已采纳（2026-08-22）
-- **关联决策**:审计分歧 4
-- **相关代码**:`src/daemon/store/`、`docs/ROADMAP-STRATEGY.md`
+- **相关代码**:`src/daemon/store/`
 
 ## 背景
 
-存储层曾在 2026-06 从 SQLite 迁移到 JSONL（追加写、零依赖、可调试）。审计发现跨任务全文搜索是**全量扫事件文件**、无索引，存在规模退化风险。项目已反转过一次，不应在没有数据支撑时再次反转。
+JSONL supports append-oriented task and event storage without an external database. Cross-task search scans event files, so its latency can grow with the amount of retained history.
 
 ## 决策
 
@@ -17,7 +16,7 @@
 
 ## 理由
 
-1. JSONL 的读写模式（追加写、查多次、偶尔剪枝）与个人开发场景匹配，简单可靠、任意编辑器可查；
+1. JSONL keeps local storage simple, inspectable, and free of an external database dependency;
 2. 触发线把"何时优化"从争论变成可测量条件；
 3. 派生索引是中间态，成本远低于数据库迁移，且保留 JSONL 的可调试性。
 

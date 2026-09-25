@@ -29,7 +29,7 @@ Changed files:
 
 arshy **不合成 cause/fix/retry 提示**。曾经存在的 HintDb（错误码 → 修复建议映射）被整体移除，执行器注释给出理由：
 
-> arshy's job is structured extraction (file:line location, error code, severity, source context), **not** advice. Synthesising cause/fix hints is the LLM's task.
+> arshy's job is structured extraction (file:line location, error code, severity), **not** advice. Synthesising cause/fix hints is the LLM's task.
 
 静态的"错误码 → 建议"表有两个结构性缺陷：它假设错误与修复存在稳定映射（实际取决于项目上下文），且它把过期建议包装成结构化事实（LLM 会倾向信任）。修复一个编译错误对 LLM 来说是常识，arshy 重复这份常识只会稀释结构化事实的密度。`TaskEvent.hint` 保留为 null 兼容占位，协议留槽、语义不填。
 
@@ -37,11 +37,11 @@ arshy **不合成 cause/fix/retry 提示**。曾经存在的 HintDb（错误码 
 
 ### 准则 3：只暴露本地事实
 
-响应里的每一个增强字段都来自"命令输出 + 本地仓库状态"，不掺任何外部知识：
+响应里的诊断字段都来自命令输出，不掺外部知识：
 
 - `primary_diagnostic` 来自完整错误事件集合（traceback 场景取最后一条诊断错误），不宣称因果；
-- `project_context` 来自本地 `git diff --stat HEAD~1` 与错误文件关联（`correlated_errors`）；
-- ±3 行源码上下文来自本地文件读取。
+- 位置和错误码只在解析器能从命令输出中确认时提供；
+- 不读取源码，也不推断错误成因或修复办法。
 
 没有网络查询、没有模型推理、没有"我们猜你可能想……"。克制在这里同时是诚实：**结构化的价值来自可验证性**，一旦掺入猜测，字段就失去了可信度。
 
@@ -49,9 +49,9 @@ arshy **不合成 cause/fix/retry 提示**。曾经存在的 HintDb（错误码 
 
 "少给 token"很容易被误读成"压缩文本"。arshy 的选择恰恰相反：**优先保留语义，压缩发生在语义提取之后**。
 
-- 对长命令，输出给 agent 的不是压缩后的原文，而是 `file:line: code: message` 的结构化事件——一条 `error[E0425]: cannot find value ...` + `location` + `context` 比截断的原始输出更短，但信息更完整；
+- 对长命令，成功响应优先返回命令输出；失败响应保留错误原文，另以结构化字段提供可核实的位置与错误码。
 - benchmark 同时度量两个指标：`compression_ratio`（raw token / 结构化 token）和 `fields_per_event` / 带 location/code 的事件比例。前者是压缩效率，后者是语义保真——两者被设计为**一起看**，因为"压得很小但丢了位置信息"是失败而不是成功；
-- 短命令的"直通原始输出"同样是语义优先：对 `ls`、`git diff` 这类命令，原始文本就是最高保真的语义，强行结构化反而丢失信息。
+- 短命令的"直通捕获文本"同样是语义优先：对 `ls`、`git diff` 这类命令，行文本就是最直接的语义，强行结构化反而丢失信息。该文本经过 UTF-8 和行处理，并非原始字节流。
 
 ## 原则三：深度 > 广度
 

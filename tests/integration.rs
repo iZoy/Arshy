@@ -18,24 +18,14 @@ use libc::{kill, SIGTERM};
 use serial_test::serial;
 use tempfile::TempDir;
 
-/// Locate the freshly built `arshy` binary (falls back to `~/.cargo/bin`).
+/// Use the binary Cargo built for this integration-test invocation.
 fn arshy_binary() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-    ["target/debug/arshy", &format!("{home}/.cargo/bin/arshy")]
-        .iter()
-        .map(PathBuf::from)
-        .find(|p| p.exists())
-        .unwrap_or_else(|| panic!("arshy not found. Build it first: cargo build --bin arshy"))
+    PathBuf::from(env!("CARGO_BIN_EXE_arshy"))
 }
 
-/// Locate the freshly built `arshyd` binary.
+/// Use the binary Cargo built for this integration-test invocation.
 fn arshyd_binary() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-    ["target/debug/arshyd", &format!("{home}/.cargo/bin/arshyd")]
-        .iter()
-        .map(PathBuf::from)
-        .find(|p| p.exists())
-        .unwrap_or_else(|| panic!("arshyd not found. Build it first: cargo build --bin arshyd"))
+    PathBuf::from(env!("CARGO_BIN_EXE_arshyd"))
 }
 
 /// A running daemon with an isolated socket + store, and a guard that always
@@ -67,6 +57,29 @@ impl TestDaemon {
         let child = cmd
             // Critical: never inherit stdout/stderr pipes — a surviving daemon
             // would keep `cargo test` waiting for pipe EOF forever.
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("failed to spawn arshyd");
+
+        let mut daemon = TestDaemon { child, socket, _tmp: tmp };
+        daemon.wait_ready();
+        daemon
+    }
+
+    fn spawn_with_corrupt_task_store() -> Self {
+        let tmp = TempDir::new().expect("temp dir");
+        let socket = tmp.path().join("arshy.sock");
+        let store = tmp.path().join("store");
+        std::fs::create_dir_all(&store).expect("create store directory");
+        std::fs::write(store.join("tasks.jsonl"), b"not-json\n")
+            .expect("inject malformed task row");
+
+        let child = Command::new(arshyd_binary())
+            .env("ARSHY_DAEMON_SOCKET_PATH", &socket)
+            .env("ARSHY_STORE_STORE_DIR", &store)
+            .env("ARSHY_DAEMON_LOG_LEVEL", "error")
+            .env("ARSHY_TEST_NO_LIFECYCLE", "1")
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
@@ -176,6 +189,33 @@ fn daemon_health_responds() {
     let resp = daemon.rpc(1, "daemon/health", serde_json::json!({}));
     assert_eq!(resp["id"], 1);
     assert!(resp["result"].is_object(), "health should return a result object");
+    assert_eq!(resp["result"]["store_integrity"], "ok");
+    assert!(resp["result"]["store_integrity_error"].is_null());
+}
+
+#[test]
+#[serial]
+fn daemon_health_and_doctor_report_corrupt_task_rows() {
+    let daemon = TestDaemon::spawn_with_corrupt_task_store();
+    let health = daemon.rpc(1, "daemon/health", serde_json::json!({}));
+    assert_eq!(health["result"]["status"], "degraded");
+    assert_eq!(health["result"]["store_integrity"], "degraded");
+    assert!(health["result"]["store_integrity_error"]
+        .as_str()
+        .is_some_and(|details| details.contains("tasks.jsonl") && details.contains("line(s): 1")));
+
+    let output = Command::new(arshy_binary())
+        .args(["doctor", "--format", "json"])
+        .env("ARSHY_DAEMON_SOCKET_PATH", &daemon.socket)
+        .env("ARSHY_DAEMON_LOG_LEVEL", "error")
+        .output()
+        .expect("run doctor");
+    assert!(!output.status.success(), "doctor should fail for a corrupt store");
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).expect("doctor JSON");
+    assert_eq!(report["store_integrity"]["status"], "degraded");
+    assert!(report["store_integrity"]["details"]
+        .as_str()
+        .is_some_and(|details| details.contains("tasks.jsonl") && details.contains("line(s): 1")));
 }
 
 #[test]
@@ -193,6 +233,7 @@ fn doctor_json_is_minimal_and_checks_the_real_mcp_entrypoint() {
     assert_eq!(report["version"], env!("CARGO_PKG_VERSION"));
     assert_eq!(report["daemon"]["status"], "ok");
     assert_eq!(report["protocol"]["status"], "ok");
+    assert_eq!(report["store_integrity"]["status"], "ok");
     assert!(report["parser_count"].as_u64().unwrap_or(0) > 0);
     for forbidden in ["command", "cwd", "environment", "username", "store_path"] {
         assert!(report.get(forbidden).is_none(), "doctor leaked {forbidden}");

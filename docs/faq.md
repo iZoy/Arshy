@@ -10,7 +10,7 @@ step. For a manual fallback, use `arshy mcp config --format json`.
 ### Does it save tokens?
 
 Arshy does not publish a token-saving estimate. Use `stats`, `analyze`, or
-`benchmark` to inspect quality-v1 engineering components.
+`benchmark` to inspect quality-v2 engineering components.
 
 ### Is it a sandbox?
 

@@ -47,11 +47,6 @@ jobs:
           bash -n install/install.sh
           bash install/install.sh --version v0.1.0-alpha.1 --dry-run
 
-      - name: Integration tests (real daemon + MCP proxy processes)
-        run: |
-          cargo build --bin arshy --bin arshyd
-          cargo test --test integration
-
       - name: Coverage (whole repository and critical paths)
         uses: taiki-e/install-action@cargo-llvm-cov
 
@@ -60,7 +55,7 @@ jobs:
           cargo llvm-cov --all-targets --workspace --lcov --output-path lcov.info
           ./scripts/check-coverage.sh lcov.info
 
-      - name: Package audit
+      - name: Validate Cargo package
         run: cargo package --allow-dirty --no-verify
 
       - name: Dogfood (run the project through arshy itself)

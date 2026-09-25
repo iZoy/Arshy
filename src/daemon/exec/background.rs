@@ -6,7 +6,6 @@ use std::sync::Arc;
 
 use tokio::sync::oneshot;
 
-use crate::daemon::context::git_correlator::GitCorrelation;
 use crate::daemon::parser::dedup::Deduplicator;
 use crate::daemon::parser::pair_merger::GenericPairMerger;
 use crate::daemon::parser::stderr_looks_like_error;
@@ -82,6 +81,7 @@ pub(crate) async fn run_background(mut t: BackgroundTask) -> Result<()> {
         .map(|value| value.min(t.config.max_task_duration_ms))
         .unwrap_or(t.config.max_task_duration_ms);
     let timeout_dur = tokio::time::Duration::from_millis(effective_timeout);
+    let deadline = tokio::time::Instant::now() + timeout_dur;
 
     let max_bytes = t.config.max_output_bytes;
 
@@ -101,8 +101,7 @@ pub(crate) async fn run_background(mut t: BackgroundTask) -> Result<()> {
     let mut pair_merger = GenericPairMerger::new();
     let (timed_out, killed, dedup_collapsed, pairs_merged) = tokio::select! {
         result = async {
-            while let Some((source, line)) = handle.output_rx.recv().await {
-                let line_bytes = line.len() as u64 + 1;
+            while let Some((source, line, line_bytes)) = handle.output_rx.recv().await {
                 total_bytes = total_bytes.saturating_add(line_bytes);
                 if output_truncated || total_bytes > max_bytes {
                     if output_truncated {
@@ -223,14 +222,14 @@ pub(crate) async fn run_background(mut t: BackgroundTask) -> Result<()> {
                     }
                 }
             }
-            // Output channel closed — process exited, readers finished. The
-            // shared pipeline is flushed below, outside the select, so the
-            // timeout and kill branches use the same finalization path.
+            // Output readers finished. The process may still be alive after
+            // explicitly closing stdout/stderr; the bounded reap below keeps
+            // the original timeout and cancellation active until it exits.
             (dedup.collapsed_count(), pair_merger.merged_count())
         } => {
             (false, false, result.0, result.1)
         }
-        _ = tokio::time::sleep(timeout_dur) => {
+        _ = tokio::time::sleep_until(deadline) => {
             tracing::warn!("task {} timed out after {}ms", t.task_id, timeout_dur.as_millis());
             let _ = handle.force_kill();
             let _ = t.store.update_task(&t.task_id, &TaskStatus::Timeout, Some(-2), None);
@@ -299,8 +298,50 @@ pub(crate) async fn run_background(mut t: BackgroundTask) -> Result<()> {
     }
     let raw_output = captured_output;
 
-    // Wait for the process to exit (output readers are done, process should be done or dying)
-    let exit_code = match handle.wait().await {
+    // Output EOF can precede process exit (`exec 1>&- 2>&-; sleep ...`). Keep
+    // timeout and cancellation active while reaping instead of waiting without
+    // a bound after the reader channel closes.
+    enum ReapResult {
+        Exited(Result<Option<i32>>),
+        Timeout,
+        Kill,
+    }
+    let (timed_out, killed, wait_result) = if timed_out || killed {
+        (timed_out, killed, handle.wait().await)
+    } else {
+        match tokio::select! {
+            result = handle.wait() => ReapResult::Exited(result),
+            _ = tokio::time::sleep_until(deadline) => ReapResult::Timeout,
+            _ = t.kill_rx.recv() => ReapResult::Kill,
+        } {
+            ReapResult::Exited(result) => (false, false, result),
+            ReapResult::Timeout => {
+                tracing::warn!(
+                    "task {} timed out after {}ms while waiting for process exit",
+                    t.task_id,
+                    timeout_dur.as_millis()
+                );
+                let _ = handle.force_kill();
+                let _ = t.store.update_task(&t.task_id, &TaskStatus::Timeout, Some(-2), None);
+                (true, false, handle.wait().await)
+            }
+            ReapResult::Kill => {
+                tracing::info!(
+                    "task {} received kill signal while waiting for process exit",
+                    t.task_id
+                );
+                let grace_ms = t.config.kill_graceful_ms;
+                let force_ms = t.config.kill_force_ms;
+                match process::graceful_kill(&mut handle, grace_ms, force_ms).await {
+                    Ok(true) => tracing::debug!("task {} exited gracefully", t.task_id),
+                    Ok(false) => tracing::warn!("task {} was force-killed", t.task_id),
+                    Err(e) => tracing::error!("task {} kill error: {}", t.task_id, e),
+                }
+                (false, true, handle.wait().await)
+            }
+        }
+    };
+    let exit_code = match wait_result {
         Ok(code) => code,
         Err(e) => {
             tracing::error!("task {} wait error: {}", t.task_id, e);
@@ -317,24 +358,26 @@ pub(crate) async fn run_background(mut t: BackgroundTask) -> Result<()> {
         match exit_code {
             Some(0) => TaskStatus::Completed,
             Some(_) => TaskStatus::Failed,
-            None => TaskStatus::Timeout,
+            // An OS signal (or platform exit without a numeric status) is a
+            // failed command unless the executor's own timeout branch fired.
+            None => TaskStatus::Failed,
         }
     };
 
-    let exit_code_val = exit_code.unwrap_or(if killed {
+    let exit_code_val = if killed {
         -3
     } else if timed_out {
         -2
     } else {
-        -1
-    });
+        exit_code.unwrap_or(-1)
+    };
 
     // Store raw output for tee / failure recovery
     if !raw_output.is_empty() {
         if let Err(e) = t.store.update_task_raw_output(&t.task_id, &raw_output) {
             tracing::warn!("failed to store raw output for task {}: {}", t.task_id, e);
         }
-        if let Err(e) = t.store.update_task_raw_output_bytes(&t.task_id, raw_output.len() as u64) {
+        if let Err(e) = t.store.update_task_raw_output_bytes(&t.task_id, total_bytes) {
             tracing::warn!("failed to store raw output bytes for task {}: {}", t.task_id, e);
         }
     }
@@ -360,45 +403,14 @@ pub(crate) async fn run_background(mut t: BackgroundTask) -> Result<()> {
         tracing::error!("task {} failed to update final status: {}", t.task_id, e);
     }
 
-    // Enrichment belongs to task completion, not to any client connection.
-    // The previous notification-side implementation meant detached async
-    // tasks were never enriched after their proxy disconnected, while several
-    // connected proxies could race to enrich the same task.
-    let enrichment_params = crate::ipc::QueryParams {
-        task_id: Some(t.task_id.clone()),
-        event_type: None,
-        severity: None,
-        code: None,
-        file: None,
-        limit: 200,
-        offset: 0,
-        include_logs: false,
-    };
-    if let Ok((events, _)) = t.store.query_events(&enrichment_params) {
-        if !events.is_empty() {
-            let events_json: Vec<serde_json::Value> = events
-                .into_iter()
-                .map(|event| serde_json::to_value(event).unwrap_or_default())
-                .collect();
-            let cwd = t.cwd.clone().unwrap_or_else(|| std::path::PathBuf::from("."));
-            let fallback = events_json.clone();
-            let enriched =
-                tokio::task::spawn_blocking(move || super::enrich_events(events_json, &cwd))
-                    .await
-                    .unwrap_or(fallback);
-            let task_events: Vec<crate::ipc::TaskEvent> = enriched
-                .into_iter()
-                .filter_map(|event| serde_json::from_value(event).ok())
-                .collect();
-            if let Err(error) = t.store.merge_enriched_events(&t.task_id, &task_events) {
-                tracing::warn!("failed to persist enriched events for {}: {}", t.task_id, error);
-            }
-        }
+    // Close the append stream before retention can prune this terminal task.
+    if let Err(error) = t.store.finalize_event_stream(&t.task_id) {
+        tracing::warn!("failed to finalize events for {}: {}", t.task_id, error);
     }
 
     // Store feature usage counters
     if dedup_collapsed > 0 {
-        if let Err(e) = t.store.update_task_counters(&t.task_id, dedup_collapsed, 0) {
+        if let Err(e) = t.store.update_task_counters(&t.task_id, dedup_collapsed) {
             tracing::warn!("failed to store dedup counter for task {}: {}", t.task_id, e);
         }
     }
@@ -406,41 +418,6 @@ pub(crate) async fn run_background(mut t: BackgroundTask) -> Result<()> {
         if let Err(e) = t.store.update_task_pairs_merged(&t.task_id, pairs_merged) {
             tracing::warn!("failed to store pairs_merged counter for task {}: {}", t.task_id, e);
         }
-    }
-
-    // Git correlation: count errors linked to recently changed files.
-    // This runs for all tasks (sync and async), so correlated_errors is always tracked.
-    if let Some(ref cwd_path) = t.cwd {
-        let store = t.store.clone();
-        let task_id = t.task_id.clone();
-        let cwd = cwd_path.clone();
-        tokio::task::spawn_blocking(move || {
-            let params = crate::ipc::QueryParams {
-                task_id: Some(task_id.clone()),
-                event_type: None,
-                severity: Some("error".into()),
-                code: None,
-                file: None,
-                limit: 200,
-                offset: 0,
-                include_logs: false,
-            };
-            if let Ok((events, _)) = store.query_events(&params) {
-                if let Some(gc) = GitCorrelation::detect(Some(cwd.as_path())) {
-                    let count = events
-                        .iter()
-                        .filter(|e| {
-                            e.location.as_ref().is_some_and(|loc| {
-                                gc.changed_files().iter().any(|f| f == &loc.file)
-                            })
-                        })
-                        .count() as u64;
-                    if count > 0 {
-                        let _ = store.update_task_counters(&task_id, 0, count);
-                    }
-                }
-            }
-        });
     }
 
     // Refresh the idle watchdog's activity stamp at completion so "idle"

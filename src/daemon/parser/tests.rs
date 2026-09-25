@@ -295,6 +295,7 @@ mod harness_tests {
         type_ok: usize,
         severity_ok: usize,
         code_ok: usize,
+        message_ok: usize,
         file_ok: usize,
         line_ok: usize,
         context_ok: usize,
@@ -304,12 +305,15 @@ mod harness_tests {
         parser_name: &str,
         txt_path: &std::path::Path,
         json_path: &std::path::Path,
-    ) -> (usize, usize, FieldStats) {
+    ) -> (usize, usize, usize, FieldStats) {
         let config = ParserConfig::default();
         let engine = Engine::new(&config).unwrap();
         // Try direct name lookup first (parser name != command name for multi-word tools)
-        let tool = engine.get_by_name(parser_name).or_else(|| engine.detect(parser_name));
-        let session = engine.create_session(tool.as_ref());
+        let tool = engine
+            .get_by_name(parser_name)
+            .or_else(|| engine.detect(parser_name))
+            .unwrap_or_else(|| panic!("fixture parser '{parser_name}' is not registered"));
+        let session = engine.create_session(Some(&tool));
 
         let txt = std::fs::read_to_string(txt_path).unwrap();
 
@@ -319,7 +323,7 @@ mod harness_tests {
         let mut pair = pair_merger::GenericPairMerger::new();
         let mut context = RustcContextMerger::new();
         for line in &lines {
-            for parsed in session.parse_line(line, 0, tool.as_ref()) {
+            for parsed in session.parse_line(line, 0, Some(&tool)) {
                 if let Some(deduped) = dedup.feed(parsed) {
                     for paired in pair.feed_all(deduped) {
                         for merged in context.feed_all(paired) {
@@ -374,11 +378,13 @@ mod harness_tests {
             return (
                 0,
                 0,
+                all_events.len(),
                 FieldStats {
                     total: 0,
                     type_ok: 0,
                     severity_ok: 0,
                     code_ok: 0,
+                    message_ok: 0,
                     file_ok: 0,
                     line_ok: 0,
                     context_ok: 0,
@@ -395,11 +401,27 @@ mod harness_tests {
             type_ok: 0,
             severity_ok: 0,
             code_ok: 0,
+            message_ok: 0,
             file_ok: 0,
             line_ok: 0,
             context_ok: 0,
         };
         for (i, exp) in expected.iter().enumerate() {
+            assert!(
+                exp.is_object(),
+                "expected event {i} in {} must be an object",
+                json_path.display()
+            );
+            assert!(
+                exp.get("type").is_some(),
+                "expected event {i} in {} must define 'type'",
+                json_path.display()
+            );
+            assert!(
+                exp.get("message").is_some(),
+                "expected event {i} in {} must define 'message'",
+                json_path.display()
+            );
             if i >= all_events.len() {
                 break;
             }
@@ -408,6 +430,7 @@ mod harness_tests {
             let sev_ok =
                 exp.get("severity").is_none_or(|v| v.as_str() == event.severity.as_deref());
             let code_ok = exp.get("code").is_none_or(|v| v.as_str() == event.code.as_deref());
+            let message_ok = exp.get("message").is_none_or(|v| v.as_str() == Some(&event.message));
             let file_ok = exp.get("file").is_none_or(|v| {
                 event.location.as_ref().is_some_and(|loc| v.as_str() == Some(&loc.file))
             });
@@ -427,6 +450,9 @@ mod harness_tests {
             if code_ok {
                 stats.code_ok += 1;
             }
+            if message_ok {
+                stats.message_ok += 1;
+            }
             if file_ok {
                 stats.file_ok += 1;
             }
@@ -437,11 +463,11 @@ mod harness_tests {
                 stats.context_ok += 1;
             }
 
-            if type_ok && sev_ok && code_ok && file_ok && line_ok && context_ok {
+            if type_ok && sev_ok && code_ok && message_ok && file_ok && line_ok && context_ok {
                 matched += 1;
             }
         }
-        (expected.len(), matched, stats)
+        (expected.len(), matched, all_events.len(), stats)
     }
 
     /// Format per-field match rates for assertion messages.
@@ -450,10 +476,11 @@ mod harness_tests {
             return String::new();
         }
         format!(
-            "type={:.0}% sev={:.0}% code={:.0}% file={:.0}% line={:.0}% context={:.0}%",
+            "type={:.0}% sev={:.0}% code={:.0}% message={:.0}% file={:.0}% line={:.0}% context={:.0}%",
             stats.type_ok as f64 / stats.total as f64 * 100.0,
             stats.severity_ok as f64 / stats.total as f64 * 100.0,
             stats.code_ok as f64 / stats.total as f64 * 100.0,
+            stats.message_ok as f64 / stats.total as f64 * 100.0,
             stats.file_ok as f64 / stats.total as f64 * 100.0,
             stats.line_ok as f64 / stats.total as f64 * 100.0,
             stats.context_ok as f64 / stats.total as f64 * 100.0,
@@ -462,9 +489,7 @@ mod harness_tests {
 
     fn run_parser_fixtures(parser_name: &str) {
         let base = std::path::Path::new("parsers/builtin/tests").join(parser_name);
-        if !base.is_dir() {
-            return;
-        }
+        assert!(base.is_dir(), "fixture directory is missing: {}", base.display());
 
         let txt_files: Vec<_> = std::fs::read_dir(&base)
             .unwrap()
@@ -477,11 +502,20 @@ mod harness_tests {
         for entry in &txt_files {
             let txt_path = entry.path();
             let json_path = txt_path.with_extension("json");
-            let (total, matched, stats) = run_fixture(parser_name, &txt_path, &json_path);
+            let (total, matched, actual, stats) = run_fixture(parser_name, &txt_path, &json_path);
             // Skip assertion in bless mode (total == 0 means we just wrote the JSON)
             if total == 0 {
                 continue;
             }
+            assert_eq!(
+                actual,
+                total,
+                "parser '{}' fixture '{}': expected {} events, got {}",
+                parser_name,
+                txt_path.file_stem().unwrap().to_str().unwrap(),
+                total,
+                actual
+            );
             let score = matched as f64 / total as f64;
             let per_field = field_scores(&stats);
             assert!(
