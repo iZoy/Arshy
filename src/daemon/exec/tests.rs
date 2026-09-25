@@ -792,7 +792,9 @@ async fn sync_with_short_uses_full_path() {
     assert!(!result.short_command, "explicit sync should use full structured path");
     assert_eq!(result.status, TaskStatus::Completed);
     assert_eq!(result.exit_code, Some(0));
-    assert!(result.raw_output.is_none(), "full path should not set raw_output");
+    let raw_output = result.raw_output.as_deref().expect("full path returns captured output");
+    assert_eq!(raw_output.trim(), "sync-short");
+    assert_eq!(store.get_task_raw_output(&result.task_id).unwrap().as_deref(), Some(raw_output));
 }
 
 /// Auto + short + failure: raw_output still populated, status is Failed.

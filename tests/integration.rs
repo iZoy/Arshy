@@ -429,7 +429,7 @@ fn tail_raw_returns_stored_output() {
 
 #[test]
 #[serial]
-fn mcp_proxy_task_raw_returns_original_output_and_zero_event_hint() {
+fn mcp_proxy_returns_inline_raw_output_when_there_are_no_events() {
     let daemon = TestDaemon::spawn();
     let (mut child, mut reader) = spawn_proxy(&daemon);
     let mut writer = ProxyWriter(child.stdin.take().expect("proxy stdin"));
@@ -461,35 +461,12 @@ fn mcp_proxy_task_raw_returns_original_output_and_zero_event_hint() {
             }
         }),
     );
-    let task_id =
-        run["result"]["structuredContent"]["task_id"].as_str().expect("task_id").to_string();
     let content = run["result"]["content"][0]["text"].as_str().unwrap_or("");
     assert!(
-        content.contains("0 structured events") && content.contains("raw"),
-        "zero-event runs must hint at the raw channel: {content}"
+        content.contains("raw-output-marker-line"),
+        "zero-event runs must include captured raw output inline: {content}"
     );
-
-    // arshy_task raw returns the original output as content text.
-    let raw = send_mcp(
-        &mut reader,
-        &mut writer,
-        3,
-        serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": 3,
-            "method": "tools/call",
-            "params": {
-                "name": "arshy_task",
-                "arguments": { "action": "raw", "task_id": task_id, "lines": 10 }
-            }
-        }),
-    );
-    let raw_text = raw["result"]["content"][0]["text"].as_str().unwrap_or("");
-    assert!(
-        raw_text.contains("raw-output-marker-line"),
-        "arshy_task raw must return the original output, got: {raw_text}"
-    );
-    assert_eq!(raw["result"]["structuredContent"]["task_id"], task_id);
+    assert!(run["result"]["structuredContent"].get("task_id").is_none());
 
     let _ = child.kill();
     let _ = child.wait();
@@ -576,7 +553,7 @@ fn shutdown_exits_daemon_cleanly() {
 fn e2e_efficiency_report_is_explicit_on_empty_daemon() {
     let daemon = TestDaemon::spawn();
     let resp = daemon.rpc(1, "daemon/stats", serde_json::json!({}));
-    assert_eq!(resp["result"]["efficiency"]["schema_version"].as_str(), Some("quality-v1"));
+    assert_eq!(resp["result"]["efficiency"]["schema_version"].as_str(), Some("quality-v2"));
     assert!(resp["result"]["efficiency"].get("score").is_none());
     assert!(resp["result"]["total_raw_output_bytes"].is_null());
 }
@@ -591,7 +568,7 @@ fn e2e_efficiency_excludes_short_command_without_structured_events() {
         serde_json::json!({ "command": "echo short-honesty-probe", "mode": "auto" }),
     );
     let resp = daemon.rpc(2, "daemon/stats", serde_json::json!({}));
-    assert_eq!(resp["result"]["efficiency"]["schema_version"].as_str(), Some("quality-v1"));
+    assert_eq!(resp["result"]["efficiency"]["schema_version"].as_str(), Some("quality-v2"));
 }
 
 #[test]
@@ -607,7 +584,7 @@ fn e2e_efficiency_report_has_components_for_long_command() {
         }),
     );
     let resp = daemon.rpc(2, "daemon/stats", serde_json::json!({}));
-    assert_eq!(resp["result"]["efficiency"]["schema_version"].as_str(), Some("quality-v1"));
+    assert_eq!(resp["result"]["efficiency"]["schema_version"].as_str(), Some("quality-v2"));
     assert!(resp["result"]["efficiency"]["components"].is_object());
     assert!(resp["result"]["efficiency"]["counters"].is_object());
 }
@@ -620,7 +597,7 @@ fn e2e_analyze_returns_versioned_efficiency_only() {
     // We assert by reading the JSON output instead of pretty output, then
     // verify the pretty printer omits the section by shelling out.
     let resp = daemon.rpc(1, "daemon/stats", serde_json::json!({}));
-    assert_eq!(resp["result"]["efficiency"]["schema_version"].as_str(), Some("quality-v1"));
+    assert_eq!(resp["result"]["efficiency"]["schema_version"].as_str(), Some("quality-v2"));
     assert!(resp["result"].get("token_efficiency").is_none());
 }
 
@@ -877,10 +854,7 @@ fn mcp_proxy_high_output_response_is_not_blocked_by_notifications() {
         .as_str()
         .expect("high-output run should return a task id")
         .to_string();
-    let event_count = run["result"]["structuredContent"]["event_count"]
-        .as_u64()
-        .expect("high-output run should report event count");
-    assert!(event_count > 256, "expected a notification burst, got {event_count} events");
+    assert!(run["result"]["structuredContent"].get("event_count").is_none());
 
     let query = send_mcp(
         &mut reader,
@@ -896,7 +870,8 @@ fn mcp_proxy_high_output_response_is_not_blocked_by_notifications() {
             }
         }),
     );
-    assert_eq!(query["result"]["structuredContent"]["total"], event_count);
+    let event_count = query["result"]["structuredContent"]["total"].as_u64().unwrap_or(0);
+    assert!(event_count > 256, "expected a notification burst, got {event_count} events");
 
     let _ = child.kill();
     let _ = child.wait();
@@ -955,7 +930,7 @@ fn mcp_proxy_tool_calls_run_and_query() {
             "params": {
                 "name": "arshy_exec",
                 "arguments": {
-                    "command": "sh -c 'echo \"error: proxy-e2e\" >&2; exit 1'",
+                    "command": "sh -c 'echo \"error: proxy-e2e\" >&2; echo \"error: proxy-e2e-secondary\" >&2; exit 1'",
                     "mode": "sync"
                 }
             }
@@ -1050,7 +1025,7 @@ fn mcp_short_exit_one_exposes_state_without_transport_error() {
     assert_eq!(run["result"]["structuredContent"]["status"], "failed");
     assert_eq!(run["result"]["structuredContent"]["exit_code"], 1);
     assert!(run["result"].get("isError").is_none());
-    assert!(run["result"]["content"][1]["text"].as_str().unwrap_or("").contains("exit_code: 1"));
+    assert!(run["result"]["content"][0]["text"].as_str().unwrap_or("").contains("exit code 1"));
     let _ = child.kill();
 }
 
@@ -1316,9 +1291,9 @@ fn e2e_ecosystem_metrics_snapshot_after_cross_ecosystem_workload() {
         );
     }
 
-    // Now ask the daemon for stats — quality-v1 must be self-describing.
+    // Now ask the daemon for stats — quality-v2 must be self-describing.
     let resp = daemon.rpc(id, "daemon/stats", serde_json::json!({}));
-    assert_eq!(resp["result"]["efficiency"]["schema_version"].as_str(), Some("quality-v1"));
+    assert_eq!(resp["result"]["efficiency"]["schema_version"].as_str(), Some("quality-v2"));
     assert!(resp["result"]["efficiency"]["components"].is_object());
 }
 

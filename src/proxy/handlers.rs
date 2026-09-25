@@ -268,17 +268,17 @@ fn build_run_result(result: &serde_json::Value) -> (serde_json::Value, Option<St
             && result.get("raw_output_bytes").and_then(|v| v.as_u64()).unwrap_or(0) > 0);
     let event_count = result.get("event_count").and_then(|v| v.as_u64()).unwrap_or(0);
     let events_not_fully_inlined = event_count > if is_failure { 1 } else { 0 };
-    let needs_handle = status == "running"
-        || result.get("events_truncated").and_then(|v| v.as_bool()).unwrap_or(false)
-        || raw_truncated
-        || events_not_fully_inlined;
+    let events_incomplete =
+        result.get("events_truncated").and_then(|v| v.as_bool()).unwrap_or(false)
+            || events_not_fully_inlined;
+    let needs_handle = status == "running" || events_incomplete || raw_truncated;
     let handle = if needs_handle { task_id.as_deref().filter(|tid| !tid.is_empty()) } else { None };
     if let Some(tid) = handle {
         let hint = if status == "running" {
             format!("\nTask {tid} is running; use arshy_task(action:\"cancel\", task_id:\"{tid}\") to stop it or arshy_query(task_id:\"{tid}\") to inspect results.")
         } else if raw_truncated {
             format!("\nOutput is incomplete; retrieve captured output with arshy_task(action:\"raw\", task_id:\"{tid}\", lines:0).")
-        } else if events_not_fully_inlined {
+        } else if events_incomplete {
             format!("\nMore diagnostics are available with arshy_query(task_id:\"{tid}\").")
         } else {
             format!(

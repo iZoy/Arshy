@@ -802,13 +802,32 @@ impl Executor {
             _result = async {
                 while let Some((_source, line, line_bytes)) = handle.output_rx.recv().await {
                     total_bytes = total_bytes.saturating_add(line_bytes);
-                    if !truncated && captured_bytes.saturating_add(line_bytes) <= max_bytes {
-                        captured_bytes = captured_bytes.saturating_add(line_bytes);
-                        stdout_lines.push(line);
-                    } else {
+                    if truncated {
                         // Continue draining after the capture limit. Dropping
                         // the receiver can back-pressure the child's pipes and
                         // turn output truncation into an indefinite hang.
+                        continue;
+                    }
+
+                    let remaining_bytes = max_bytes.saturating_sub(captured_bytes);
+                    if line_bytes <= remaining_bytes {
+                        captured_bytes = captured_bytes.saturating_add(line_bytes);
+                        stdout_lines.push(line);
+                    } else {
+                        // Keep the bounded prefix of an oversized line instead
+                        // of discarding that line in full. `line_bytes` counts
+                        // source bytes, while rendered text can replace invalid
+                        // UTF-8, so cap by both and stop at a UTF-8 boundary.
+                        let prefix_limit = remaining_bytes.min(line_bytes).min(line.len() as u64)
+                            as usize;
+                        let prefix_len = (0..=prefix_limit)
+                            .rev()
+                            .find(|index| line.is_char_boundary(*index))
+                            .unwrap_or(0);
+                        if prefix_len > 0 {
+                            stdout_lines.push(line[..prefix_len].to_owned());
+                        }
+                        captured_bytes = max_bytes;
                         truncated = true;
                     }
                 }

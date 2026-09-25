@@ -1191,8 +1191,7 @@ mod tests {
             "instructions should be plain text, not valid JSON"
         );
         assert!(instructions.contains("arshy_exec"));
-        // The fallback rule must be present (fall back to Bash when unreachable).
-        assert!(instructions.contains("unreachable"));
+        assert!(instructions.contains("arshy_query"));
     }
 
     #[test]
@@ -1201,7 +1200,8 @@ mod tests {
         assert_eq!(tools.len(), 3);
         assert_eq!(tools[0].name, "arshy_exec");
         assert_eq!(tools[1].name, "arshy_query");
-        assert!(tools[1].description.contains("task_id"));
+        assert!(tools[1].description.contains("diagnostics"));
+        assert!(tools[1].input_schema["properties"]["task_id"]["description"].as_str().is_some());
         assert_eq!(tools[2].name, "arshy_task");
     }
 }
