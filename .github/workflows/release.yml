@@ -57,7 +57,10 @@ jobs:
         run: |
           for bin in arshy arshyd; do
             path="target/${{ matrix.target }}/release/$bin"
-            ldd "$path" 2>&1 | grep -q 'statically linked'
+            # glibc ldd may print either phrase for a fully static musl binary
+            # (aarch64 Ubuntu often uses "not a dynamic executable").
+            ldd_out="$(ldd "$path" 2>&1 || true)"
+            echo "$ldd_out" | grep -Eq 'statically linked|not a dynamic executable'
             ! readelf -d "$path" | grep -q 'NEEDED'
           done
       - name: Code sign macOS binaries
