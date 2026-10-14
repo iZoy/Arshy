@@ -192,9 +192,18 @@ pub(crate) fn start_daemon(socket_path: &std::path::Path) -> Result<()> {
         .unwrap_or_else(|| std::path::PathBuf::from("arshyd"));
 
     let mut cmd = std::process::Command::new(&path);
-    cmd.stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
+    // Keep a boot log so a crashed auto-start is diagnosable (CI previously
+    // discarded both streams and only saw "did not start within Ns").
+    let boot_log = socket_path.with_file_name("arshyd.boot.log");
+    cmd.stdin(std::process::Stdio::null());
+    if let (Ok(out), Ok(err)) = (
+        OpenOptions::new().create(true).append(true).open(&boot_log),
+        OpenOptions::new().create(true).append(true).open(&boot_log),
+    ) {
+        cmd.stdout(std::process::Stdio::from(out)).stderr(std::process::Stdio::from(err));
+    } else {
+        cmd.stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+    }
     // Detach from the spawning process's process group / controlling terminal so the
     // daemon survives even if the parent (e.g. the agent's shell) exits before the
     // daemon's idle-timeout. This decouples daemon lifetime from the caller.

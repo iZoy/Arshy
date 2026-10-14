@@ -249,7 +249,11 @@ pub async fn spawn_command(
 
     // Force dumb terminal mode so tools (rustc, cargo, etc.) don't use ANSI escape
     // codes or cursor movement that would hide output lines from the parser.
+    // Also clear color opt-ins inherited from CI (CARGO_TERM_COLOR=always) or shells.
     cmd.env("TERM", "dumb");
+    cmd.env("NO_COLOR", "1");
+    cmd.env("CLICOLOR", "0");
+    cmd.env("CARGO_TERM_COLOR", "never");
 
     if let Some(env_vars) = env {
         for (k, v) in env_vars {

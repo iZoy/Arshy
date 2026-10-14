@@ -742,7 +742,50 @@ async fn auto_long_uses_smart_sync() {
     assert!(result.exit_code.is_some(), "should have exit code");
     assert!(
         result.primary_diagnostic.is_some(),
-        "smart sync attaches a primary diagnostic or project context for failed builds"
+        "smart sync attaches a primary diagnostic or project context for failed builds; got status={:?} exit={:?} errors={:?} events={:?} raw={:?} primary={:?}",
+        result.status,
+        result.exit_code,
+        result.error_count,
+        result.event_count,
+        result.raw_output.as_ref().map(|s| s.chars().take(200).collect::<String>()),
+        result.primary_diagnostic,
+    );
+}
+
+/// Parent may export CARGO_TERM_COLOR=always (GitHub Actions CI does). The
+/// executor must still attach a primary_diagnostic for a failing cargo build.
+#[tokio::test]
+async fn auto_long_colored_cargo_error_still_selects_primary() {
+    let (store, parser, bus, _tmp) = setup();
+    let executor = Executor::new(store.clone(), parser, bus);
+
+    // Safety: test-only env mutation; this suite does not run concurrent env-sensitive tests.
+    unsafe {
+        std::env::set_var("CARGO_TERM_COLOR", "always");
+    }
+    let result = executor
+        .run(
+            "cargo build --manifest-path /some/really/really/really/long/path/Cargo.toml --release",
+            None,
+            None,
+            "auto",
+            None,
+            None,
+            false,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(result.status, TaskStatus::Failed);
+    let primary = result
+        .primary_diagnostic
+        .expect("ANSI-wrapped or color-forced cargo errors must still yield primary_diagnostic");
+    let msg = primary.get("message").and_then(|v| v.as_str()).unwrap_or("");
+    assert!(msg.contains("manifest path"), "message={msg}");
+    assert!(
+        !msg.as_bytes().contains(&0x1b),
+        "stored diagnostic message should not contain ANSI ESC: {msg}"
     );
 }
 

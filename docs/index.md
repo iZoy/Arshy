@@ -26,6 +26,7 @@ Chinese.
 - [Contributing](../CONTRIBUTING.md) — development setup, pull requests, and project conventions.
 - [Create a parser](how-to/create-parser.md) — add or customize a TOML parser and fixtures.
 - [Run and extend tests](how-to/run-tests.md) — unit, integration, parser fixture, and dogfood checks.
+- [Publish a prerelease](how-to/publish-release.md) — tag, musl/macOS artifacts, crates.io, MCP Registry, and the historical `v0.1.0` tag.
 - [Testing model](explanation/testing.md) — what each test layer verifies and where its limits are.
 
 ## Reference

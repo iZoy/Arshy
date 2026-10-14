@@ -2,7 +2,25 @@
 
 Arshy is a local command-execution and diagnostics layer for AI agents. It exposes one standard MCP server and turns noisy CLI output into structured evidence: severity, file locations, error codes, and deduplication.
 
-v0.1.0-alpha.1 is a public preview. Its API may change while real-world use is validated. Arshy supports macOS and Linux.
+![Native cargo output compared with Arshy structured diagnostics](docs/assets/arshy-demo.gif)
+
+The same failing `cargo check`, two ways. Natively, the Agent reads the full
+compiler output and must find the error itself. Through Arshy it receives
+status, exit_code, an error count, and one primary_diagnostic with code, file,
+line, and column, while the captured output stays available on request. The
+demo uses the [reproducible fixture](docs/tutorials/agent-diagnostic-loop.md);
+regenerate it with `scripts/record-demo.py`.
+
+Why it helps an Agent:
+
+- One shape across 38 built-in parser definitions: build, test, lint, and deploy failures share
+  the same severity, location, and code fields.
+- Less re-reading: duplicates are collapsed and summary lines are not counted
+  as extra errors.
+- Evidence on demand: arshy_query and arshy_task return more events or the
+  raw output only when the Agent asks.
+
+v0.1.0-alpha.1 is a public preview. Its API may change while real-world use is validated. Arshy supports macOS and Linux. Linux release binaries are statically linked (musl) so they run on common glibc distributions including Ubuntu 22.04 and Debian 12.
 
 ## Install
 
@@ -61,6 +79,12 @@ The preview tests whether Agents repeatedly benefit from structured CLI diagnost
 - Report a bug, parser error, or real-task experience through [GitHub Issues](https://github.com/iZoy/Arshy/issues).
 - Read [known issues](docs/known-issues.md), [security policy](SECURITY.md), and [contribution guidelines](CONTRIBUTING.md).
 - Browse the [documentation index](docs/index.md) or the [中文指南](docs/zh/README.md).
+
+## MCP Registry
+
+- MCP Registry name: `mcp-name: io.github.iZoy/arshy`
+
+The registry entry is described in [server.json](server.json).
 
 ## License
 

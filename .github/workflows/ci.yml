@@ -61,10 +61,21 @@ jobs:
       - name: Dogfood (run the project through arshy itself)
         run: |
           cargo build --bin arshy --bin arshyd
-          ./target/debug/arshy daemon start
-          for _ in $(seq 1 20); do
+          # Start arshyd in-process for the job instead of relying on detached
+          # auto-spawn (stdout/stderr discarded), so boot failures are visible.
+          DATA="${XDG_DATA_HOME:-$HOME/.local/share}/arshy"
+          mkdir -p "$DATA"
+          rm -f "$DATA/arshyd.sock" "$DATA/arshyd.pid" "$DATA/arshyd.sock.spawn-lock"
+          # setsid: dogfood asserts the daemon is not in the caller's process group
+          setsid ./target/debug/arshyd > /tmp/arshyd-dogfood.log 2>&1 &
+          echo $! > /tmp/arshyd-dogfood.pid
+          for _ in $(seq 1 120); do
             if ./target/debug/arshy status >/dev/null 2>&1; then break; fi
             sleep 0.25
           done
-          ./target/debug/arshy status >/dev/null
-          ARSHY=./target/debug/arshy ./scripts/dogfood.sh
+          if ! ./target/debug/arshy status >/dev/null 2>&1; then
+            echo "=== arshyd dogfood boot log ==="
+            cat /tmp/arshyd-dogfood.log || true
+            exit 1
+          fi
+          ARSHY=./target/debug/arshy ARSHY_DOGFOOD_DAEMON_PID="$(cat /tmp/arshyd-dogfood.pid)" ./scripts/dogfood.sh

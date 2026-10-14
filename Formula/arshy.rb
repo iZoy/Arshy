@@ -10,7 +10,7 @@ class Arshy < Formula
   #     if Hardware::CPU.arm? then url ".../arshy-v0.1.0-aarch64-apple-darwin.tar.gz", sha256: "..."
   #     else url ".../arshy-v0.1.0-x86_64-apple-darwin.tar.gz", sha256: "..." end
   #   end
-  #   on_linux do ... x86_64-unknown-linux-gnu / aarch64-unknown-linux-gnu ... end
+  #   on_linux do ... x86_64-unknown-linux-musl / aarch64-unknown-linux-musl ... end
 
 
   depends_on "rust" => :build

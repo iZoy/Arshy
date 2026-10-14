@@ -1133,3 +1133,18 @@ mod benchmark {
         eprintln!("\n=== ARSHY BENCHMARK ===\n{}\n=== END BENCHMARK ===", json);
     }
 }
+
+#[test]
+fn parser_session_strips_ansi_before_matching() {
+    use crate::config::ParserConfig;
+    use crate::daemon::parser::Engine;
+
+    let engine = Engine::new(&ParserConfig::default()).unwrap();
+    let session = engine.create_session(None);
+    let colored = "\x1b[1m\x1b[91merror\x1b[0m: manifest path missing";
+    let events = session.parse_line(colored, 1, None);
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].severity.as_deref(), Some("error"));
+    assert_eq!(events[0].event_type, "diagnostic");
+    assert_eq!(events[0].message, "error: manifest path missing");
+}

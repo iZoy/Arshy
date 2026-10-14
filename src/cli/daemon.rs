@@ -72,15 +72,23 @@ async fn daemon_start(config_path: Option<PathBuf>) -> Result<()> {
         return Ok(());
     }
 
+    // Match connect_or_start: a leftover socket file after a killed CI/job process
+    // blocks bind and leaves start hanging until the wait budget expires.
+    if socket_path.exists() {
+        let _ = arshy_lib::daemon::lifecycle::cleanup_stale_socket(&socket_path);
+    }
+
     crate::proxy::start_daemon(&socket_path)?;
-    for _ in 0..25 {
+    // CI runners (especially after llvm-cov) can take well over 5–10s for the
+    // first arshyd to load parsers and open the store.
+    for _ in 0..150 {
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
         if daemon_ready(&socket_path).await {
             println!("daemon started");
             return Ok(());
         }
     }
-    Err(arshy_lib::ArshyError::DaemonUnreachable("daemon did not start within 5s".into()))
+    Err(arshy_lib::ArshyError::DaemonUnreachable("daemon did not start within 30s".into()))
 }
 
 /// A socket can exist while the daemon is still loading parsers and opening

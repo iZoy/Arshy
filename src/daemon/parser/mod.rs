@@ -263,6 +263,11 @@ impl ParserSession {
     /// (pipe/caret/note markers) are merged into the preceding diagnostic event
     /// rather than emitted as separate log events.
     pub fn parse_line(&self, line: &str, seq: u64, _tool: Option<&ParsedTool>) -> Vec<TaskEvent> {
+        // Agents and CI often inherit CARGO_TERM_COLOR=always / CLICOLOR.
+        // Strip SGR codes before pattern matching so "error:" still matches.
+        let stripped = dedup::strip_ansi(line);
+        let line = stripped.as_ref();
+
         // 1. Format detection — try JSON first for structured output
         if let Some(mut event) = json::try_parse_line(line) {
             event.seq = seq;
