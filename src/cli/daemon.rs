@@ -81,16 +81,11 @@ async fn daemon_start(config_path: Option<PathBuf>) -> Result<()> {
     crate::proxy::start_daemon(&socket_path)?;
     // CI runners (especially after llvm-cov) can take well over 5–10s for the
     // first arshyd to load parsers and open the store.
-    for i in 0..150 {
+    for _ in 0..150 {
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
         if daemon_ready(&socket_path).await {
             println!("daemon started");
             return Ok(());
-        }
-        // If another process held the spawn-lock without producing a daemon,
-        // retry spawn once after ~2s.
-        if i == 10 {
-            let _ = crate::proxy::start_daemon(&socket_path);
         }
     }
     Err(arshy_lib::ArshyError::DaemonUnreachable("daemon did not start within 30s".into()))

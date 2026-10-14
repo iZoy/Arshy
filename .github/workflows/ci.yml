@@ -61,12 +61,20 @@ jobs:
       - name: Dogfood (run the project through arshy itself)
         run: |
           cargo build --bin arshy --bin arshyd
-          # daemon start waits up to 30s; still poll in case of a race with the
-          # socket becoming ready after the CLI returns.
-          ./target/debug/arshy daemon start || true
+          # Start arshyd in-process for the job instead of relying on detached
+          # auto-spawn (stdout/stderr discarded), so boot failures are visible.
+          DATA="${XDG_DATA_HOME:-$HOME/.local/share}/arshy"
+          mkdir -p "$DATA"
+          rm -f "$DATA/arshyd.sock" "$DATA/arshyd.pid" "$DATA/arshyd.sock.spawn-lock"
+          ./target/debug/arshyd > /tmp/arshyd-dogfood.log 2>&1 &
+          echo $! > /tmp/arshyd-dogfood.pid
           for _ in $(seq 1 120); do
             if ./target/debug/arshy status >/dev/null 2>&1; then break; fi
             sleep 0.25
           done
-          ./target/debug/arshy status >/dev/null
+          if ! ./target/debug/arshy status >/dev/null 2>&1; then
+            echo "=== arshyd dogfood boot log ==="
+            cat /tmp/arshyd-dogfood.log || true
+            exit 1
+          fi
           ARSHY=./target/debug/arshy ./scripts/dogfood.sh
