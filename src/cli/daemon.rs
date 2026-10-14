@@ -73,14 +73,14 @@ async fn daemon_start(config_path: Option<PathBuf>) -> Result<()> {
     }
 
     crate::proxy::start_daemon(&socket_path)?;
-    for _ in 0..25 {
+    for _ in 0..50 {
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
         if daemon_ready(&socket_path).await {
             println!("daemon started");
             return Ok(());
         }
     }
-    Err(arshy_lib::ArshyError::DaemonUnreachable("daemon did not start within 5s".into()))
+    Err(arshy_lib::ArshyError::DaemonUnreachable("daemon did not start within 10s".into()))
 }
 
 /// A socket can exist while the daemon is still loading parsers and opening

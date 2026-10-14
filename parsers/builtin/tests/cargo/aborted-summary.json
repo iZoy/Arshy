@@ -1,0 +1,27 @@
+[
+  {
+    "file": "src/lib.rs",
+    "line": 22,
+    "message": "unused variable: `x`",
+    "severity": "warning",
+    "type": "diagnostic"
+  },
+  {
+    "message": "warning: `demo` (bin \"demo\") generated 1 warning",
+    "severity": "info",
+    "type": "summary"
+  },
+  {
+    "code": "E0308",
+    "file": "src/main.rs",
+    "line": 2,
+    "message": "mismatched types",
+    "severity": "error",
+    "type": "diagnostic"
+  },
+  {
+    "message": "error: could not compile `demo` (bin \"demo\") due to 1 previous error; 1 warning emitted",
+    "severity": "info",
+    "type": "summary"
+  }
+]

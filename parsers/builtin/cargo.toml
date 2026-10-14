@@ -19,6 +19,20 @@ severity = "info"
 fields = { file = 1, line = 2, column = 3 }
 
 [[pattern]]
+name = "cargo-aborted"
+regex = '^error: could not compile `([^`]+)`.*$'
+event_type = "summary"
+severity = "info"
+fields = { message = 0, crate_name = 1 }
+
+[[pattern]]
+name = "cargo-warning-summary"
+regex = '^warning: `([^`]+)` \(.+\) generated \d+ warnings?.*$'
+event_type = "summary"
+severity = "info"
+fields = { message = 0, crate_name = 1 }
+
+[[pattern]]
 name = "cargo-warning"
 regex = '^warning: (.+)$'
 event_type = "diagnostic"

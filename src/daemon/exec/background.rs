@@ -184,7 +184,12 @@ pub(crate) async fn run_background(mut t: BackgroundTask) -> Result<()> {
                     // until a later line; applying this after those mergers
                     // loses the original stderr line and silently downgrades
                     // single-line failures such as "Permission denied".
+                    // A parser that explicitly classified the line as a
+                    // summary (e.g. cargo's "could not compile" trailer) has
+                    // already decided it is not a separate diagnostic;
+                    // escalating it would double-count the real error.
                     if source == "stderr"
+                        && event.event_type != "summary"
                         && matches!(event.severity.as_deref(), Some("info" | "warning"))
                         && stderr_looks_like_error(&event.message)
                     {

@@ -2,6 +2,7 @@
 name = "arshy"
 version = "0.1.0-alpha.1"
 edition = "2021"
+rust-version = "1.87"
 description = "A local structured command-execution and diagnostics layer for AI agents over MCP"
 license = "MIT"
 repository = "https://github.com/iZoy/Arshy"
