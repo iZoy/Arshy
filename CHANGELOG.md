@@ -4,6 +4,22 @@ All notable changes are documented here. Arshy follows Semantic Versioning.
 
 ## [Unreleased]
 
+### Changed
+
+- Linux release artifacts target `x86_64-unknown-linux-musl` and
+  `aarch64-unknown-linux-musl` (static) so installers run on Ubuntu 22.04,
+  Debian 12, and other older glibc hosts. macOS targets are unchanged.
+  `install/install.sh` matches the new archive names.
+
+### Notes
+
+- A historical annotated tag `v0.1.0` exists on the remote and points at the
+  2026-08-04 initial commit. It has no GitHub Release and is not a published
+  crate. Before the first public prerelease, maintainers should delete or
+  rename that tag so it does not collide with a future stable `v0.1.0`.
+  Suggested commands (run only after you confirm): see
+  [docs/how-to/publish-release.md](docs/how-to/publish-release.md).
+
 ## [0.1.0-alpha.1] - 2026-10-14
 
 First public preview for macOS and Linux. The preview validates standard MCP

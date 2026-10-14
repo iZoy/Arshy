@@ -11,18 +11,9 @@ keywords = ["mcp", "ai-agent", "shell", "cli", "structured-output"]
 categories = ["command-line-utilities", "development-tools"]
 readme = "README.md"
 exclude = [
-    "/.agents",
-    "/.claude",
     "/.github",
-    "/.localfile",
-    "/.mcp.json",
-    "/.obsidian",
-    "/.pre-commit-config.yaml",
-    "/.superpowers",
-    "/.workbuddy",
-    "/qoder-arhsy",
-    "/AGENTS.md",
     "/.gitignore",
+    "/.pre-commit-config.yaml",
     "/CODEOWNERS",
     "/CONTRIBUTING.md",
     "/Formula",
@@ -30,7 +21,6 @@ exclude = [
     "/arshy",
     "/docs",
     "/scripts",
-    "/temporary.md",
 ]
 
 [[bin]]

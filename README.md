@@ -20,7 +20,7 @@ Why it helps an Agent:
 - Evidence on demand: arshy_query and arshy_task return more events or the
   raw output only when the Agent asks.
 
-v0.1.0-alpha.1 is a public preview. Its API may change while real-world use is validated. Arshy supports macOS and Linux.
+v0.1.0-alpha.1 is a public preview. Its API may change while real-world use is validated. Arshy supports macOS and Linux. Linux release binaries are statically linked (musl) so they run on common glibc distributions including Ubuntu 22.04 and Debian 12.
 
 ## Install
 

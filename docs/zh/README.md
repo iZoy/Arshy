@@ -16,7 +16,7 @@ Arshy 是面向 AI Agent 的本地命令执行与诊断层，通过标准 MCP �
 - 按需取证：需要时再通过 arshy_query、arshy_task 获取更多事件或原始输出。
 
 v0.1.0-alpha.1 是公开预览版，接口可能在正式 0.1.0 前调整。当前支持 macOS
-和 Linux。
+和 Linux。Linux 发布包为 musl 静态链接，可在 Ubuntu 22.04、Debian 12 等常见 glibc 发行版上运行。
 
 ## 安装
 
