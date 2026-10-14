@@ -66,7 +66,8 @@ jobs:
           DATA="${XDG_DATA_HOME:-$HOME/.local/share}/arshy"
           mkdir -p "$DATA"
           rm -f "$DATA/arshyd.sock" "$DATA/arshyd.pid" "$DATA/arshyd.sock.spawn-lock"
-          ./target/debug/arshyd > /tmp/arshyd-dogfood.log 2>&1 &
+          # setsid: dogfood asserts the daemon is not in the caller's process group
+          setsid ./target/debug/arshyd > /tmp/arshyd-dogfood.log 2>&1 &
           echo $! > /tmp/arshyd-dogfood.pid
           for _ in $(seq 1 120); do
             if ./target/debug/arshy status >/dev/null 2>&1; then break; fi
@@ -77,4 +78,4 @@ jobs:
             cat /tmp/arshyd-dogfood.log || true
             exit 1
           fi
-          ARSHY=./target/debug/arshy ./scripts/dogfood.sh
+          ARSHY=./target/debug/arshy ARSHY_DOGFOOD_DAEMON_PID="$(cat /tmp/arshyd-dogfood.pid)" ./scripts/dogfood.sh

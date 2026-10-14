@@ -291,9 +291,14 @@ print('yes' if pc and (pc.get('changed_files') or pc.get('git_diff_stat') or pc.
 if [ "$HAS_CORRELATION" = "yes" ]; then
     check "git correlation (project_context present)" "pass"
 else
-    # Verify it's because of clean repo, not a bug
-    DIFF_EXISTS=$(git diff --stat HEAD~1 2>/dev/null | wc -l | tr -d ' ')
-    if [ "$DIFF_EXISTS" -gt 0 ] 2>/dev/null; then
+    # Verify it's because of clean repo, not a bug.
+    # Shallow CI checkouts often lack HEAD~1; with pipefail that used to abort
+    # the whole script (git exit 128) before the skip path could run.
+    DIFF_EXISTS=0
+    if git rev-parse --verify --quiet HEAD~1 >/dev/null 2>&1; then
+        DIFF_EXISTS=$(git diff --stat HEAD~1 2>/dev/null | wc -l | tr -d ' ' || true)
+    fi
+    if [ "${DIFF_EXISTS:-0}" -gt 0 ] 2>/dev/null; then
         check "git correlation (project_context missing but diff exists)" "fail"
     else
         check "git correlation (skipped: clean repo, no diff from HEAD~1)" "pass"
