@@ -4,6 +4,11 @@ All notable changes are documented here. Arshy follows Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.1.0-alpha.1] - 2026-10-14
+
+First public preview for macOS and Linux. The preview validates standard MCP
+onboarding and real-task demand; its API may change before 0.1.0.
+
 ### Changed
 
 - MCP tool results now use standard structuredContent with a text fallback.
@@ -23,7 +28,13 @@ All notable changes are documented here. Arshy follows Semantic Versioning.
 - Prepared the public-preview installation, demo, known-issues, security,
   feedback, and operating guides.
 
-## [0.1.0-alpha.1] - Unreleased
+### Fixed
 
-First public preview for macOS and Linux. The preview validates standard MCP
-onboarding and real-task demand; its API may change before 0.1.0.
+- Cargo's trailing `error: could not compile ...` and
+  `warning: ... generated N warnings` lines are now summary events instead of
+  extra diagnostics, so a single compiler error is reported as one error.
+- The stderr error heuristic no longer escalates parser-classified summary
+  events to errors.
+- `arshy daemon start` waits up to 10s (matching the MCP proxy) before
+  reporting that the daemon did not start, tolerating slow first starts.
+- Declared the minimum supported Rust version (`rust-version = "1.87"`).
