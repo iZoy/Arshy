@@ -30,7 +30,7 @@ fn is_noise_line(message: &str) -> bool {
 }
 
 /// Strip all ANSI escape sequences from a string.
-fn strip_ansi(input: &str) -> std::borrow::Cow<'_, str> {
+pub(crate) fn strip_ansi(input: &str) -> std::borrow::Cow<'_, str> {
     // Fast path: no ESC byte at all
     if !input.as_bytes().contains(&0x1b) {
         return std::borrow::Cow::Borrowed(input);
@@ -355,6 +355,13 @@ mod tests {
         assert_eq!(d.collapsed_count(), 3);
         // Non-blank lines still pass through
         assert!(d.feed(make_event("log", "info", "real message", 3)).is_some());
+    }
+
+    #[test]
+    fn strip_ansi_removes_sgr_around_error() {
+        let colored = "\x1b[1m\x1b[91merror\x1b[0m: manifest path missing";
+        let stripped = strip_ansi(colored);
+        assert_eq!(stripped.as_ref(), "error: manifest path missing");
     }
 
     #[test]
