@@ -138,3 +138,7 @@ Full suite ≈ **20 tasks × 2 modes ≈ 40 runs**. Expect **tens of minutes to 
 Compact defaults cut ~2k arshy input tokens and removed fat `structuredContent`, but the **~32k gap vs shell remains** — mostly Codex MCP host/schema tax on a one-shot diagnose task, not raw compiler output. Hard fix-until-pass tasks are where rounds/success should be compared next.
 
 See `samples/rust-type-mismatch/`.
+
+## Hard fix-until-pass result (NotBot, 2026-10-15)
+
+Three tasks (`fix-rust-multi-errors`, `fix-python-pytest-noisy`, `fix-go-multi-errors`): **3/3** success for both shell and Arshy. Arshy avg rounds **4.7** vs shell **5.7**; input tokens ~**416k** vs ~**426k**; Arshy wall clock slower (~14 vs ~11 min). Summary: [results-hard-fix-2026-10-15.md](results-hard-fix-2026-10-15.md).

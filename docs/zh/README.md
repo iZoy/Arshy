@@ -1,22 +1,25 @@
 # Arshy 中文指南
 
-Arshy 是面向 AI Agent 的本地命令执行与诊断层，通过标准 MCP 提供服务。
+面向编程 Agent 的本地 CLI 诊断层（MCP）：把嘈杂的构建 / 测试 / lint 输出收成结构化证据（严重级别、文件、行号、错误码）。**作品集 / 公开预览**，不宣称「所有 Agent 必备基础设施」。
+
 ![原生 cargo 输出与 Arshy 结构化诊断对比](../assets/arshy-demo.gif)
 
-同一个失败的 `cargo check`：原生方式下，Agent 需要通读完整编译输出自行定位错误；
-经过 Arshy，Agent 直接拿到 status、exit_code、错误数和一个 primary_diagnostic
-（错误码、文件、行、列），原始输出仍可按需获取。演示基于
-[可复现示例](../tutorials/agent-diagnostic-loop.md)，可用 `scripts/record-demo.py`
-重新生成。
+同一个失败的 `cargo check`：原生方式下 Agent 通读编译器全文；经 Arshy 则拿到 status、exit_code 与 primary_diagnostic（错误码、文件、行、列），原始输出仍可按需取回。演示见 [可复现示例](../tutorials/agent-diagnostic-loop.md)（`scripts/record-demo.py`）。
 
-对 Agent 的价值：
+## 诚实结论（Codex，2026-10-15）
 
-- 统一结构：38 个内置 parser 覆盖的构建、测试、lint、部署失败共用严重级别、位置和错误码字段；
-- 减少重复阅读：重复诊断会被合并，汇总行不会被重复计为错误；
-- 按需取证：需要时再通过 arshy_query、arshy_task 获取更多事件或原始输出。
+在三道 **修到通过** 题（Rust 多错误、嘈杂 pytest、Go 多错误）上，原生 shell 与 Arshy 均为 **3/3** 成功。Arshy 平均工具轮次略少（4.7 vs 5.7）；总输入 token 接近（约 416k vs 426k）；墙钟时间更慢（约 14 分钟 vs 11 分钟，含 Codex 重连噪声）。仅诊断烟雾题上仍有明显的 MCP 宿主 / schema token 开销。**结论：** 可复现的原型，偶有轮次收益；尚未证明 token 或速度优势，也不是必备基础设施。
 
-v0.1.0-alpha.1 是公开预览版，接口可能在正式 0.1.0 前调整。当前支持 macOS
-和 Linux。Linux 发布包为 musl 静态链接，可在 Ubuntu 22.04、Debian 12 等常见 glibc 发行版上运行。
+完整表格：[results-hard-fix-2026-10-15.md](../benchmarks/results-hard-fix-2026-10-15.md)。方法：[benchmarks/README.md](../benchmarks/README.md)。
+
+## 它是什么
+
+- 一个 MCP 服务（`arshy_exec` / `arshy_query` / `arshy_task`）加本地 daemon。
+- 约 38 个内置 CLI parser，共用诊断字段，重复项会合并。
+- 按需取证：需要时再取更多事件或原始输出。
+- 已走通发布链路：musl 静态 Linux 包、校验和安装脚本、GitHub Release [v0.1.0-alpha.1](https://github.com/iZoy/Arshy/releases/tag/v0.1.0-alpha.1)。
+
+v0.1.0-alpha.1 接口仍可能调整。支持 macOS 与 Linux；Linux 为 musl 静态链接（Ubuntu 22.04 / Debian 12 可用）。
 
 ## 安装
 
@@ -55,5 +58,4 @@ security.allowed_cwds 只检查工作目录。任务历史保留在配置的数�
 arshy doctor --format json 只在本地生成版本、系统架构、daemon 与协议检查状态、
 解析器数量；不会自动上传。提交 Issue 前请自行审阅。
 
-公开预览阶段不宣称固定 token 节省比例。欢迎通过 GitHub Issues 提交安装问题、
-解析错误或一次真实任务的使用反馈。
+定位为**作品集 / 公开预览**：早期 Codex 基准未显示相对原生 shell 的明确 token 或速度优势，详见上文诚实结论。不宣称固定节省比例。欢迎通过 GitHub Issues 反馈安装问题、解析错误或真实任务体验。
