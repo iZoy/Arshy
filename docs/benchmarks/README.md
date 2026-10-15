@@ -126,9 +126,15 @@ Full suite ≈ **20 tasks × 2 modes ≈ 40 runs**. Expect **tens of minutes to 
 
 ## Smoke result (NotBot, 2026-10-15)
 
-`rust-type-mismatch` × `{shell, arshy}` both succeeded with path compliance:
+`rust-type-mismatch` × `{shell, arshy}` both succeeded with path compliance.
 
-- shell: ~151s, ~31.7k input / 193 output tokens, 1× `cargo check`
-- arshy: ~208s, ~66.7k input / 297 output tokens, 1× `arshy_exec`
+| build | mode | wall | input tok | cached | output | notes |
+|-------|------|------|-----------|--------|--------|-------|
+| Sep-18 fat binary | shell | 151s | 31,695 | 19,968 | 193 | |
+| Sep-18 fat binary | arshy | 208s | 66,704 | 50,176 | 297 | full events + git `Changed files` from wrong repo |
+| compact MCP (this branch) | shell | 173s | 32,497 | 15,104 | 214 | |
+| compact MCP (this branch) | arshy | 218s | 64,603 | 45,312 | 406 | text=`failed (exit 101)\nE0308 src/main.rs:2 mismatched types` |
 
-See `samples/rust-type-mismatch/`. The first smoke used a **Sep 2025** `~/.local/bin/arshy` that still returned fat `structuredContent` (full events + project_context/git diff). After the MCP compact default + reinstall, re-smoke and refresh those numbers.
+Compact defaults cut ~2k arshy input tokens and removed fat `structuredContent`, but the **~32k gap vs shell remains** — mostly Codex MCP host/schema tax on a one-shot diagnose task, not raw compiler output. Hard fix-until-pass tasks are where rounds/success should be compared next.
+
+See `samples/rust-type-mismatch/`.

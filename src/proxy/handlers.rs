@@ -358,11 +358,13 @@ fn compact_failure_text(
         if severity != "error" && severity != "warning" {
             continue;
         }
+        let message = event.get("message").and_then(|v| v.as_str()).unwrap_or("");
+        if is_secondary_build_summary(message) {
+            continue;
+        }
         // Skip primary duplicate when the same code+location already shown.
-        if primary.is_some() && inlined == 1 {
-            if diagnostics_equivalent(primary.unwrap(), event) {
-                continue;
-            }
+        if primary.is_some() && diagnostics_equivalent(primary.unwrap(), event) {
+            continue;
         }
         lines.push(format_diagnostic_line(event));
         inlined += 1;
@@ -409,6 +411,15 @@ fn format_diagnostic_line(event: &serde_json::Value) -> String {
     } else {
         parts.join(" ")
     }
+}
+
+
+fn is_secondary_build_summary(message: &str) -> bool {
+    let m = message.to_ascii_lowercase();
+    m.contains("could not compile")
+        || m.contains("due to") && m.contains("previous error")
+        || m.starts_with("for more information about this error")
+        || m.starts_with("some errors have detailed explanations")
 }
 
 fn diagnostics_equivalent(a: &serde_json::Value, b: &serde_json::Value) -> bool {
@@ -731,6 +742,7 @@ mod tests {
         assert!(result["structuredContent"].get("task_id").is_none());
         let body = text(&result);
         assert!(body.contains("E0308"), "{body}");
+        assert!(!body.contains("could not compile"), "{body}");
         assert!(!body.contains("arshy_query"), "{body}");
     }
 
