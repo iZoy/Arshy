@@ -2,13 +2,13 @@
 """Score a benchmark run directory produced by run.py.
 
 Metrics per (task, mode):
-  success          — last_message matches expected exit/code/message/location
-  primary_hit      — location file (+ line if known) found in last_message or tool output
+  success          — diagnose: last_message matches expected fields
+                     fix: independent verify command exits 0 (meta.verify_pass)
+  primary_hit      — diagnose only: location+message matched
   tool_rounds      — count of mcp_tool_call + command_execution item.completed
-  arshy_calls      — arshy_* MCP calls
-  shell_calls      — command_execution items
   retries          — repeated identical commands (heuristic)
   input_tokens / output_tokens / cached_input_tokens — from turn.completed.usage
+                     (fix tasks: treat as total including repair rounds)
   path_compliance  — arshy mode used arshy_*; shell mode avoided arshy_*
 
 Writes summary.json and summary.md into the run directory.
@@ -111,6 +111,13 @@ def contains_any(hay: str, needles: list[str] | None) -> bool:
     return any(n.lower() in h for n in needles)
 
 
+def extract_fix_status(text: str) -> str | None:
+    if not text:
+        return None
+    m = re.search(r"^STATUS:\s*(pass|fail)\b", text, re.I | re.M)
+    return m.group(1).lower() if m else None
+
+
 def score_task(task: dict, mode: str, task_dir: Path) -> dict:
     events_path = task_dir / "events.jsonl"
     last_path = task_dir / "last_message.txt"
@@ -121,27 +128,7 @@ def score_task(task: dict, mode: str, task_dir: Path) -> dict:
     report = extract_report(last)
     blob = last + "\n" + json.dumps(ev["tools"])
     exp = task.get("expected") or {}
-
-    # success heuristics
-    exit_ok = True
-    if exp.get("exit_code") is not None:
-        exit_ok = str(report["exit_code"]) == str(exp["exit_code"]) or str(exp["exit_code"]) in blob
-    code_ok = True
-    if exp.get("code"):
-        code_ok = (exp["code"].lower() in (report.get("code") or "").lower()) or (exp["code"] in blob)
-    msg_ok = contains_any(blob, exp.get("message_contains"))
-    loc_ok = True
-    if exp.get("location_file"):
-        loc_ok = exp["location_file"] in blob
-        if loc_ok and exp.get("location_line") is not None:
-            # accept file:line or file line N
-            line = str(exp["location_line"])
-            loc_ok = (
-                f"{exp['location_file']}:{line}" in blob
-                or f"{exp['location_file']}:{line}:" in blob
-                or (exp["location_file"] in blob and line in (report.get("location") or blob))
-            )
-    success = bool(exit_ok and code_ok and msg_ok and loc_ok and meta.get("status") in ("ok", "codex_nonzero", None))
+    kind = task.get("kind") or meta.get("kind") or "diagnose"
 
     arshy_calls = [t for t in ev["tools"] if t.get("kind") == "mcp" and t.get("server") == "arshy"]
     shell_calls = [t for t in ev["tools"] if t.get("kind") == "shell"]
@@ -160,14 +147,63 @@ def score_task(task: dict, mode: str, task_dir: Path) -> dict:
         seen.add(c)
 
     if mode == "arshy":
+        # Fix tasks may use host patch/write tools; still forbid shell for builds.
         path_compliance = len(arshy_calls) > 0 and len(shell_calls) == 0
     else:
-        path_compliance = len(arshy_calls) == 0 and len(shell_calls) > 0
+        path_compliance = len(arshy_calls) == 0 and (len(shell_calls) > 0 or kind == "fix")
 
     usage = ev.get("usage") or {}
+
+    if kind == "fix":
+        verify_pass = bool(meta.get("verify_pass"))
+        claimed = extract_fix_status(last)
+        success = verify_pass
+        return {
+            "task_id": task["id"],
+            "mode": mode,
+            "kind": kind,
+            "success": success,
+            "verify_pass": verify_pass,
+            "claimed_status": claimed,
+            "primary_hit": verify_pass,
+            "path_compliance": path_compliance,
+            "tool_rounds": len(ev["tools"]),
+            "arshy_calls": len(arshy_calls),
+            "shell_calls": len(shell_calls),
+            "retries": retries,
+            "input_tokens": usage.get("input_tokens"),
+            "output_tokens": usage.get("output_tokens"),
+            "cached_input_tokens": usage.get("cached_input_tokens"),
+            "elapsed_sec": meta.get("elapsed_sec"),
+            "codex_status": meta.get("status"),
+            "report": report,
+            "errors": ev.get("errors")[:5],
+        }
+
+    # diagnose success heuristics
+    exit_ok = True
+    if exp.get("exit_code") is not None:
+        exit_ok = str(report["exit_code"]) == str(exp["exit_code"]) or str(exp["exit_code"]) in blob
+    code_ok = True
+    if exp.get("code"):
+        code_ok = (exp["code"].lower() in (report.get("code") or "").lower()) or (exp["code"] in blob)
+    msg_ok = contains_any(blob, exp.get("message_contains"))
+    loc_ok = True
+    if exp.get("location_file"):
+        loc_ok = exp["location_file"] in blob
+        if loc_ok and exp.get("location_line") is not None:
+            line = str(exp["location_line"])
+            loc_ok = (
+                f"{exp['location_file']}:{line}" in blob
+                or f"{exp['location_file']}:{line}:" in blob
+                or (exp["location_file"] in blob and line in (report.get("location") or blob))
+            )
+    success = bool(exit_ok and code_ok and msg_ok and loc_ok and meta.get("status") in ("ok", "codex_nonzero", None))
+
     return {
         "task_id": task["id"],
         "mode": mode,
+        "kind": kind,
         "success": success,
         "primary_hit": loc_ok and msg_ok,
         "exit_ok": exit_ok,
@@ -252,12 +288,12 @@ def main() -> int:
         ]
 
     lines.append("## per task")
-    lines.append("| task | mode | success | primary | comply | rounds | retries | in_tok |")
-    lines.append("|---|---|---|---|---|---|---|---|")
+    lines.append("| task | kind | mode | success | primary/verify | comply | rounds | retries | in_tok | elapsed |")
+    lines.append("|---|---|---|---|---|---|---|---|---|---|")
     for r in results:
         lines.append(
-            f"| {r['task_id']} | {r['mode']} | {r['success']} | {r['primary_hit']} | "
-            f"{r['path_compliance']} | {r['tool_rounds']} | {r['retries']} | {r['input_tokens']} |"
+            f"| {r['task_id']} | {r.get('kind','diagnose')} | {r['mode']} | {r['success']} | {r['primary_hit']} | "
+            f"{r['path_compliance']} | {r['tool_rounds']} | {r['retries']} | {r['input_tokens']} | {r.get('elapsed_sec')} |"
         )
 
     (args.run_dir / "summary.json").write_text(json.dumps(summary, indent=2))

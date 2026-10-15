@@ -259,3 +259,86 @@ tasks:
       exit_code: 127
       message_contains: [not found, No such file]
     tags: [control]
+
+  # ── Fix-until-pass (hard) ─────────────────────────────────────────────
+  # Agent may edit files. Success = verify command exits 0.
+
+  - id: fix-rust-multi-errors
+    title: Fix multiple Rust compile errors until cargo check passes
+    kind: fix
+    fixture: rust-multi-errors
+    command: cargo check
+    verify: cargo check
+    parser: cargo
+    requires: [cargo]
+    timeout_sec: 420
+    expected:
+      verify_exit_code: 0
+      min_errors_hint: 2
+    tags: [rust, fix, hard]
+
+  - id: fix-rust-tests
+    title: Fix failing Rust unit tests until cargo test passes
+    kind: fix
+    fixture: rust-test-broken
+    command: cargo test
+    verify: cargo test
+    parser: cargo-test
+    requires: [cargo]
+    timeout_sec: 420
+    expected:
+      verify_exit_code: 0
+    tags: [rust, test, fix, hard]
+
+  - id: fix-python-pytest-noisy
+    title: Fix noisy pytest failures until pytest -q passes
+    kind: fix
+    fixture: python-pytest-noisy
+    command: python3 -m pytest -q
+    verify: python3 -m pytest -q
+    parser: pytest
+    requires: [python3]
+    timeout_sec: 420
+    expected:
+      verify_exit_code: 0
+    tags: [python, test, fix, hard]
+
+  - id: fix-go-multi-errors
+    title: Fix multiple Go compile errors until go build passes
+    kind: fix
+    fixture: go-multi-errors
+    command: go build .
+    verify: go build -o /dev/null .
+    parser: go
+    requires: [go]
+    timeout_sec: 420
+    expected:
+      verify_exit_code: 0
+      min_errors_hint: 2
+    tags: [go, fix, hard]
+
+  - id: fix-python-import-chain
+    title: Fix import/runtime chain until pytest passes
+    kind: fix
+    fixture: python-import-chain
+    command: python3 -m pytest -q
+    verify: python3 -m pytest -q
+    parser: python
+    requires: [python3]
+    timeout_sec: 420
+    expected:
+      verify_exit_code: 0
+    tags: [python, fix, hard]
+
+  - id: fix-make-rust-cascade
+    title: Fix make+cargo cascade until make check passes
+    kind: fix
+    fixture: make-rust-cascade
+    command: make check
+    verify: make check
+    parser: cargo
+    requires: [make, cargo]
+    timeout_sec: 420
+    expected:
+      verify_exit_code: 0
+    tags: [make, rust, fix, hard]

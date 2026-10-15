@@ -1,8 +1,10 @@
 # Arshy agent diagnostic benchmark (v0)
 
-Compare **native Codex shell** vs **forced `arshy_exec`** on ~20 small, intentionally broken projects.
+Compare **native Codex shell** vs **forced `arshy_exec`** on diagnose-only fixtures plus harder **fix-until-pass** tasks.
 
-Goal: measure whether structured diagnostics improve *primary-error identification* (success rate, fewer retries / tool rounds, optional token use) — not whether the agent can fix the bug.
+Goals:
+- **diagnose** (~20 tasks): primary-error identification (success, rounds, tokens)
+- **fix / hard** (6 tasks): edit until `verify` exits 0; score success rate, tool rounds, total tokens including retries
 
 ## Layout
 
@@ -56,6 +58,27 @@ cp "$RUN/rust-type-mismatch__shell/last_message.txt" docs/benchmarks/samples/rus
 # optionally keep usage-only excerpts, not full 80k-token event dumps
 ```
 
+
+## Hard fix-until-pass
+
+Six noisy / multi-error tasks tagged `fix` + `hard`. The runner copies the fixture, lets Codex edit, then independently runs `verify`:
+
+```bash
+python3 scripts/benchmark/run.py --tag hard --modes shell,arshy
+python3 scripts/benchmark/score.py docs/benchmarks/results/<timestamp>
+```
+
+| id | verify |
+|----|--------|
+| fix-rust-multi-errors | `cargo check` |
+| fix-rust-tests | `cargo test` |
+| fix-python-pytest-noisy | `python3 -m pytest -q` |
+| fix-go-multi-errors | `go build -o /dev/null .` |
+| fix-python-import-chain | `python3 -m pytest -q` |
+| fix-make-rust-cascade | `make check` |
+
+Success for these is **`meta.verify_pass`** (independent exit 0), not the model's self-reported STATUS.
+
 ## Full suite
 
 Offline-friendly (skip network + optional ruff):
@@ -108,4 +131,4 @@ Full suite ≈ **20 tasks × 2 modes ≈ 40 runs**. Expect **tens of minutes to 
 - shell: ~151s, ~31.7k input / 193 output tokens, 1× `cargo check`
 - arshy: ~208s, ~66.7k input / 297 output tokens, 1× `arshy_exec`
 
-See `samples/rust-type-mismatch/`. Arshy input tokens are higher mainly because MCP tool schemas are injected; later turns may cache more.
+See `samples/rust-type-mismatch/`. The first smoke used a **Sep 2025** `~/.local/bin/arshy` that still returned fat `structuredContent` (full events + project_context/git diff). After the MCP compact default + reinstall, re-smoke and refresh those numbers.

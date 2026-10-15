@@ -1,16 +1,23 @@
 #!/usr/bin/env python3
-"""Run Arshy diagnose-only benchmark against Codex.
+"""Run Arshy diagnose / fix-until-pass benchmark against Codex.
 
 Modes:
   shell  — built-in shell only (arshy MCP disabled)
   arshy  — force arshy_exec via prompt (arshy MCP enabled)
 
+Task kinds (tasks.json `kind`):
+  diagnose (default) — identify primary failure, do not edit
+  fix                — edit until `verify` command exits 0
+
 Examples:
-  # Smoke one task both ways on NotBot:
+  # Smoke one diagnose task both ways on NotBot:
   python3 scripts/benchmark/run.py --task rust-type-mismatch --modes shell,arshy
 
-  # Full suite offline tasks:
-  python3 scripts/benchmark/run.py --tag '!network' --tag '!optional'
+  # Hard fix tasks only:
+  python3 scripts/benchmark/run.py --tag hard --modes shell,arshy
+
+  # Full suite offline diagnose tasks:
+  python3 scripts/benchmark/run.py --tag '!network' --tag '!optional' --tag '!fix'
 
 Stdout is human progress; JSONL results go to --out (default docs/benchmarks/results/).
 Codex --json events are saved under the same run directory.
@@ -82,8 +89,9 @@ def prepare_workdir(task: dict, run_root: Path) -> Path:
     return dest
 
 
-def render_prompt(mode: str, command: str) -> str:
-    name = "diagnose_arshy.txt" if mode == "arshy" else "diagnose_shell.txt"
+def render_prompt(mode: str, command: str, kind: str = "diagnose") -> str:
+    prefix = "fix" if kind == "fix" else "diagnose"
+    name = f"{prefix}_arshy.txt" if mode == "arshy" else f"{prefix}_shell.txt"
     tmpl = (PROMPTS / name).read_text()
     return tmpl.replace("{{command}}", command)
 
@@ -113,12 +121,33 @@ def codex_cmd(mode: str, workdir: Path, prompt: str, model: str | None,
     return cmd
 
 
+def run_verify(workdir: Path, verify_cmd: str, timeout: int) -> dict:
+    """Independently check whether the project now passes."""
+    try:
+        proc = subprocess.run(
+            verify_cmd,
+            shell=True,
+            cwd=str(workdir),
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        return {
+            "exit_code": proc.returncode,
+            "stdout_tail": (proc.stdout or "")[-2000:],
+            "stderr_tail": (proc.stderr or "")[-2000:],
+        }
+    except subprocess.TimeoutExpired:
+        return {"exit_code": 124, "stdout_tail": "", "stderr_tail": "verify timeout"}
+
+
 def run_one(task: dict, mode: str, out_dir: Path, model: str | None,
             timeout: int, dry_cmd: bool) -> dict:
     task_dir = (out_dir / f"{task['id']}__{mode}").resolve()
     task_dir.mkdir(parents=True, exist_ok=True)
     work = prepare_workdir(task, task_dir)
-    prompt = render_prompt(mode, task["command"])
+    kind = task.get("kind") or "diagnose"
+    prompt = render_prompt(mode, task.get("verify") or task["command"], kind=kind)
     (task_dir / "prompt.txt").write_text(prompt)
     events = task_dir / "events.jsonl"
     last = task_dir / "last_message.txt"
@@ -127,7 +156,9 @@ def run_one(task: dict, mode: str, out_dir: Path, model: str | None,
     meta = {
         "task_id": task["id"],
         "mode": mode,
+        "kind": kind,
         "command": task["command"],
+        "verify": task.get("verify") or task["command"],
         "workdir": str(work),
         "started_at": datetime.now(timezone.utc).isoformat(),
         "codex_argv_preview": cmd[:12] + ["<prompt>", *cmd[13:]] if False else None,
@@ -158,7 +189,14 @@ def run_one(task: dict, mode: str, out_dir: Path, model: str | None,
         "events_path": str(events),
         "last_message_path": str(last),
         "finished_at": datetime.now(timezone.utc).isoformat(),
+        "kind": kind,
     })
+    if kind == "fix" and not dry_cmd:
+        verify_cmd = task.get("verify") or task["command"]
+        verify = run_verify(work, verify_cmd, min(timeout, 180))
+        meta["verify"] = verify
+        meta["verify_pass"] = verify.get("exit_code") == 0
+        (task_dir / "verify.json").write_text(json.dumps(verify, indent=2))
     (task_dir / "meta.json").write_text(json.dumps(meta, indent=2))
     return meta
 
@@ -224,7 +262,8 @@ def main() -> int:
         for mode in modes:
             print(f"→ {t['id']} / {mode} ...", flush=True)
             try:
-                meta = run_one(t, mode, out, model, timeout, args.dry_run)
+                task_timeout = int(t.get("timeout_sec") or timeout)
+                meta = run_one(t, mode, out, model, task_timeout, args.dry_run)
             except subprocess.TimeoutExpired:
                 meta = {"task_id": t["id"], "mode": mode, "status": "timeout"}
                 print(f"  timeout", flush=True)
