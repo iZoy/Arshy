@@ -1,0 +1,7 @@
+{
+  "name": "bench-eslint-no-var",
+  "private": true,
+  "devDependencies": {
+    "eslint": "9.12.0"
+  }
+}

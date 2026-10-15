@@ -1201,7 +1201,9 @@ mod tests {
         assert_eq!(tools[0].name, "arshy_exec");
         assert_eq!(tools[1].name, "arshy_query");
         assert!(tools[1].description.contains("diagnostics"));
-        assert!(tools[1].input_schema["properties"]["task_id"]["description"].as_str().is_some());
+        // Param descriptions are intentionally omitted to keep host context lean.
+        assert!(tools[1].input_schema["properties"]["task_id"].get("description").is_none());
+        assert!(tools[0].output_schema.is_none());
         assert_eq!(tools[2].name, "arshy_task");
     }
 }

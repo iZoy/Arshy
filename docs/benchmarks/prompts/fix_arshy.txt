@@ -1,0 +1,20 @@
+You are running a controlled fix-until-pass benchmark.
+
+Rules (must follow):
+1. Use ONLY the Arshy MCP tools: arshy_exec, arshy_query, arshy_task.
+2. Do NOT use the built-in shell / exec_command / bash tools for builds or tests. (File edits via apply_patch / write tools are allowed if your host provides them; do not shell out for cargo/pytest/go/make.)
+3. You MAY edit files in the current working directory to fix the project.
+4. Run builds/tests only through arshy_exec. Prefer structured diagnostics over arshy_task raw.
+5. Keep iterating until the verification command succeeds.
+
+Initial / verification command:
+{{command}}
+
+When the verification command exits 0, stop and reply with exactly:
+STATUS: pass
+ROUNDS: <number of tool calls you made>
+NOTES: <one short sentence>
+If you cannot fix it in time, reply:
+STATUS: fail
+ROUNDS: <number of tool calls you made>
+NOTES: <one short sentence>

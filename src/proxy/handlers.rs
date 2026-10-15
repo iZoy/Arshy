@@ -224,6 +224,9 @@ pub(crate) async fn handle_tool_call(
     Ok(task_id)
 }
 
+/// Max error/warning lines inlined into MCP text for a failed run.
+const COMPACT_EVENT_INLINE_LIMIT: usize = 8;
+
 fn build_run_result(result: &serde_json::Value) -> (serde_json::Value, Option<String>) {
     let status = result["status"].as_str().unwrap_or("");
     let exit_value = result.get("exit_code").cloned().unwrap_or(serde_json::Value::Null);
@@ -236,38 +239,47 @@ fn build_run_result(result: &serde_json::Value) -> (serde_json::Value, Option<St
     let task_id = result.get("task_id").and_then(|v| v.as_str()).map(str::to_owned);
 
     let (inline_raw, inline_truncated, omitted_bytes) = clip_inline_output(raw);
-    let mut text = if !raw.is_empty() {
-        inline_raw
+    let has_structured_failure = is_failure && (primary.is_some() || !events.is_empty());
+    // Default: compact diagnostics on failure — do not dump raw/compiler noise.
+    // Full captured output remains available via arshy_task(action:"raw").
+    let (mut text, _compact_inlined, used_raw) = if has_structured_failure {
+        let (body, inlined) = compact_failure_text(status, &exit_value, primary, &events);
+        (body, inlined, false)
+    } else if !raw.is_empty() {
+        (inline_raw, 0usize, true)
     } else if is_failure {
-        let messages = events
-            .iter()
-            .filter_map(|event| event.get("message").and_then(|v| v.as_str()))
-            .filter(|message| !message.is_empty())
-            .collect::<Vec<_>>();
-        if messages.is_empty() {
+        (
             format!(
                 "[command failed: exit code {}]",
                 exit_value.as_i64().map_or_else(|| "unknown".into(), |code| code.to_string())
-            )
-        } else {
-            messages.join("\n")
-        }
+            ),
+            0usize,
+            false,
+        )
     } else if status == "running" {
-        String::new()
+        (String::new(), 0usize, false)
     } else {
-        "✓".into()
+        ("✓".into(), 0usize, false)
     };
-    if inline_truncated {
+    if used_raw && inline_truncated {
         text.push_str(&format!("\n[output clipped: {omitted_bytes} bytes omitted]"));
     }
 
-    let raw_truncated = inline_truncated
-        || raw.contains("[output truncated at ")
-        || raw.contains("[line truncated at ")
-        || (raw.is_empty()
-            && result.get("raw_output_bytes").and_then(|v| v.as_u64()).unwrap_or(0) > 0);
+    let raw_truncated = used_raw
+        && (inline_truncated
+            || raw.contains("[output truncated at ")
+            || raw.contains("[line truncated at ")
+            || (raw.is_empty()
+                && result.get("raw_output_bytes").and_then(|v| v.as_u64()).unwrap_or(0) > 0));
     let event_count = result.get("event_count").and_then(|v| v.as_u64()).unwrap_or(0);
-    let events_not_fully_inlined = event_count > if is_failure { 1 } else { 0 };
+    // With compact failure text we already surface primary + up to N events.
+    // Only force a follow-up handle when the daemon says there are more than
+    // that budget (or an explicit truncation flag).
+    let events_not_fully_inlined = if has_structured_failure {
+        event_count > COMPACT_EVENT_INLINE_LIMIT as u64
+    } else {
+        event_count > 0
+    };
     let events_incomplete =
         result.get("events_truncated").and_then(|v| v.as_bool()).unwrap_or(false)
             || events_not_fully_inlined;
@@ -316,6 +328,112 @@ fn build_run_result(result: &serde_json::Value) -> (serde_json::Value, Option<St
         result_obj["isError"] = serde_json::json!(true);
     }
     (result_obj, handle.map(str::to_owned))
+}
+
+/// Compact failure text: one status line + up to N `code file:line: message` rows.
+/// Returns (text, number of error/warning events represented in the text).
+fn compact_failure_text(
+    status: &str,
+    exit_value: &serde_json::Value,
+    primary: Option<&serde_json::Value>,
+    events: &[serde_json::Value],
+) -> (String, usize) {
+    let mut text = status.to_string();
+    if let Some(code) = exit_value.as_i64() {
+        text.push_str(&format!(" (exit {code})"));
+    }
+    let mut inlined = 0usize;
+    let mut lines: Vec<String> = Vec::new();
+
+    if let Some(diagnostic) = primary {
+        lines.push(format_diagnostic_line(diagnostic));
+        inlined = 1;
+    }
+
+    for event in events {
+        if inlined >= COMPACT_EVENT_INLINE_LIMIT {
+            break;
+        }
+        let severity = event.get("severity").and_then(|v| v.as_str()).unwrap_or("");
+        if severity != "error" && severity != "warning" {
+            continue;
+        }
+        let message = event.get("message").and_then(|v| v.as_str()).unwrap_or("");
+        if is_secondary_build_summary(message) {
+            continue;
+        }
+        // Skip primary duplicate when the same code+location already shown.
+        if primary.is_some() && diagnostics_equivalent(primary.unwrap(), event) {
+            continue;
+        }
+        lines.push(format_diagnostic_line(event));
+        inlined += 1;
+    }
+
+    if lines.is_empty() {
+        for event in events.iter().take(COMPACT_EVENT_INLINE_LIMIT) {
+            if let Some(message) = event.get("message").and_then(|v| v.as_str()) {
+                if !message.is_empty() {
+                    lines.push(message.to_string());
+                    inlined += 1;
+                }
+            }
+        }
+    }
+
+    if !lines.is_empty() {
+        text.push('\n');
+        text.push_str(&lines.join("\n"));
+    }
+    (text, inlined)
+}
+
+fn format_diagnostic_line(event: &serde_json::Value) -> String {
+    let code = event.get("code").and_then(|v| v.as_str()).unwrap_or("");
+    let message = event.get("message").and_then(|v| v.as_str()).unwrap_or("");
+    let loc = event.get("location");
+    let file = loc.and_then(|l| l.get("file")).and_then(|v| v.as_str()).unwrap_or("");
+    let line = loc.and_then(|l| l.get("line")).and_then(|v| v.as_u64());
+    let mut parts = Vec::new();
+    if !code.is_empty() {
+        parts.push(code.to_string());
+    }
+    match (file, line) {
+        (f, Some(l)) if !f.is_empty() => parts.push(format!("{f}:{l}")),
+        (f, None) if !f.is_empty() => parts.push(f.to_string()),
+        _ => {}
+    }
+    if !message.is_empty() {
+        parts.push(message.to_string());
+    }
+    if parts.is_empty() {
+        "diagnostic".into()
+    } else {
+        parts.join(" ")
+    }
+}
+
+fn is_secondary_build_summary(message: &str) -> bool {
+    let m = message.to_ascii_lowercase();
+    m.contains("could not compile")
+        || m.contains("due to") && m.contains("previous error")
+        || m.starts_with("for more information about this error")
+        || m.starts_with("some errors have detailed explanations")
+}
+
+fn diagnostics_equivalent(a: &serde_json::Value, b: &serde_json::Value) -> bool {
+    let code_a = a.get("code").and_then(|v| v.as_str()).unwrap_or("");
+    let code_b = b.get("code").and_then(|v| v.as_str()).unwrap_or("");
+    let file_a = a.pointer("/location/file").and_then(|v| v.as_str()).unwrap_or("");
+    let file_b = b.pointer("/location/file").and_then(|v| v.as_str()).unwrap_or("");
+    let line_a = a.pointer("/location/line").and_then(|v| v.as_u64());
+    let line_b = b.pointer("/location/line").and_then(|v| v.as_u64());
+    let msg_a = a.get("message").and_then(|v| v.as_str()).unwrap_or("");
+    let msg_b = b.get("message").and_then(|v| v.as_str()).unwrap_or("");
+    code_a == code_b
+        && file_a == file_b
+        && line_a == line_b
+        && (msg_a == msg_b || msg_a.is_empty() || msg_b.is_empty())
 }
 
 fn clip_inline_output(raw: &str) -> (String, bool, usize) {
@@ -514,15 +632,21 @@ mod tests {
     }
 
     #[test]
-    fn failure_preserves_raw_error_and_structures_only_facts() {
+    fn failure_prefers_compact_diagnostics_over_raw() {
         let input = serde_json::json!({
-            "status":"failed", "exit_code":2, "raw_output":"error[E0308]: mismatched types\n",
-            "error_count":1,
+            "status":"failed", "exit_code":2, "raw_output":"error[E0308]: mismatched types\nnote: huge noise\n",
+            "error_count":1, "event_count":1,
             "primary_diagnostic":{"message":"mismatched types","severity":"error","code":"E0308",
                 "location":{"file":"src/main.rs","line":8},"context":{"line":"secret source"}}
         });
-        let (result, _) = build_run_result(&input);
-        assert_eq!(text(&result), "error[E0308]: mismatched types\n");
+        let (result, handle) = build_run_result(&input);
+        let body = text(&result);
+        assert!(body.contains("E0308"), "{body}");
+        assert!(body.contains("src/main.rs:8"), "{body}");
+        assert!(body.contains("mismatched types"), "{body}");
+        assert!(!body.contains("huge noise"), "{body}");
+        assert!(!body.contains("secret source"), "{body}");
+        assert!(handle.is_none());
         assert_eq!(
             result["structuredContent"]["diagnostic"],
             serde_json::json!({
@@ -531,6 +655,16 @@ mod tests {
         );
         assert!(result["structuredContent"]["diagnostic"].get("message").is_none());
         assert!(result["structuredContent"]["diagnostic"].get("context").is_none());
+        assert!(result["structuredContent"].get("task_id").is_none());
+    }
+
+    #[test]
+    fn failure_without_diagnostics_still_returns_raw() {
+        let input = serde_json::json!({
+            "status":"failed", "exit_code":2, "raw_output":"boom\n", "event_count":0
+        });
+        let (result, _) = build_run_result(&input);
+        assert_eq!(text(&result), "boom\n");
     }
 
     #[test]
@@ -589,6 +723,29 @@ mod tests {
         assert!(should_mark_tool_error("failed", Some(2), false));
         assert!(should_mark_tool_error("failed", Some(-1), false));
         assert!(should_mark_tool_error("timeout", Some(1), false));
+    }
+
+    #[test]
+    fn compact_failure_with_few_events_omits_follow_up_handle() {
+        let input = serde_json::json!({
+            "status":"failed", "exit_code":101, "task_id":"task-few",
+            "raw_output":"error[E0308]: mismatched types\nerror: could not compile\n",
+            "error_count":2, "event_count":2,
+            "primary_diagnostic":{"message":"mismatched types","severity":"error","code":"E0308",
+                "location":{"file":"src/main.rs","line":2}},
+            "events":[
+                {"message":"mismatched types","severity":"error","code":"E0308",
+                 "location":{"file":"src/main.rs","line":2}},
+                {"message":"could not compile demo due to 1 previous error","severity":"error"}
+            ]
+        });
+        let (result, handle) = build_run_result(&input);
+        assert!(handle.is_none(), "{:?}", handle);
+        assert!(result["structuredContent"].get("task_id").is_none());
+        let body = text(&result);
+        assert!(body.contains("E0308"), "{body}");
+        assert!(!body.contains("could not compile"), "{body}");
+        assert!(!body.contains("arshy_query"), "{body}");
     }
 
     #[test]

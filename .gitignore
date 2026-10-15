@@ -36,3 +36,6 @@ lcov.info
 
 # Tutorial demo build output
 /docs/tutorials/demo-rust-failure/target/
+
+# Benchmark local runs
+docs/benchmarks/results/

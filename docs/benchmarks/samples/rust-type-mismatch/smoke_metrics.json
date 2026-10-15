@@ -1,0 +1,45 @@
+[
+  {
+    "label": "before_fat_sep18_binary",
+    "mode": "shell",
+    "elapsed_sec": 150.51,
+    "usage": {
+      "input_tokens": 31695,
+      "cached_input_tokens": 19968,
+      "output_tokens": 193
+    }
+  },
+  {
+    "label": "before_fat_sep18_binary",
+    "mode": "arshy",
+    "elapsed_sec": 208.04,
+    "usage": {
+      "input_tokens": 66704,
+      "cached_input_tokens": 50176,
+      "output_tokens": 297
+    },
+    "note": "fat structuredContent + project_context/git diff from old ~/.local/bin"
+  },
+  {
+    "label": "after_compact_mcp",
+    "mode": "shell",
+    "elapsed_sec": 172.92,
+    "usage": {
+      "input_tokens": 32497,
+      "cached_input_tokens": 15104,
+      "output_tokens": 214
+    }
+  },
+  {
+    "label": "after_compact_mcp",
+    "mode": "arshy",
+    "elapsed_sec": 217.7,
+    "usage": {
+      "input_tokens": 64603,
+      "cached_input_tokens": 45312,
+      "output_tokens": 406
+    },
+    "mcp_text": "failed (exit 101)\\nE0308 src/main.rs:2 mismatched types",
+    "note": "lean structuredContent; ~2k fewer input tokens vs fat binary; gap vs shell still ~32k (MCP host tax)"
+  }
+]

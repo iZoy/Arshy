@@ -1,0 +1,344 @@
+# Arshy agent diagnostic benchmark — task catalog (v0)
+# Each task is diagnose-only: agent must identify the primary failure, not fix it.
+version: 0
+default_timeout_sec: 180
+default_model: null  # use Codex config default
+
+tasks:
+  - id: rust-type-mismatch
+    title: Rust E0308 mismatched types
+    fixture: rust-type-mismatch
+    command: cargo check
+    parser: cargo
+    requires: [cargo]
+    expected:
+      exit_code: 101
+      code: E0308
+      message_contains: [mismatched types]
+      location_file: src/main.rs
+      location_line: 2
+    tags: [rust, smoke]
+
+  - id: rust-missing-fn
+    title: Rust unresolved function
+    fixture: rust-missing-fn
+    command: cargo check
+    parser: cargo
+    requires: [cargo]
+    expected:
+      exit_code: 101
+      code: E0425
+      message_contains: [missing_helper, cannot find]
+      location_file: src/main.rs
+    tags: [rust]
+
+  - id: rust-test-fail
+    title: Rust cargo test assertion failure
+    fixture: rust-test-fail
+    command: cargo test
+    parser: cargo-test
+    requires: [cargo]
+    expected:
+      exit_code: 101
+      message_contains: [assert, adds_numbers]
+      location_file: src/lib.rs
+    tags: [rust, test]
+
+  - id: python-zerodiv
+    title: Python ZeroDivisionError
+    fixture: python-zerodiv
+    command: python3 main.py
+    parser: python
+    requires: [python3]
+    expected:
+      exit_code: 1
+      code: ZeroDivisionError
+      message_contains: [division by zero]
+      location_file: main.py
+    tags: [python]
+
+  - id: python-import
+    title: Python ImportError missing name
+    fixture: python-import
+    command: python3 main.py
+    parser: python
+    requires: [python3]
+    expected:
+      exit_code: 1
+      code: ImportError
+      message_contains: [process_data]
+      location_file: main.py
+    tags: [python]
+
+  - id: python-assert
+    title: Python AssertionError
+    fixture: python-assert
+    command: python3 check.py
+    parser: python
+    requires: [python3]
+    expected:
+      exit_code: 1
+      code: AssertionError
+      message_contains: [user must be active]
+      location_file: check.py
+    tags: [python]
+
+  - id: python-nameerror
+    title: Python NameError
+    fixture: python-nameerror
+    command: python3 app.py
+    parser: python
+    requires: [python3]
+    expected:
+      exit_code: 1
+      code: NameError
+      message_contains: [message]
+      location_file: app.py
+    tags: [python]
+
+  - id: python-typeerror
+    title: Python TypeError on +
+    fixture: python-typeerror
+    command: python3 main.py
+    parser: python
+    requires: [python3]
+    expected:
+      exit_code: 1
+      code: TypeError
+      message_contains: [str, int]
+      location_file: main.py
+    tags: [python]
+
+  - id: go-undefined
+    title: Go undefined fmt
+    fixture: go-undefined
+    command: go build .
+    parser: go
+    requires: [go]
+    expected:
+      exit_code: 1
+      message_contains: [undefined, fmt]
+      location_file: main.go
+    tags: [go]
+
+  - id: go-type-error
+    title: Go cannot use string as int
+    fixture: go-type-error
+    command: go build .
+    parser: go
+    requires: [go]
+    expected:
+      exit_code: 1
+      message_contains: [cannot use, string, int]
+      location_file: main.go
+    tags: [go]
+
+  - id: make-separator
+    title: Make missing separator
+    fixture: make-separator
+    command: make
+    parser: make
+    requires: [make]
+    expected:
+      exit_code: 2
+      message_contains: [missing separator]
+      location_file: Makefile
+    tags: [make]
+
+  - id: git-overwrite-merge
+    title: Git merge refused due to local changes
+    fixture: git-overwrite-merge
+    setup: bash setup.sh
+    command: git merge feature
+    parser: git
+    requires: [git]
+    expected:
+      exit_code: 1
+      message_contains: [local changes, overwritten, merge]
+      location_file: src/app.ts
+    tags: [git]
+
+  - id: node-syntax
+    title: Node.js SyntaxError
+    fixture: node-syntax
+    command: node bad.js
+    parser: node
+    requires: [node]
+    expected:
+      exit_code: 1
+      code: SyntaxError
+      message_contains: [SyntaxError]
+      location_file: bad.js
+    tags: [node]
+
+  - id: node-reference
+    title: Node.js TypeError reading undefined
+    fixture: node-reference
+    command: node app.js
+    parser: node
+    requires: [node]
+    expected:
+      exit_code: 1
+      code: TypeError
+      message_contains: [undefined]
+      location_file: app.js
+    tags: [node]
+
+  - id: npm-missing-script
+    title: npm missing script
+    fixture: npm-missing-script
+    command: npm run nonexistent
+    parser: npm
+    requires: [npm]
+    expected:
+      exit_code: 1
+      message_contains: [Missing script, nonexistent]
+    tags: [npm]
+
+  - id: tsc-type-error
+    title: TypeScript TS2322
+    fixture: tsc-type-error
+    setup: npm install --ignore-scripts --no-audit --no-fund
+    command: npx --no-install tsc --noEmit
+    parser: tsc
+    requires: [npm, network]
+    expected:
+      exit_code: 2
+      code: TS2322
+      message_contains: [string, number]
+      location_file: src/app.ts
+    tags: [typescript, network]
+
+  - id: eslint-no-var
+    title: ESLint no-var
+    fixture: eslint-no-var
+    setup: npm install --ignore-scripts --no-audit --no-fund
+    command: npx --no-install eslint src.js
+    parser: eslint
+    requires: [npm, network]
+    expected:
+      exit_code: 1
+      code: no-var
+      message_contains: [no-var, Unexpected var]
+      location_file: src.js
+    tags: [eslint, network]
+
+  - id: jest-fail
+    title: Jest assertion mismatch
+    fixture: jest-fail
+    setup: npm install --ignore-scripts --no-audit --no-fund
+    command: npx --no-install jest --no-colors
+    parser: jest
+    requires: [npm, network]
+    expected:
+      exit_code: 1
+      message_contains: ["$1,234.56", formatCurrency]
+      location_file: format.test.js
+    tags: [jest, network]
+
+  - id: ruff-unused
+    title: Ruff F401 unused import
+    fixture: ruff-unused
+    command: ruff check main.py
+    parser: ruff
+    requires: [ruff]
+    expected:
+      exit_code: 1
+      code: F401
+      message_contains: [os, unused]
+      location_file: main.py
+    tags: [ruff, optional]
+
+  - id: cmd-not-found
+    title: Control — command not found
+    fixture: cmd-not-found
+    command: this-binary-definitely-does-not-exist-arshy-bench
+    parser: null
+    requires: []
+    expected:
+      exit_code: 127
+      message_contains: [not found, No such file]
+    tags: [control]
+
+  # ── Fix-until-pass (hard) ─────────────────────────────────────────────
+  # Agent may edit files. Success = verify command exits 0.
+
+  - id: fix-rust-multi-errors
+    title: Fix multiple Rust compile errors until cargo check passes
+    kind: fix
+    fixture: rust-multi-errors
+    command: cargo check
+    verify: cargo check
+    parser: cargo
+    requires: [cargo]
+    timeout_sec: 420
+    expected:
+      verify_exit_code: 0
+      min_errors_hint: 2
+    tags: [rust, fix, hard]
+
+  - id: fix-rust-tests
+    title: Fix failing Rust unit tests until cargo test passes
+    kind: fix
+    fixture: rust-test-broken
+    command: cargo test
+    verify: cargo test
+    parser: cargo-test
+    requires: [cargo]
+    timeout_sec: 420
+    expected:
+      verify_exit_code: 0
+    tags: [rust, test, fix, hard]
+
+  - id: fix-python-pytest-noisy
+    title: Fix noisy pytest failures until pytest -q passes
+    kind: fix
+    fixture: python-pytest-noisy
+    command: python3 -m pytest -q
+    verify: python3 -m pytest -q
+    parser: pytest
+    requires: [python3]
+    timeout_sec: 420
+    expected:
+      verify_exit_code: 0
+    tags: [python, test, fix, hard]
+
+  - id: fix-go-multi-errors
+    title: Fix multiple Go compile errors until go build passes
+    kind: fix
+    fixture: go-multi-errors
+    command: go build .
+    verify: go build -o /dev/null .
+    parser: go
+    requires: [go]
+    timeout_sec: 420
+    expected:
+      verify_exit_code: 0
+      min_errors_hint: 2
+    tags: [go, fix, hard]
+
+  - id: fix-python-import-chain
+    title: Fix import/runtime chain until pytest passes
+    kind: fix
+    fixture: python-import-chain
+    command: python3 -m pytest -q
+    verify: python3 -m pytest -q
+    parser: python
+    requires: [python3]
+    timeout_sec: 420
+    expected:
+      verify_exit_code: 0
+    tags: [python, fix, hard]
+
+  - id: fix-make-rust-cascade
+    title: Fix make+cargo cascade until make check passes
+    kind: fix
+    fixture: make-rust-cascade
+    command: make check
+    verify: make check
+    parser: cargo
+    requires: [make, cargo]
+    timeout_sec: 420
+    expected:
+      verify_exit_code: 0
+    tags: [make, rust, fix, hard]
