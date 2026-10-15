@@ -1,6 +1,6 @@
 # Arshy 中文指南
 
-面向编程 Agent 的本地 CLI 诊断层（MCP）：把嘈杂的构建 / 测试 / lint 输出收成结构化证据（严重级别、文件、行号、错误码）。**作品集 / 公开预览**，不宣称「所有 Agent 必备基础设施」。
+面向编程 Agent 的本地 CLI 诊断层（MCP）：把嘈杂的构建 / 测试 / lint 输出收成结构化证据（严重级别、文件、行号、错误码）。
 
 ![原生 cargo 输出与 Arshy 结构化诊断对比](../assets/arshy-demo.gif)
 
@@ -8,7 +8,7 @@
 
 ## 诚实结论（Codex，2026-10-15）
 
-在三道 **修到通过** 题（Rust 多错误、嘈杂 pytest、Go 多错误）上，原生 shell 与 Arshy 均为 **3/3** 成功。Arshy 平均工具轮次略少（4.7 vs 5.7）；总输入 token 接近（约 416k vs 426k）；墙钟时间更慢（约 14 分钟 vs 11 分钟，含 Codex 重连噪声）。仅诊断烟雾题上仍有明显的 MCP 宿主 / schema token 开销。**结论：** 可复现的原型，偶有轮次收益；尚未证明 token 或速度优势，也不是必备基础设施。
+在三道 **修到通过** 题（Rust 多错误、嘈杂 pytest、Go 多错误）上，原生 shell 与 Arshy 均为 **3/3** 成功。Arshy 平均工具轮次略少（4.7 vs 5.7）；总输入 token 接近（约 416k vs 426k）；墙钟时间更慢（约 14 分钟 vs 11 分钟，含 Codex 重连噪声）。仅诊断烟雾题上仍有明显的 MCP 宿主 / schema token 开销。**结论：** 成功率与原生 shell 持平；偶有工具轮次更少；本组样本未见明确的 token 或墙钟优势。
 
 完整表格：[results-hard-fix-2026-10-15.md](../benchmarks/results-hard-fix-2026-10-15.md)。方法：[benchmarks/README.md](../benchmarks/README.md)。
 
@@ -58,4 +58,4 @@ security.allowed_cwds 只检查工作目录。任务历史保留在配置的数�
 arshy doctor --format json 只在本地生成版本、系统架构、daemon 与协议检查状态、
 解析器数量；不会自动上传。提交 Issue 前请自行审阅。
 
-定位为**作品集 / 公开预览**：早期 Codex 基准未显示相对原生 shell 的明确 token 或速度优势，详见上文诚实结论。不宣称固定节省比例。欢迎通过 GitHub Issues 反馈安装问题、解析错误或真实任务体验。
+公开预览（v0.1.0-alpha.1）：早期 Codex 基准见上文诚实结论；接口与表述仍可能调整，不保证固定节省比例。欢迎通过 GitHub Issues 反馈安装问题、解析错误或真实任务体验。
