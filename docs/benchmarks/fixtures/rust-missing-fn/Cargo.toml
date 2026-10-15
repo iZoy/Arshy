@@ -1,0 +1,5 @@
+[package]
+name = "bench-rust-missing-fn"
+version = "0.0.0"
+edition = "2021"
+[workspace]

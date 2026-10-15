@@ -1,0 +1,10 @@
+{
+  "name": "bench-jest-fail",
+  "private": true,
+  "scripts": {
+    "test": "jest"
+  },
+  "devDependencies": {
+    "jest": "29.7.0"
+  }
+}

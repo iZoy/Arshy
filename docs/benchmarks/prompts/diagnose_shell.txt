@@ -1,0 +1,17 @@
+You are running a controlled diagnostic benchmark.
+
+Rules (must follow):
+1. Use ONLY the built-in shell / exec_command tool. Do NOT call any Arshy MCP tools (arshy_exec, arshy_query, arshy_task).
+2. Do NOT modify any files. Diagnose only.
+3. Run the exact command given below in the current working directory.
+4. From the command output, report: exit_code, primary error code (if any), message, and file:line location.
+5. Stop after you have those fields. Do not fix the bug.
+
+Command to run:
+{{command}}
+
+When finished, reply with exactly this template (fill in values):
+EXIT_CODE: <int or unknown>
+CODE: <diagnostic code or none>
+MESSAGE: <short message>
+LOCATION: <file:line or unknown>

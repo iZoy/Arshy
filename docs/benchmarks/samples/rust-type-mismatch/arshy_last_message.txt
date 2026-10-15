@@ -1,0 +1,4 @@
+EXIT_CODE: 101
+CODE: E0308
+MESSAGE: mismatched types
+LOCATION: src/main.rs:2

@@ -1,0 +1,22 @@
+[
+  {
+    "mode": "shell",
+    "elapsed_sec": 150.51,
+    "usage": {
+      "input_tokens": 31695,
+      "cached_input_tokens": 0,
+      "output_tokens": 193
+    },
+    "tools": [{"kind": "shell", "command": "cargo check"}]
+  },
+  {
+    "mode": "arshy",
+    "elapsed_sec": 208.04,
+    "usage": {
+      "input_tokens": 66704,
+      "cached_input_tokens": 0,
+      "output_tokens": 297
+    },
+    "tools": [{"kind": "mcp", "server": "arshy", "tool": "arshy_exec"}]
+  }
+]

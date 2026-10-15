@@ -1,0 +1,7 @@
+{
+  "name": "bench-npm-missing-script",
+  "private": true,
+  "scripts": {
+    "build": "echo build"
+  }
+}
