@@ -413,7 +413,6 @@ fn format_diagnostic_line(event: &serde_json::Value) -> String {
     }
 }
 
-
 fn is_secondary_build_summary(message: &str) -> bool {
     let m = message.to_ascii_lowercase();
     m.contains("could not compile")
@@ -431,7 +430,10 @@ fn diagnostics_equivalent(a: &serde_json::Value, b: &serde_json::Value) -> bool 
     let line_b = b.pointer("/location/line").and_then(|v| v.as_u64());
     let msg_a = a.get("message").and_then(|v| v.as_str()).unwrap_or("");
     let msg_b = b.get("message").and_then(|v| v.as_str()).unwrap_or("");
-    code_a == code_b && file_a == file_b && line_a == line_b && (msg_a == msg_b || msg_a.is_empty() || msg_b.is_empty())
+    code_a == code_b
+        && file_a == file_b
+        && line_a == line_b
+        && (msg_a == msg_b || msg_a.is_empty() || msg_b.is_empty())
 }
 
 fn clip_inline_output(raw: &str) -> (String, bool, usize) {
