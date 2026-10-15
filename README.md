@@ -1,6 +1,6 @@
 # Arshy
 
-Local CLI diagnostics for coding agents over MCP. Turns noisy build/test/lint output into structured evidence (severity, file, line, error code). **Portfolio / public preview** — not claiming mandatory agent infrastructure.
+Local CLI diagnostics for coding agents over MCP. Turns noisy build/test/lint output into structured evidence (severity, file, line, error code).
 
 ![Native cargo output compared with Arshy structured diagnostics](docs/assets/arshy-demo.gif)
 
@@ -8,7 +8,7 @@ The same failing `cargo check`, two ways. Natively, the agent reads the full com
 
 ## Honest results (Codex, 2026-10-15)
 
-On three **fix-until-pass** tasks (Rust multi-error, noisy pytest, Go multi-error), native shell and Arshy both fixed **3/3**. Arshy averaged fewer tool rounds (4.7 vs 5.7); total input tokens were similar (~416k vs ~426k); wall clock was slower for Arshy (~14 min vs ~11 min, with Codex reconnect noise). Diagnose-only smoke still shows a large MCP host/schema token tax. **Takeaway:** a working prototype with occasional round savings — not a proven cost or speed win, and not “must-install” infrastructure.
+On three **fix-until-pass** tasks (Rust multi-error, noisy pytest, Go multi-error), native shell and Arshy both fixed **3/3**. Arshy averaged fewer tool rounds (4.7 vs 5.7); total input tokens were similar (~416k vs ~426k); wall clock was slower for Arshy (~14 min vs ~11 min, with Codex reconnect noise). Diagnose-only smoke still shows a large MCP host/schema token tax. **Takeaway:** success rates matched native shell; occasional fewer tool rounds; no clear token or wall-clock advantage in this sample.
 
 Full table: [docs/benchmarks/results-hard-fix-2026-10-15.md](docs/benchmarks/results-hard-fix-2026-10-15.md). Method: [docs/benchmarks/README.md](docs/benchmarks/README.md).
 
@@ -73,7 +73,7 @@ arshy doctor --format json produces a local, minimal report containing only the 
 
 ## Project status and feedback
 
-Shipped as a **portfolio / public preview**: end-to-end MCP + daemon + parsers + release artifacts. Early Codex benchmarks do not show a clear token or latency win over native shell; see the honest results above. No fixed token-saving claim.
+Public preview (v0.1.0-alpha.1): end-to-end MCP + daemon + parsers + release artifacts. Early Codex benchmarks are summarized above; API and claims may still change. No fixed token-saving guarantee.
 
 - Report a bug, parser error, or real-task experience through [GitHub Issues](https://github.com/iZoy/Arshy/issues).
 - Read [known issues](docs/known-issues.md), [security policy](SECURITY.md), and [contribution guidelines](CONTRIBUTING.md).

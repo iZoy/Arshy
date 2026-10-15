@@ -4,7 +4,7 @@
 
 **Client:** Codex CLI on NotBot (macOS arm64), Arshy `0.1.0-alpha.1` with compact MCP defaults. Run id: `hard-fix-20261015-163250` (local under `docs/benchmarks/results/`, gitignored).
 
-**Not claimed:** mandatory infrastructure, token savings, or faster wall clock.
+**Notes:** this sample does not show token savings or faster wall clock; success rates tied.
 
 ## Aggregate
 
