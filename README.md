@@ -1,26 +1,25 @@
 # Arshy
 
-Arshy is a local command-execution and diagnostics layer for AI agents. It exposes one standard MCP server and turns noisy CLI output into structured evidence: severity, file locations, error codes, and deduplication.
+Local CLI diagnostics for coding agents over MCP. Turns noisy build/test/lint output into structured evidence (severity, file, line, error code). **Portfolio / public preview** — not claiming mandatory agent infrastructure.
 
 ![Native cargo output compared with Arshy structured diagnostics](docs/assets/arshy-demo.gif)
 
-The same failing `cargo check`, two ways. Natively, the Agent reads the full
-compiler output and must find the error itself. Through Arshy it receives
-status, exit_code, an error count, and one primary_diagnostic with code, file,
-line, and column, while the captured output stays available on request. The
-demo uses the [reproducible fixture](docs/tutorials/agent-diagnostic-loop.md);
-regenerate it with `scripts/record-demo.py`.
+The same failing `cargo check`, two ways. Natively, the agent reads the full compiler dump. Through Arshy it gets status, exit code, and a primary diagnostic (code, file, line, column); raw output stays available on request. Demo fixture: [agent-diagnostic-loop](docs/tutorials/agent-diagnostic-loop.md) (`scripts/record-demo.py`).
 
-Why it helps an Agent:
+## Honest results (Codex, 2026-10-15)
 
-- One shape across 38 built-in parser definitions: build, test, lint, and deploy failures share
-  the same severity, location, and code fields.
-- Less re-reading: duplicates are collapsed and summary lines are not counted
-  as extra errors.
-- Evidence on demand: arshy_query and arshy_task return more events or the
-  raw output only when the Agent asks.
+On three **fix-until-pass** tasks (Rust multi-error, noisy pytest, Go multi-error), native shell and Arshy both fixed **3/3**. Arshy averaged fewer tool rounds (4.7 vs 5.7); total input tokens were similar (~416k vs ~426k); wall clock was slower for Arshy (~14 min vs ~11 min, with Codex reconnect noise). Diagnose-only smoke still shows a large MCP host/schema token tax. **Takeaway:** a working prototype with occasional round savings — not a proven cost or speed win, and not “must-install” infrastructure.
 
-v0.1.0-alpha.1 is a public preview. Its API may change while real-world use is validated. Arshy supports macOS and Linux. Linux release binaries are statically linked (musl) so they run on common glibc distributions including Ubuntu 22.04 and Debian 12.
+Full table: [docs/benchmarks/results-hard-fix-2026-10-15.md](docs/benchmarks/results-hard-fix-2026-10-15.md). Method: [docs/benchmarks/README.md](docs/benchmarks/README.md).
+
+## What it is
+
+- One MCP server (`arshy_exec`, `arshy_query`, `arshy_task`) plus a local daemon.
+- ~38 built-in CLI parsers sharing the same diagnostic shape; duplicates collapsed.
+- Evidence on demand: more events / raw capture only when the agent asks.
+- Release path exercised end-to-end: musl static Linux builds, checksum-verified install script, GitHub Release [v0.1.0-alpha.1](https://github.com/iZoy/Arshy/releases/tag/v0.1.0-alpha.1).
+
+v0.1.0-alpha.1 API may still change. macOS and Linux; Linux binaries are musl-static (Ubuntu 22.04 / Debian 12 friendly).
 
 ## Install
 
@@ -74,7 +73,7 @@ arshy doctor --format json produces a local, minimal report containing only the 
 
 ## Project status and feedback
 
-The preview tests whether Agents repeatedly benefit from structured CLI diagnostics. Arshy does not claim a fixed token-saving percentage. Measurements must cover complete tasks, including retries and follow-up calls.
+Shipped as a **portfolio / public preview**: end-to-end MCP + daemon + parsers + release artifacts. Early Codex benchmarks do not show a clear token or latency win over native shell; see the honest results above. No fixed token-saving claim.
 
 - Report a bug, parser error, or real-task experience through [GitHub Issues](https://github.com/iZoy/Arshy/issues).
 - Read [known issues](docs/known-issues.md), [security policy](SECURITY.md), and [contribution guidelines](CONTRIBUTING.md).
